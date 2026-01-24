@@ -52,3 +52,4 @@ Run headless and trigger an automation command after launch:
 
 - The Wine prefix is stored in the `wineprefix` named volume and persists across runs.
 - To reset the environment, remove the volume: `docker compose -f compose/docker-compose.yml down -v`
+- If you only have `docker-compose` v1 installed, replace `docker compose` with `docker-compose`.

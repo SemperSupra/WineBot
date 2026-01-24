@@ -17,7 +17,8 @@ Checks performed:
 
 `scripts/smoke-test.sh --full`
 
-Adds a Notepad automation round-trip.
+Adds a Notepad automation round-trip. The test writes a file under
+`/wineprefix/drive_c/users/winebot/Temp/` for reliability in headless mode.
 
 ## Interactive checks
 
@@ -30,3 +31,5 @@ Verifies `x11vnc` and noVNC/websockify are running and accepting connections.
 By default the smoke test leaves services running. To stop them:
 
 `scripts/smoke-test.sh --cleanup`
+
+For CI, prefer `--full --cleanup`.

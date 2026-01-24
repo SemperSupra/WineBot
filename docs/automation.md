@@ -1,7 +1,7 @@
 # Automation
 
 WineBot includes a minimal automation SDK in `automation/` to help with debugging and simple UI flows.
-When using `docker compose exec`, run automation as `winebot` to avoid Wine prefix ownership errors.
+When using `docker compose exec` (or `docker-compose exec`), run automation as `winebot` to avoid Wine prefix ownership errors.
 
 ## Scripts
 
