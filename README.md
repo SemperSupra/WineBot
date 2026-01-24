@@ -12,6 +12,8 @@ Interactive (VNC + noVNC):
 
 `docker compose -f compose/docker-compose.yml --profile interactive up --build`
 
+If you only have `docker-compose` v1 installed, replace `docker compose` with `docker-compose`.
+
 ## Run a Windows app
 
 1. Put your executable in `./apps`.
@@ -71,6 +73,22 @@ The image is saved to `/tmp/screenshot.png` inside the container.
 ## Smoke test
 
 `scripts/smoke-test.sh`
+
+Variants:
+
+- `scripts/smoke-test.sh --full`
+- `scripts/smoke-test.sh --include-interactive`
+- `scripts/smoke-test.sh --full --cleanup`
+
+## Releases & GHCR
+
+GitHub Actions runs smoke tests and publishes images to GHCR on release:
+
+- `ghcr.io/<owner>/winebot:<release-tag>`
+- `ghcr.io/<owner>/winebot:latest`
+- `ghcr.io/<owner>/winebot:sha-<short>`
+
+Manual runs are supported via Actions → Release → Run workflow. Provide `image_tag` or it defaults to `manual-<sha>`.
 
 ## Documentation
 
