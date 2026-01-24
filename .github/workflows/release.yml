@@ -1,6 +1,6 @@
 name: Release
 
-on:
+'on':
   release:
     types: [published]
   workflow_dispatch:
@@ -8,7 +8,6 @@ on:
       image_tag:
         description: Optional image tag for manual runs (default: manual-<sha>)
         required: false
-        default: ""
 
 permissions:
   contents: read
