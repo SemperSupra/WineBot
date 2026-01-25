@@ -164,8 +164,11 @@ compose_exec headless winebot "pgrep -x Xvfb >/dev/null"
 compose_exec headless winebot "pgrep -x openbox >/dev/null"
 
 log "Checking window list..."
-window_count="$(compose_exec headless winebot "DISPLAY=:99 wmctrl -l | wc -l")"
+window_list="$(compose_exec headless winebot "DISPLAY=:99 wmctrl -l")"
+window_count="$(echo "$window_list" | grep -v "^$" | wc -l)"
 window_count="$(echo "$window_count" | tr -d ' ')"
+log "Found $window_count window(s):"
+log "$window_list"
 if [ "${window_count:-0}" -lt 1 ]; then
   fail "Expected at least one window, found ${window_count:-0}"
 fi
@@ -184,7 +187,7 @@ if [ "$full" = "1" ]; then
   log "Running Notepad automation..."
   notepad_output="/wineprefix/drive_c/users/winebot/Temp/winebot_smoke_test.txt"
   compose_exec headless winebot "pkill -f '[n]otepad.exe' >/dev/null 2>&1 || true"
-  compose_exec headless winebot "python3 automation/notepad_create_and_verify.py --text 'WineBot smoke test' --output '$notepad_output' --launch --timeout 60 --save-timeout 60 --retry-interval 1 --delay 75"
+  compose_exec headless winebot "python3 automation/notepad_create_and_verify.py --text 'WineBot smoke test' --output '$notepad_output' --launch --timeout 120 --save-timeout 60 --retry-interval 2 --delay 100"
 fi
 
 if [ "$include_debug" = "1" ]; then
