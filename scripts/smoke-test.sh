@@ -171,8 +171,8 @@ if [ "${window_count:-0}" -lt 1 ]; then
 fi
 
 log "Capturing screenshot..."
-compose_exec headless winebot "./automation/screenshot.sh"
-compose_exec headless winebot "test -s /tmp/screenshot.png"
+screenshot_path="$(compose_exec headless winebot "./automation/screenshot.sh" | tail -n 1 | tr -d '\r')"
+compose_exec headless winebot "test -s '$screenshot_path'"
 
 log "Validating prefix persistence..."
 marker="/wineprefix/drive_c/winebot_smoke_$(date +%s).txt"
