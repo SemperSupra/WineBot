@@ -1,0 +1,3 @@
+# Ignore CVE-2026-24049 in vendored wheel within setuptools
+# It's in the Windows Embedded Python environment and hard to update without upstream setuptools changes.
+CVE-2026-24049
