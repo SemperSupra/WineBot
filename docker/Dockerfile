@@ -30,6 +30,7 @@ RUN bash /tmp/windows-tools/download_tools.sh \
 # Bootstrap pip for Windows Python
 RUN curl -sL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && wine /opt/winebot/windows-tools/Python/python.exe /tmp/get-pip.py --no-warn-script-location \
+    && wine /opt/winebot/windows-tools/Python/python.exe -m pip install --upgrade wheel \
     && rm /tmp/get-pip.py
 # --------------------------------
 
