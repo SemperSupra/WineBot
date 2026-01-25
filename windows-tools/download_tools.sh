@@ -3,7 +3,7 @@ set -e
 
 # Versions
 AUTOIT_URL="https://www.autoitscript.com/cgi-bin/getfile.pl?autoit3/autoit-v3.zip"
-AHK_URL="https://www.autohotkey.com/download/1.1/AutoHotkey_1.1.37.02.zip"
+AHK_URL="https://github.com/AutoHotkey/AutoHotkey/releases/download/v1.1.37.02/AutoHotkey_1.1.37.02.zip"
 PYTHON_VER="3.11.9"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VER}/python-${PYTHON_VER}-embed-amd64.zip"
 
