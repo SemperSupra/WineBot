@@ -109,13 +109,18 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if os.path.exists(args.output):
-        os.remove(args.output)
+    output_dir = os.path.dirname(args.output)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    # Ensure the file exists so Notepad can open it without triggering Save As.
+    with open(args.output, "wb") as handle:
+        handle.write(b"")
 
     existing_ids = list_windows(args.window_title)
     existing_save_ids = list_windows("Save As")
+    windows_path = to_windows_path(args.output)
     if args.launch:
-        subprocess.Popen(["wine", "notepad.exe"])
+        subprocess.Popen(["wine", "notepad.exe", windows_path])
         window_id = find_new_window(
             args.window_title,
             set(existing_ids),
@@ -151,7 +156,6 @@ def main():
         save_window = find_window("Save As", 5, args.retry_interval)
 
     if save_window is not None:
-        windows_path = to_windows_path(args.output)
         activate_window(save_window)
         send_keys(save_window, "alt+n")
         send_keys(save_window, "ctrl+a")
@@ -165,28 +169,24 @@ def main():
             activate_window(confirm_window)
             send_keys(confirm_window, "alt+y")
 
+    expected = normalize_text(args.text)
     deadline = time.time() + args.save_timeout
+    decoded = ""
     while time.time() < deadline:
         if os.path.exists(args.output):
-            break
+            with open(args.output, "rb") as handle:
+                contents = handle.read()
+            decoded = normalize_text(decode_contents(contents))
+            if decoded == expected:
+                print(f"File written and verified at {args.output}")
+                return 0
         time.sleep(args.retry_interval)
 
     if not os.path.exists(args.output):
         print("File was not created by Notepad", file=sys.stderr)
         return 1
-
-    with open(args.output, "rb") as handle:
-        contents = handle.read()
-
-    decoded = normalize_text(decode_contents(contents))
-    expected = normalize_text(args.text)
-
-    if decoded != expected:
-        print("File contents did not match expected text", file=sys.stderr)
-        return 2
-
-    print(f"File written and verified at {args.output}")
-    return 0
+    print("File contents did not match expected text", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
