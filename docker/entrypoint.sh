@@ -65,6 +65,9 @@ fi
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     echo "--> Initializing WINEPREFIX..."
     wineboot --init >/dev/null 2>&1
+else
+    # Ensure Wine services (explorer, etc.) are running
+    wine explorer >/dev/null 2>&1 &
 fi
 
 # 6. Execute under winedbg if requested
@@ -101,22 +104,22 @@ if [ "${ENABLE_WINEDBG:-0}" = "1" ]; then
     exec winedbg "${WINEDBG_ARGS[@]}" "${CMD[@]}"
 fi
 
-# 7. Execute normal command
-if [ $# -gt 0 ]; then
-    # Mode A: Pass-through (Arguments provided)
-    # This allows: docker run ... winebot make
-    # This allows: docker run ... winebot wine myapp.exe
-    exec "$@"
-else
-    # Mode B: Default / Legacy (APP_EXE env var)
-    # This keeps compatibility with existing containers that rely on env vars
-    APP_EXE="${APP_EXE:-cmd.exe}"
-    
-    if [ "$APP_EXE" = "cmd.exe" ] && [ -z "${APP_ARGS:-}" ]; then
-        echo "--> WineBot Ready (Interactive Shell)"
-        exec wineconsole cmd
+# Start API if enabled
+if [ "${ENABLE_API:-0}" = "1" ]; then
+    echo "Starting API server on port 8000..."
+    # Ensure X11 env is sourced for the python process if needed, 
+    # though subprocess calls in server.py usually source x11_env.sh via wrapper scripts.
+    # We run it as winebot user.
+    if [ "$(id -u)" = "0" ]; then
+        gosu winebot uvicorn api.server:app --host 0.0.0.0 --port 8000 &
     else
-        echo "--> Running: wine $APP_EXE $APP_ARGS"
-        exec wine "$APP_EXE" $APP_ARGS
+        uvicorn api.server:app --host 0.0.0.0 --port 8000 &
     fi
+fi
+
+# Keep container alive (if no command provided)
+if [ -z "$@" ]; then
+    tail -f /dev/null
+else
+    exec "$@"
 fi

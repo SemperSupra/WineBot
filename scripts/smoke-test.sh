@@ -309,4 +309,28 @@ for port in (5900, 6080):
 PY"
 fi
 
+log "Running API smoke tests (inside container)..."
+compose_exec headless winebot "
+    set -e
+    echo 'Running Unit Tests...'
+    python3 -m pytest tests/test_api.py
+    
+    echo 'Starting Server for Integration Check (Secured)...'
+    export API_TOKEN='smoke-secret'
+    uvicorn api.server:app --host 0.0.0.0 --port 8000 > /tmp/uvicorn.log 2>&1 &
+    PID=\$!
+    sleep 5
+    
+    echo 'Checking Health Endpoint (with Token)...'
+    if curl -s --fail -H 'X-API-Key: smoke-secret' http://localhost:8000/health; then
+        echo ' API Health OK'
+    else
+        echo ' API Health Failed'
+        cat /tmp/uvicorn.log
+        kill \$PID
+        exit 1
+    fi
+    kill \$PID
+"
+
 log "Smoke test complete."

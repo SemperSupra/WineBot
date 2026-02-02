@@ -35,10 +35,14 @@ RUN curl -sL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && rm /tmp/get-pip.py
 # --------------------------------
 
+# Install Python dependencies for API and Testing
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
+    fastapi uvicorn python-multipart httpx pytest
+
 RUN useradd -m -u 1000 -s /bin/bash winebot \
-    && mkdir -p /wineprefix /apps /automation \
+    && mkdir -p /wineprefix /apps /automation /api \
     && chmod 777 /wineprefix \
-    && chown -R winebot:winebot /apps /automation
+    && chown -R winebot:winebot /apps /automation /api
 
 ENV WINEPREFIX=/wineprefix \
     DISPLAY=:99 \
@@ -50,10 +54,16 @@ ENV WINEPREFIX=/wineprefix \
     NOVNC_PORT=6080
 
 COPY automation /automation
+COPY scripts /scripts
+COPY api /api
+COPY tests /tests
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chown -R winebot:winebot /automation \
-    && chmod +x /automation/screenshot.sh /automation/click_xy.sh /automation/find_and_click.py /automation/notepad_create_and_verify.py
+RUN chown -R winebot:winebot /automation /scripts /api /tests \
+    && chmod +x /automation/*.sh /automation/*.py \
+    && chmod +x /scripts/*.sh \
+    && chmod +x /tests/*.sh
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /
+EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]

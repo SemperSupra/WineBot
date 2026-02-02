@@ -42,3 +42,64 @@ Useful Linux-side tools for observing the Wine environment:
 - `xwininfo`, `xprop`, `wmctrl`, `xdotool` for window inspection and focus issues
 - `ps`, `top`, and `/proc` (via `procps`) for process state
 - Optional: `strace`, `ltrace`, `lsof`, `tcpdump` if you add them to the image
+
+## Headless GUI Debugging
+
+WineBot includes helpers to make headless debugging easier (especially with Xvfb).
+
+### Auto-detected X11 Environment
+Scripts in `scripts/` and `automation/` automatically source `scripts/lib/x11_env.sh`. This helper:
+- Detects the active X server (even if `DISPLAY` is unset).
+- Finds the correct `XAUTHORITY` (handling `xvfb-run` locations).
+- Exports these variables so tools like `xdotool` and `import` work seamlessly.
+
+### X11 Inspection Wrapper
+Use `/automation/x11.sh` (inside container) to inspect windows without manual env setup:
+
+```bash
+# List all windows (ID + Title)
+/automation/x11.sh list-windows
+
+# Get active window ID
+/automation/x11.sh active-window
+
+# Get title of a specific window
+/automation/x11.sh window-title <id>
+
+# Focus a window
+/automation/x11.sh focus <id>
+
+# Search windows by name
+/automation/x11.sh search --name "Notepad"
+```
+
+### taking Screenshots
+`automation/screenshot.sh` is now robust against missing env variables:
+```bash
+/automation/screenshot.sh /tmp/myshot.png
+```
+
+### Running AutoHotkey with Focus + Logs
+Use `scripts/run-ahk.sh` to ensure Wine is ready, focus a target window, and capture logs:
+```bash
+/scripts/run-ahk.sh my_script.ahk --focus-title "My App" --log /tmp/ahk.log
+```
+
+### Windows Inspectors (Au3Info / WinSpy)
+You can inspect window controls (ClassNN, ID) using Windows tools running under Wine.
+
+**Enable Inspectors:**
+Run the installer inside the container (only needs to be done once per container if not persisted):
+```bash
+/scripts/install-inspectors.sh
+```
+
+**Run Inspectors:**
+```bash
+# AutoIt Window Info (pre-installed)
+/scripts/au3info.sh
+
+# WinSpy (if installed)
+/scripts/winspy.sh
+```
+*Note: These run graphically. Use VNC/noVNC to interact with them.*

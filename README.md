@@ -1,5 +1,7 @@
 # WineBot
 
+> **For AI Agents & Automation:** See [AGENTS.md](AGENTS.md) for the API and programmatic control guide.
+
 WineBot is a containerized harness for running Windows GUI applications under Wine in headless or interactive modes. It provides a stable virtual desktop for automation and optional VNC/noVNC access for debugging.
 
 ## Quickstart
@@ -94,6 +96,18 @@ Then connect from the host:
 
 See `docs/debugging.md` for scripted commands and additional tooling.
 
+## Headless Tools & Helpers
+
+WineBot provides helpers to simplify headless interaction:
+
+- **X11 Inspection:** `/automation/x11.sh` (list windows, focus, search)
+- **Robust Screenshots:** `/automation/screenshot.sh` (auto-detects X11 env)
+- **AutoHotkey Runner:** `/scripts/run-ahk.sh` (handles focus, logs, and wineboot)
+- **Windows Inspectors:** `/scripts/au3info.sh` and `/scripts/winspy.sh` (for inspecting controls)
+- **Internal API:** HTTP API for programmatic control (see `docs/api.md`).
+
+See [docs/debugging.md](docs/debugging.md) for details.
+
 ## Run the sample CV automation
 
 `docker compose -f compose/docker-compose.yml --profile headless exec --user winebot winebot python3 automation/find_and_click.py --template automation/assets/example_button.png`
@@ -108,7 +122,7 @@ WineBot includes pre-installed Windows automation tools running under Wine:
 
 - **AutoIt v3** (`autoit`)
 - **AutoHotkey v1.1** (`ahk`)
-- **Python 3.11** (`winpy`)
+- **Python 3.13** (`winpy`)
 
 See [docs/windows-automation-tools.md](docs/windows-automation-tools.md) for usage.
 
@@ -142,6 +156,7 @@ Manual runs are supported via Actions → Release → Run workflow. Provide `ima
 
 - `docs/architecture.md`
 - `docs/automation.md`
+- `docs/api.md`
 - `docs/debugging.md`
 - `docs/installing-apps.md`
 - `docs/testing.md`

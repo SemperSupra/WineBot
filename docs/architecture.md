@@ -1,21 +1,39 @@
 # Architecture
 
-WineBot runs Windows GUI applications inside a Linux container using Wine, Xvfb, and a lightweight window manager.
+WineBot runs Windows GUI applications inside a Linux container using Wine, Xvfb, and a lightweight window manager. It exposes an HTTP API for programmatic control.
 
-## Display stack
+## System Layers
 
-- `Xvfb` provides a virtual X11 display on `:99`
-- `openbox` is the window manager for consistent geometry
-- `x11vnc` and noVNC expose the same display in interactive mode
+1.  **Application Layer (Windows)**
+    *   Target Application (`.exe`)
+    *   Automation Tools (`AutoHotkey`, `AutoIt`, `Python/winpy`)
+    *   Running inside `WINEPREFIX` (`/wineprefix`)
 
-## Startup flow
+2.  **Display Layer (X11)**
+    *   `Xvfb`: Virtual framebuffer (Display `:99`).
+    *   `openbox`: Window manager for geometry management.
+    *   `x11vnc` / `noVNC`: Optional interactive viewing.
 
-1. Initialize the Wine prefix if missing
-2. Start Xvfb and openbox
-3. Optionally start VNC/noVNC
-4. Launch the target Windows executable (optionally under winedbg)
-5. Optionally run an automation command
+3.  **Control Layer (Linux/Container)**
+    *   **API Server (`api/server.py`):** FastAPI service on port 8000. Orchestrates automation.
+    *   **Helper Scripts (`scripts/`, `automation/`):** Shell wrappers for X11 and Wine interactions.
+    *   **Entrypoint (`entrypoint.sh`):** Bootstraps user permissions, X11, Wine, and API.
+
+## API & Automation Flow
+
+External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`/`xdotool`/`import` -> Application
+
+## Startup Flow
+
+1.  **Entrypoint:** Sets up `winebot` user (UID mapping).
+2.  **X11:** Starts `Xvfb` and `openbox`.
+3.  **Services:** Starts optional VNC/noVNC.
+4.  **API:** Starts `uvicorn` (if `ENABLE_API=1`).
+5.  **Wine:** Initializes prefix (`wineboot`) if needed.
+6.  **App:** Launches target executable (if configured).
 
 ## Persistence
 
-The Wine prefix is stored at `/wineprefix`, backed by a named Docker volume to persist across restarts.
+-   **`/wineprefix`:** Persistent Wine environment (C: drive).
+-   **`/apps`:** Read-only mount for installers/executables.
+-   **`/automation`:** Scripts and assets.

@@ -15,8 +15,8 @@ When using `docker compose exec` (or `docker-compose exec`), run automation as `
 
 ## Scripts
 
-- `automation/screenshot.sh` captures the virtual desktop to a timestamped file in `/tmp` (or a custom path).
-- `automation/click_xy.sh` clicks absolute coordinates via `xdotool`
+- `automation/screenshot.sh` captures the virtual desktop. Supports specific windows (`-w`), delays (`-d`), and annotations (`-l`).
+- `automation/x11.sh click-at <x> <y>` clicks absolute coordinates via `xdotool`.
 - `automation/find_and_click.py` performs OpenCV template matching and clicks the best match
 - `automation/notepad_create_and_verify.py` writes and verifies a file via Notepad
 

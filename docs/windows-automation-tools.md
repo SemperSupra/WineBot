@@ -8,7 +8,7 @@ WineBot includes support for popular Windows automation tools running inside the
 | :--- | :--- | :--- |
 | **AutoIt v3** | `autoit` | Powerful scripting language for Windows GUI automation. |
 | **AutoHotkey v1.1** | `ahk` | Automation scripting language for Windows. |
-| **Python 3.11** | `winpy` | Windows embedded Python. |
+| **Python 3.13** | `winpy` | Windows embedded Python. |
 
 ## Usage
 

@@ -4,7 +4,7 @@ set -e
 # Versions
 AUTOIT_URL="https://www.autoitscript.com/cgi-bin/getfile.pl?autoit3/autoit-v3.zip"
 AHK_URL="https://github.com/AutoHotkey/AutoHotkey/releases/download/v1.1.37.02/AutoHotkey_1.1.37.02.zip"
-PYTHON_VER="3.12.8"
+PYTHON_VER="3.13.11"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VER}/python-${PYTHON_VER}-embed-amd64.zip"
 
 TOOLS_DIR="/opt/winebot/windows-tools"
@@ -40,8 +40,8 @@ unzip -q -o /tmp/python.zip -d "$TOOLS_DIR/Python"
 rm /tmp/python.zip
 
 # Enable 'site' package for pip to work
-# The .pth file is named python312._pth (for 3.12)
-PTH_FILE="$TOOLS_DIR/Python/python312._pth"
+# The .pth file is named python313._pth (for 3.13)
+PTH_FILE="$TOOLS_DIR/Python/python313._pth"
 if [ -f "$PTH_FILE" ]; then
     sed -i 's/^#import site/import site/' "$PTH_FILE"
 fi
