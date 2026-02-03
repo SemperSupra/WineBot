@@ -522,7 +522,7 @@ def lifecycle_status():
         "processes": {
             "xvfb": safe_command(["pgrep", "-x", "Xvfb"]),
             "openbox": safe_command(["pgrep", "-x", "openbox"]),
-            "wine_explorer": safe_command(["pgrep", "-f", "wine explorer"]),
+            "wine_explorer": safe_command(["pgrep", "-f", "explorer.exe"]),
             "x11vnc": safe_command(["pgrep", "-x", "x11vnc"]),
             "novnc": safe_command(["pgrep", "-f", "websockify|novnc_proxy"]),
             "api_pid": os.getpid(),
@@ -594,7 +594,7 @@ def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
         ("winedbg", ["pkill", "-TERM", "-x", "winedbg"]),
         ("gdb", ["pkill", "-TERM", "-x", "gdb"]),
         ("openbox", ["pkill", "-TERM", "-x", "openbox"]),
-        ("wine_explorer", ["pkill", "-TERM", "-f", "wine explorer"]),
+        ("wine_explorer", ["pkill", "-TERM", "-f", "explorer.exe"]),
         ("xvfb", ["pkill", "-TERM", "-x", "Xvfb"]),
     ]
     for name, cmd in components:

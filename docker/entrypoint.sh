@@ -77,14 +77,61 @@ export WINEBOT_USER_DIR="$USER_DIR"
 
 mkdir -p "$WINEPREFIX/drive_c/users"
 WINE_USER_DIR="$WINEPREFIX/drive_c/users/winebot"
+USER_TEMPLATE=""
 if [ -L "$WINE_USER_DIR" ]; then
     ln -sfn "$USER_DIR" "$WINE_USER_DIR"
 elif [ -e "$WINE_USER_DIR" ]; then
     backup="${WINE_USER_DIR}.bak.$(date +%s)"
     mv "$WINE_USER_DIR" "$backup"
+    USER_TEMPLATE="$backup"
     ln -s "$USER_DIR" "$WINE_USER_DIR"
 else
     ln -s "$USER_DIR" "$WINE_USER_DIR"
+fi
+
+TEMPLATE_DIR="$WINEPREFIX/drive_c/users/.winebot_template"
+if [ -n "$USER_TEMPLATE" ] && [ ! -d "$TEMPLATE_DIR" ]; then
+    cp -a "$USER_TEMPLATE" "$TEMPLATE_DIR"
+fi
+
+ensure_user_profile() {
+    local target="$1"
+    local paths=(
+        "$target/AppData/Roaming"
+        "$target/AppData/Local"
+        "$target/AppData/LocalLow"
+        "$target/AppData/Roaming/Microsoft/Windows/Start Menu/Programs"
+        "$target/Desktop"
+        "$target/Documents"
+        "$target/Downloads"
+        "$target/Music"
+        "$target/Pictures"
+        "$target/Videos"
+        "$target/Contacts"
+        "$target/Favorites"
+        "$target/Links"
+        "$target/Saved Games"
+        "$target/Searches"
+        "$target/Temp"
+    )
+    for path in "${paths[@]}"; do
+        if [ -L "$path" ]; then
+            rm -f "$path"
+        fi
+        mkdir -p "$path"
+    done
+}
+
+seed_user_profile() {
+    local target="$1"
+    if [ -d "$TEMPLATE_DIR" ]; then
+        cp -a "$TEMPLATE_DIR/." "$target/" || true
+    fi
+    ensure_user_profile "$target"
+}
+
+if [ ! -d "$USER_DIR/Desktop" ] || [ ! -d "$USER_DIR/Documents" ]; then
+    seed_user_profile "$USER_DIR"
 fi
 
 python3 - <<'PY'
