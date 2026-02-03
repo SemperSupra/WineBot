@@ -587,15 +587,17 @@ def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
 def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     append_lifecycle_event(session_dir, "component_shutdown_requested", "Stopping UI/VNC components", source="api")
-    components = {
-        "x11vnc": ["pkill", "-TERM", "-x", "x11vnc"],
-        "novnc_proxy": ["pkill", "-TERM", "-f", "novnc_proxy"],
-        "websockify": ["pkill", "-TERM", "-f", "websockify"],
-        "openbox": ["pkill", "-TERM", "-x", "openbox"],
-        "xvfb": ["pkill", "-TERM", "-x", "Xvfb"],
-        "wine_explorer": ["pkill", "-TERM", "-f", "wine explorer"],
-    }
-    for name, cmd in components.items():
+    components = [
+        ("novnc_proxy", ["pkill", "-TERM", "-f", "novnc_proxy"]),
+        ("websockify", ["pkill", "-TERM", "-f", "websockify"]),
+        ("x11vnc", ["pkill", "-TERM", "-x", "x11vnc"]),
+        ("winedbg", ["pkill", "-TERM", "-x", "winedbg"]),
+        ("gdb", ["pkill", "-TERM", "-x", "gdb"]),
+        ("openbox", ["pkill", "-TERM", "-x", "openbox"]),
+        ("wine_explorer", ["pkill", "-TERM", "-f", "wine explorer"]),
+        ("xvfb", ["pkill", "-TERM", "-x", "Xvfb"]),
+    ]
+    for name, cmd in components:
         result = safe_command(cmd, timeout=3)
         results[name] = result
         if result.get("ok"):

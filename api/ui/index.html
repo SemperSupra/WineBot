@@ -222,6 +222,26 @@
       color: var(--muted);
     }
 
+    .events-list {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f171d;
+      max-height: 160px;
+      overflow-y: auto;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .events-list div {
+      margin-bottom: 6px;
+    }
+
+    .events-list div:last-child {
+      margin-bottom: 0;
+    }
+
     @media (max-width: 980px) {
       #app {
         flex-direction: column;
@@ -301,6 +321,24 @@
       </div>
 
       <div class="panel-section">
+        <div class="section-title">Lifecycle</div>
+        <div class="button-row">
+          <button id="btn-shutdown" class="warn">Graceful Shutdown</button>
+          <button id="btn-poweroff" class="danger">Power Off</button>
+        </div>
+        <div id="lifecycle-status" class="status-text"></div>
+        <div id="lifecycle-session" class="status-text"></div>
+        <div class="button-row" style="flex-direction: column; align-items: flex-start;">
+          <span id="badge-xvfb" class="badge">Xvfb: pending</span>
+          <span id="badge-openbox" class="badge">Openbox: pending</span>
+          <span id="badge-vnc-process" class="badge">VNC: pending</span>
+          <span id="badge-novnc" class="badge">noVNC: pending</span>
+          <span id="badge-wine" class="badge">Wine: pending</span>
+        </div>
+        <div id="lifecycle-events" class="events-list">Events: pending...</div>
+      </div>
+
+      <div class="panel-section">
         <div class="section-title">Health</div>
         <div class="button-row" style="flex-direction: column; align-items: flex-start;">
           <span id="badge-health" class="badge">/health: pending</span>
@@ -316,6 +354,11 @@
   <script type="module">
     const vncContainer = document.getElementById("vnc-container");
     const badgeVnc = document.getElementById("badge-vnc");
+    const badgeXvfb = document.getElementById("badge-xvfb");
+    const badgeOpenbox = document.getElementById("badge-openbox");
+    const badgeVncProcess = document.getElementById("badge-vnc-process");
+    const badgeNoVnc = document.getElementById("badge-novnc");
+    const badgeWine = document.getElementById("badge-wine");
     const badgeHealth = document.getElementById("badge-health");
     const badgeX11 = document.getElementById("badge-x11");
     const badgeWindows = document.getElementById("badge-windows");
@@ -339,6 +382,11 @@
     const recordStopBtn = document.getElementById("btn-record-stop");
     const recordStatus = document.getElementById("recording-status");
     const recordingPanel = document.getElementById("recording-panel");
+    const lifecycleStatus = document.getElementById("lifecycle-status");
+    const lifecycleSession = document.getElementById("lifecycle-session");
+    const lifecycleEvents = document.getElementById("lifecycle-events");
+    const shutdownBtn = document.getElementById("btn-shutdown");
+    const powerOffBtn = document.getElementById("btn-poweroff");
 
     const API_TOKEN_KEY = "winebot_api_token";
     const VNC_PASSWORD_KEY = "winebot_vnc_password";
@@ -400,6 +448,11 @@
       }
     }
 
+    function setProcessBadge(element, label, running) {
+      const status = running ? "running" : "down";
+      setBadge(element, `${label}: ${status}`, running ? "ok" : "error");
+    }
+
     async function apiFetch(path, options = {}) {
       const headers = new Headers(options.headers || {});
       const token = getToken();
@@ -411,12 +464,14 @@
 
     async function updateDashboard() {
       try {
-        const [health, x11, windows, recording, storage] = await Promise.all([
+        const [health, x11, windows, recording, storage, lifecycle, events] = await Promise.all([
           apiFetch("/health"),
           apiFetch("/health/x11"),
           apiFetch("/health/windows"),
           apiFetch("/health/recording"),
-          apiFetch("/health/storage")
+          apiFetch("/health/storage"),
+          apiFetch("/lifecycle/status"),
+          apiFetch("/lifecycle/events?limit=6")
         ]);
 
         if (health.ok) {
@@ -477,6 +532,43 @@
         } else {
           setBadge(badgeStorage, `/health/storage: ${storage.status}`, "error");
         }
+
+        if (lifecycle.ok) {
+          const data = await lifecycle.json();
+          lifecycleStatus.textContent = "Lifecycle: ok";
+          if (data.session_id) {
+            const session = data.session_id;
+            const userDir = data.user_dir || "unknown user dir";
+            lifecycleSession.textContent = `Session: ${session} | User: ${userDir}`;
+          } else {
+            lifecycleSession.textContent = "Session: unknown";
+          }
+          const processes = data.processes || {};
+          setProcessBadge(badgeXvfb, "Xvfb", processes.xvfb?.ok === true);
+          setProcessBadge(badgeOpenbox, "Openbox", processes.openbox?.ok === true);
+          setProcessBadge(badgeVncProcess, "VNC", processes.x11vnc?.ok === true);
+          setProcessBadge(badgeNoVnc, "noVNC", processes.novnc?.ok === true);
+          setProcessBadge(badgeWine, "Wine", processes.wine_explorer?.ok === true);
+          shutdownBtn.disabled = false;
+          powerOffBtn.disabled = false;
+        } else {
+          lifecycleStatus.textContent = `Lifecycle: ${lifecycle.status}`;
+          lifecycleSession.textContent = "";
+          setBadge(badgeXvfb, "Xvfb: unknown", "warn");
+          setBadge(badgeOpenbox, "Openbox: unknown", "warn");
+          setBadge(badgeVncProcess, "VNC: unknown", "warn");
+          setBadge(badgeNoVnc, "noVNC: unknown", "warn");
+          setBadge(badgeWine, "Wine: unknown", "warn");
+          shutdownBtn.disabled = true;
+          powerOffBtn.disabled = true;
+        }
+
+        if (events.ok) {
+          const data = await events.json();
+          renderLifecycleEvents(data.events || []);
+        } else {
+          renderLifecycleEvents([]);
+        }
       } catch (err) {
         setBadge(badgeHealth, "/health: error", "error");
       }
@@ -532,6 +624,54 @@
       }
     }
 
+    function formatEventTimestamp(ts) {
+      if (!ts) {
+        return "";
+      }
+      const date = new Date(ts);
+      if (Number.isNaN(date.getTime())) {
+        return ts;
+      }
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function renderLifecycleEvents(events) {
+      lifecycleEvents.innerHTML = "";
+      if (!events.length) {
+        lifecycleEvents.textContent = "Events: none";
+        return;
+      }
+      events.forEach((event) => {
+        const line = document.createElement("div");
+        const time = formatEventTimestamp(event.timestamp_utc);
+        const kind = event.kind || "event";
+        const message = event.message || "";
+        line.textContent = `${time} ${kind} ${message}`.trim();
+        lifecycleEvents.appendChild(line);
+      });
+    }
+
+    async function requestShutdown(powerOff) {
+      const confirmText = powerOff
+        ? "Power off immediately? This is unsafe and skips graceful shutdown."
+        : "Gracefully shut down WineBot?";
+      if (!window.confirm(confirmText)) {
+        return;
+      }
+      lifecycleStatus.textContent = powerOff ? "Powering off..." : "Shutting down...";
+      try {
+        const url = powerOff ? "/lifecycle/shutdown?power_off=true" : "/lifecycle/shutdown";
+        const response = await apiFetch(url, { method: "POST" });
+        if (!response.ok) {
+          throw new Error(`Shutdown failed: ${response.status}`);
+        }
+        const data = await response.json();
+        lifecycleStatus.textContent = `Lifecycle: ${data.status}`;
+      } catch (err) {
+        lifecycleStatus.textContent = `Lifecycle error: ${err.message}`;
+      }
+    }
+
     function initTokenControls() {
       tokenInput.value = getToken();
       saveTokenBtn.addEventListener("click", () => {
@@ -580,6 +720,8 @@
       recordPauseBtn.addEventListener("click", () => postRecordingAction("pause"));
       recordResumeBtn.addEventListener("click", () => postRecordingAction("resume"));
       recordStopBtn.addEventListener("click", () => postRecordingAction("stop"));
+      shutdownBtn.addEventListener("click", () => requestShutdown(false));
+      powerOffBtn.addEventListener("click", () => requestShutdown(true));
     }
 
     async function initVnc() {
