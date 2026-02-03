@@ -46,15 +46,27 @@ openbox >/dev/null 2>&1 &
 
 # --- Session Setup ---
 SESSION_ROOT="${WINEBOT_SESSION_ROOT:-/artifacts/sessions}"
-SESSION_TS=$(date +%s)
-SESSION_DATE=$(date -u +%Y-%m-%d)
-SESSION_RAND=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
-SESSION_ID="session-${SESSION_DATE}-${SESSION_TS}-${SESSION_RAND}${WINEBOT_SESSION_LABEL:+-${WINEBOT_SESSION_LABEL}}"
-SESSION_DIR="${SESSION_ROOT}/${SESSION_ID}"
+RESUMED="0"
+if [ -n "${WINEBOT_SESSION_DIR:-}" ]; then
+    SESSION_DIR="$WINEBOT_SESSION_DIR"
+    SESSION_ID="${WINEBOT_SESSION_ID:-$(basename "$SESSION_DIR")}"
+    RESUMED="1"
+elif [ -n "${WINEBOT_SESSION_ID:-}" ]; then
+    SESSION_ID="$WINEBOT_SESSION_ID"
+    SESSION_DIR="${SESSION_ROOT}/${SESSION_ID}"
+    RESUMED="1"
+else
+    SESSION_TS=$(date +%s)
+    SESSION_DATE=$(date -u +%Y-%m-%d)
+    SESSION_RAND=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+    SESSION_ID="session-${SESSION_DATE}-${SESSION_TS}-${SESSION_RAND}${WINEBOT_SESSION_LABEL:+-${WINEBOT_SESSION_LABEL}}"
+    SESSION_DIR="${SESSION_ROOT}/${SESSION_ID}"
+fi
 
 export WINEBOT_SESSION_ROOT="$SESSION_ROOT"
 export WINEBOT_SESSION_ID="$SESSION_ID"
 export WINEBOT_SESSION_DIR="$SESSION_DIR"
+export WINEBOT_SESSION_RESUMED="$RESUMED"
 echo "$SESSION_DIR" > /tmp/winebot_current_session
 
 mkdir -p "$SESSION_DIR"/{logs,screenshots,scripts}
@@ -150,20 +162,37 @@ def parse_resolution(screen):
 
 session_dir = os.environ.get("WINEBOT_SESSION_DIR")
 session_id = os.environ.get("WINEBOT_SESSION_ID")
+resumed = os.environ.get("WINEBOT_SESSION_RESUMED") == "1"
 if session_dir and session_id:
-    manifest = {
-        "session_id": session_id,
-        "start_time_epoch": datetime.datetime.now(datetime.timezone.utc).timestamp(),
-        "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "hostname": platform.node(),
-        "display": os.environ.get("DISPLAY", ":99"),
-        "resolution": parse_resolution(os.environ.get("SCREEN", "1920x1080")),
-        "fps": 30,
-        "git_sha": None,
-    }
     path = os.path.join(session_dir, "session.json")
+    if not resumed or not os.path.exists(path):
+        manifest = {
+            "session_id": session_id,
+            "start_time_epoch": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+            "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "hostname": platform.node(),
+            "display": os.environ.get("DISPLAY", ":99"),
+            "resolution": parse_resolution(os.environ.get("SCREEN", "1920x1080")),
+            "fps": 30,
+            "git_sha": None,
+        }
+    else:
+        try:
+            with open(path, "r") as f:
+                manifest = json.load(f) or {}
+        except Exception:
+            manifest = {"session_id": session_id}
+        resume_count = int(manifest.get("resume_count", 0)) + 1
+        manifest["resume_count"] = resume_count
+        resume_times = manifest.get("resume_times", [])
+        if not isinstance(resume_times, list):
+            resume_times = []
+        resume_times.append(datetime.datetime.now(datetime.timezone.utc).isoformat())
+        manifest["resume_times"] = resume_times
     with open(path, "w") as f:
         json.dump(manifest, f, indent=2)
+    with open(os.path.join(session_dir, "session.state"), "w") as f:
+        f.write("active")
 PY
 
 log_event() {
@@ -198,7 +227,11 @@ with open(path, "a") as f:
 PY
 }
 
-log_event "session_created" "Session initialized"
+if [ "$RESUMED" = "1" ]; then
+    log_event "session_resumed" "Session resumed"
+else
+    log_event "session_created" "Session initialized"
+fi
 log_event "xvfb_started" "Xvfb started"
 log_event "openbox_started" "Openbox started"
 
@@ -271,6 +304,9 @@ stop_recorder() {
 
 shutdown_notice() {
     log_event "shutdown_requested" "Shutdown requested"
+    if [ -n "${SESSION_DIR:-}" ]; then
+        echo "stopped" > "${SESSION_DIR}/session.state" || true
+    fi
     stop_recorder
 }
 

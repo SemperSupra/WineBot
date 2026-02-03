@@ -34,6 +34,9 @@ Endpoints accepting file paths (`/apps/run`) are restricted to specific director
 | GET | `/lifecycle/status` | Lifecycle status for core components |
 | GET | `/lifecycle/events` | Recent lifecycle events |
 | POST | `/lifecycle/shutdown` | Gracefully stop the container |
+| GET | `/sessions` | List session directories |
+| POST | `/sessions/suspend` | Suspend a session (keep container alive) |
+| POST | `/sessions/resume` | Resume a session directory |
 | GET | `/ui` | noVNC + API dashboard UI |
 | GET | `/windows` | List visible windows |
 | GET | `/windows/active` | Active window ID |
@@ -97,6 +100,29 @@ Gracefully stop the recorder and UI components, shut down Wine, and terminate th
   - `wine_shutdown` (optional): Whether to run `wineboot --shutdown` and `wineserver -k` before exiting (default: true).
   - `power_off` (optional): Immediately terminate the container (unsafe; skips graceful shutdown).
 - **Response:** `{"status":"shutting_down","delay_seconds":0.5,"wine_shutdown":{...},"component_shutdown":{...}}`
+
+#### `GET /sessions`
+List session directories in the session root.
+- **Parameters:**
+  - `root` (optional): Override session root (default: `/artifacts/sessions`).
+  - `limit` (optional): Max sessions to return (default: 100).
+- **Response:** `{"root":"...","sessions":[...]}`
+
+#### `POST /sessions/suspend`
+Suspend a session without terminating the container.
+- **Body (JSON):**
+  - `session_id` or `session_dir` (optional): Target session (default: current).
+  - `session_root` (optional): Session root when using `session_id`.
+  - `shutdown_wine` (optional): Stop Wine services (default: true).
+  - `stop_recording` (optional): Stop active recording (default: true).
+
+#### `POST /sessions/resume`
+Resume an existing session directory.
+- **Body (JSON):**
+  - `session_id` or `session_dir` (required).
+  - `session_root` (optional): Session root when using `session_id`.
+  - `restart_wine` (optional): Restart Wine services (default: true).
+  - `stop_recording` (optional): Stop active recording before switching (default: true).
 
 ### Dashboard
 

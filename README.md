@@ -82,6 +82,10 @@ Change the default VNC password in `compose/docker-compose.yml`.
 
 Every WineBot start creates a new session under `/artifacts/sessions/session-<YYYY-MM-DD>-<unix>-<rand>/`. The session path is exported as `WINEBOT_SESSION_DIR`.
 
+To resume an existing session on startup, set one of:
+- `WINEBOT_SESSION_DIR=/artifacts/sessions/<session-id>`
+- `WINEBOT_SESSION_ID=<session-id>` (uses `WINEBOT_SESSION_ROOT`)
+
 Common locations inside the session directory:
 - `screenshots/` for screenshots captured via API or scripts
 - `logs/` for API/entrypoint/automation logs

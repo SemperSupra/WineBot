@@ -320,18 +320,68 @@ def test_lifecycle_shutdown(mock_shutdown, tmp_path, auth_headers):
                         assert "wine_shutdown" in payload
                         assert "component_shutdown" in payload
 
+@patch("api.server.safe_command")
 @patch("api.server.schedule_shutdown")
-def test_lifecycle_power_off(mock_shutdown, tmp_path, auth_headers):
+def test_lifecycle_power_off(mock_shutdown, mock_safe, tmp_path, auth_headers):
     session_dir = tmp_path / "session-3"
     (session_dir / "logs").mkdir(parents=True)
     session_file = tmp_path / "session_file"
     session_file.write_text(str(session_dir))
+    mock_safe.return_value = {"ok": True}
     with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
         with patch("api.server.SESSION_FILE", str(session_file)):
             response = client.post("/lifecycle/shutdown?power_off=true", headers=auth_headers)
             assert response.status_code == 200
             payload = response.json()
             assert payload["status"] == "powering_off"
+
+def test_sessions_list(tmp_path, auth_headers):
+    session_one = tmp_path / "session-1"
+    session_two = tmp_path / "session-2"
+    session_one.mkdir()
+    session_two.mkdir()
+    (session_one / "session.json").write_text('{"session_id":"session-1"}')
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        response = client.get(f"/sessions?root={tmp_path}", headers=auth_headers)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["root"] == str(tmp_path)
+        assert len(payload["sessions"]) == 2
+
+def test_sessions_suspend(tmp_path, auth_headers):
+    session_dir = tmp_path / "session-4"
+    (session_dir / "logs").mkdir(parents=True)
+    session_file = tmp_path / "session_file"
+    session_file.write_text(str(session_dir))
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.server.SESSION_FILE", str(session_file)):
+            with patch("api.server.recorder_running", return_value=False):
+                with patch("api.server.graceful_wine_shutdown", return_value={"wineboot": {"ok": True}}):
+                    response = client.post("/sessions/suspend", headers=auth_headers, json={})
+                    assert response.status_code == 200
+                    payload = response.json()
+                    assert payload["status"] == "suspended"
+                    assert (session_dir / "session.state").read_text().strip() == "suspended"
+
+def test_sessions_resume(tmp_path, auth_headers):
+    session_dir = tmp_path / "session-5"
+    (session_dir / "logs").mkdir(parents=True)
+    (session_dir / "session.json").write_text('{"session_id":"session-5"}')
+    (session_dir / "user").mkdir()
+    session_file = tmp_path / "session_file"
+    wineprefix = tmp_path / "wineprefix"
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEPREFIX": str(wineprefix)}):
+        with patch("api.server.SESSION_FILE", str(session_file)):
+            response = client.post(
+                "/sessions/resume",
+                headers=auth_headers,
+                json={"session_dir": str(session_dir), "restart_wine": False},
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["status"] in ("resumed", "already_active")
+            assert Path(session_file).read_text().strip() == str(session_dir)
+            assert os.path.islink(wineprefix / "drive_c" / "users" / "winebot")
 
 @patch("subprocess.run")
 @patch("builtins.open", new_callable=MagicMock)

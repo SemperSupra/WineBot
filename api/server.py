@@ -114,6 +114,20 @@ class RecordingStartModel(BaseModel):
     fps: Optional[int] = 30
     new_session: Optional[bool] = False
 
+class SessionResumeModel(BaseModel):
+    session_id: Optional[str] = None
+    session_dir: Optional[str] = None
+    session_root: Optional[str] = None
+    restart_wine: Optional[bool] = True
+    stop_recording: Optional[bool] = True
+
+class SessionSuspendModel(BaseModel):
+    session_id: Optional[str] = None
+    session_dir: Optional[str] = None
+    session_root: Optional[str] = None
+    shutdown_wine: Optional[bool] = True
+    stop_recording: Optional[bool] = True
+
 # Helpers
 def run_command(cmd: List[str]):
     try:
@@ -280,6 +294,65 @@ def ensure_session_subdirs(session_dir: str) -> None:
         except Exception:
             pass
 
+def session_state_path(session_dir: str) -> str:
+    return os.path.join(session_dir, "session.state")
+
+def read_session_state(session_dir: str) -> Optional[str]:
+    try:
+        with open(session_state_path(session_dir), "r") as f:
+            return f.read().strip() or None
+    except Exception:
+        return None
+
+def write_session_state(session_dir: str, state: str) -> None:
+    try:
+        with open(session_state_path(session_dir), "w") as f:
+            f.write(state)
+    except Exception:
+        pass
+
+def ensure_user_profile(user_dir: str) -> None:
+    paths = [
+        os.path.join(user_dir, "AppData", "Roaming"),
+        os.path.join(user_dir, "AppData", "Local"),
+        os.path.join(user_dir, "AppData", "LocalLow"),
+        os.path.join(user_dir, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs"),
+        os.path.join(user_dir, "Desktop"),
+        os.path.join(user_dir, "Documents"),
+        os.path.join(user_dir, "Downloads"),
+        os.path.join(user_dir, "Music"),
+        os.path.join(user_dir, "Pictures"),
+        os.path.join(user_dir, "Videos"),
+        os.path.join(user_dir, "Contacts"),
+        os.path.join(user_dir, "Favorites"),
+        os.path.join(user_dir, "Links"),
+        os.path.join(user_dir, "Saved Games"),
+        os.path.join(user_dir, "Searches"),
+        os.path.join(user_dir, "Temp"),
+    ]
+    for path in paths:
+        try:
+            if os.path.islink(path):
+                os.unlink(path)
+            os.makedirs(path, exist_ok=True)
+        except Exception:
+            pass
+
+def link_wine_user_dir(user_dir: str) -> None:
+    wineprefix = os.getenv("WINEPREFIX", "/wineprefix")
+    base_dir = os.path.join(wineprefix, "drive_c", "users")
+    os.makedirs(base_dir, exist_ok=True)
+    wine_user_dir = os.path.join(base_dir, "winebot")
+    try:
+        if os.path.islink(wine_user_dir):
+            os.unlink(wine_user_dir)
+        elif os.path.exists(wine_user_dir):
+            backup = f"{wine_user_dir}.bak.{int(time.time())}"
+            shutil.move(wine_user_dir, backup)
+        os.symlink(user_dir, wine_user_dir)
+    except Exception:
+        pass
+
 def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
     session_dir = read_session_dir()
     if not isinstance(session_dir, str) or not session_dir:
@@ -302,6 +375,21 @@ def session_id_from_dir(session_dir: Optional[str]) -> Optional[str]:
     if not session_dir:
         return None
     return os.path.basename(session_dir)
+
+def resolve_session_dir(
+    session_id: Optional[str],
+    session_dir: Optional[str],
+    session_root: Optional[str],
+) -> str:
+    if session_dir:
+        return validate_path(session_dir)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Provide session_id or session_dir")
+    if "/" in session_id or os.path.sep in session_id or ".." in session_id:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    root = session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    safe_root = validate_path(root)
+    return os.path.join(safe_root, session_id)
 
 def lifecycle_log_path(session_dir: str) -> str:
     return os.path.join(session_dir, "logs", "lifecycle.jsonl")
@@ -560,6 +648,117 @@ def lifecycle_events(limit: int = 100):
     except Exception:
         pass
     return {"events": events}
+
+@app.get("/sessions")
+def list_sessions(root: Optional[str] = None, limit: int = 100):
+    """List available sessions on disk."""
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be >= 1")
+    root_dir = root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    safe_root = validate_path(root_dir)
+    if not os.path.isdir(safe_root):
+        return {"root": safe_root, "sessions": []}
+    current_session = read_session_dir()
+    entries: List[Dict[str, Any]] = []
+    for name in os.listdir(safe_root):
+        session_dir = os.path.join(safe_root, name)
+        if not os.path.isdir(session_dir):
+            continue
+        session_json = os.path.join(session_dir, "session.json")
+        data: Dict[str, Any] = {
+            "session_id": name,
+            "session_dir": session_dir,
+            "active": session_dir == current_session,
+            "state": read_session_state(session_dir),
+            "has_session_json": os.path.exists(session_json),
+            "last_modified_epoch": int(os.path.getmtime(session_dir)),
+        }
+        if data["has_session_json"]:
+            try:
+                with open(session_json, "r") as f:
+                    data["manifest"] = json.load(f)
+            except Exception:
+                data["manifest"] = None
+        entries.append(data)
+    entries.sort(key=lambda item: item.get("last_modified_epoch", 0), reverse=True)
+    return {"root": safe_root, "sessions": entries[:limit]}
+
+@app.post("/sessions/suspend")
+def suspend_session(data: Optional[SessionSuspendModel] = Body(default=None)):
+    """Suspend a session without terminating the container."""
+    if data is None:
+        data = SessionSuspendModel()
+    current_session = read_session_dir()
+    session_dir = resolve_session_dir(data.session_id, data.session_dir, data.session_root) if (
+        data.session_id or data.session_dir
+    ) else current_session
+    if not session_dir:
+        raise HTTPException(status_code=404, detail="No active session to suspend")
+    if not os.path.isdir(session_dir):
+        raise HTTPException(status_code=404, detail="Session directory not found")
+
+    if data.stop_recording and session_dir == current_session and recorder_running(session_dir):
+        try:
+            stop_recording()
+        except Exception:
+            pass
+    if data.shutdown_wine:
+        graceful_wine_shutdown(session_dir)
+    write_session_state(session_dir, "suspended")
+    append_lifecycle_event(session_dir, "session_suspended", "Session suspended via API", source="api")
+    return {"status": "suspended", "session_dir": session_dir, "session_id": os.path.basename(session_dir)}
+
+@app.post("/sessions/resume")
+def resume_session(data: Optional[SessionResumeModel] = Body(default=None)):
+    """Resume an existing session directory."""
+    if data is None:
+        data = SessionResumeModel()
+    current_session = read_session_dir()
+    target_dir = resolve_session_dir(data.session_id, data.session_dir, data.session_root)
+    if not os.path.isdir(target_dir):
+        raise HTTPException(status_code=404, detail="Session directory not found")
+    session_json = os.path.join(target_dir, "session.json")
+    if not os.path.exists(session_json):
+        write_session_manifest(target_dir, os.path.basename(target_dir))
+    ensure_session_subdirs(target_dir)
+    user_dir = os.path.join(target_dir, "user")
+    os.makedirs(user_dir, exist_ok=True)
+    ensure_user_profile(user_dir)
+
+    if current_session and current_session != target_dir:
+        if data.stop_recording and recorder_running(current_session):
+            try:
+                stop_recording()
+            except Exception:
+                pass
+        write_session_state(current_session, "suspended")
+        append_lifecycle_event(current_session, "session_suspended", "Session suspended via API", source="api")
+        if data.restart_wine:
+            graceful_wine_shutdown(current_session)
+
+    write_session_dir(target_dir)
+    os.environ["WINEBOT_SESSION_DIR"] = target_dir
+    os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
+    os.environ["WINEBOT_USER_DIR"] = user_dir
+    link_wine_user_dir(user_dir)
+    write_session_state(target_dir, "active")
+    append_lifecycle_event(target_dir, "session_resumed", "Session resumed via API", source="api")
+
+    if data.restart_wine:
+        try:
+            subprocess.Popen(["wine", "explorer"])
+        except Exception:
+            pass
+
+    status = "resumed"
+    if current_session == target_dir:
+        status = "already_active"
+    return {
+        "status": status,
+        "session_dir": target_dir,
+        "session_id": os.path.basename(target_dir),
+        "previous_session": current_session,
+    }
 
 def _shutdown_process(session_dir: Optional[str], delay: float, sig: int = signal.SIGTERM) -> None:
     time.sleep(delay)
