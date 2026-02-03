@@ -101,6 +101,23 @@
       box-shadow: 0 8px 18px var(--shadow);
     }
 
+    .config-block {
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(34, 48, 58, 0.6);
+    }
+
+    .config-block:last-of-type {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .config-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
     .section-title {
       font-size: 0.95rem;
       font-weight: 600;
@@ -242,6 +259,49 @@
       margin-bottom: 0;
     }
 
+    .hidden {
+      display: none !important;
+    }
+
+    .session-ended {
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 10, 12, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 24px;
+    }
+
+    .ended-card {
+      width: min(520px, 90vw);
+      background: #0f171d;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+      padding: 22px;
+      text-align: left;
+    }
+
+    .ended-card h2 {
+      margin: 0 0 8px;
+      font-size: 1.3rem;
+    }
+
+    .ended-card p {
+      margin: 6px 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .ended-actions {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
     @media (max-width: 980px) {
       #app {
         flex-direction: column;
@@ -275,42 +335,37 @@
       </div>
 
       <div class="panel-section">
-        <div class="section-title">API Access</div>
-        <label for="api-token">API Token (optional)</label>
-        <input id="api-token" type="password" placeholder="X-API-Key" />
-        <div class="button-row" style="margin-top: 10px;">
-          <button id="save-token" class="secondary">Save Token</button>
-          <button id="clear-token" class="secondary">Clear</button>
+        <div class="section-title">Configuration</div>
+        <div class="config-block">
+          <div class="config-title">API Access</div>
+          <label for="api-token">API Token (optional)</label>
+          <input id="api-token" type="password" placeholder="X-API-Key" />
+          <div class="button-row" style="margin-top: 10px;">
+            <button id="save-token" class="secondary">Save Token</button>
+            <button id="clear-token" class="secondary">Clear</button>
+          </div>
+          <div class="hint">Stored in localStorage for this browser.</div>
         </div>
-        <div class="hint">Stored in localStorage for this browser.</div>
-      </div>
-
-      <div class="panel-section">
-        <div class="section-title">VNC Access</div>
-        <label for="vnc-password">VNC Password</label>
-        <input id="vnc-password" type="password" placeholder="VNC password" />
-        <div class="button-row" style="margin-top: 10px;">
-          <button id="save-vnc" class="secondary">Save Password</button>
-          <button id="clear-vnc" class="secondary">Clear</button>
+        <div class="config-block">
+          <div class="config-title">VNC Access</div>
+          <label for="vnc-password">VNC Password</label>
+          <input id="vnc-password" type="password" placeholder="VNC password" />
+          <div class="button-row" style="margin-top: 10px;">
+            <button id="save-vnc" class="secondary">Save Password</button>
+            <button id="clear-vnc" class="secondary">Clear</button>
+          </div>
+          <div class="hint">Used only for the embedded noVNC session.</div>
         </div>
-        <div class="hint">Used only for the embedded noVNC session.</div>
       </div>
 
       <div class="panel-section">
         <div class="section-title">Quick Actions</div>
-        <label for="artifacts-root">Save artifacts to</label>
-        <select id="artifacts-root">
-          <option value="/artifacts" selected>/artifacts (persistent)</option>
-          <option value="/tmp">/tmp (ephemeral)</option>
-        </select>
         <div class="button-row">
           <button id="btn-screenshot">Take Screenshot</button>
         </div>
         <div id="screenshot-status" class="status-text"></div>
-      </div>
-
-      <div class="panel-section" id="recording-panel">
-        <div class="section-title">Recording</div>
+        <div id="recording-panel" style="margin-top: 14px;">
+          <div class="section-title">Recording</div>
         <div class="button-row">
           <button id="btn-record-start">Start</button>
           <button id="btn-record-pause" class="warn">Pause</button>
@@ -318,6 +373,7 @@
           <button id="btn-record-stop" class="danger">Stop</button>
         </div>
         <div id="recording-status" class="status-text"></div>
+        </div>
       </div>
 
       <div class="panel-section">
@@ -351,6 +407,19 @@
     </aside>
   </div>
 
+  <div id="session-ended" class="session-ended hidden">
+    <div class="ended-card">
+      <h2>Session ended</h2>
+      <p id="ended-reason">The WineBot session is no longer reachable.</p>
+      <p id="ended-detail">Polling will slow down and stop after a few minutes.</p>
+      <div class="ended-actions">
+        <button id="btn-resume" class="secondary">Continue polling</button>
+        <button id="btn-close-tab" class="danger">Close tab</button>
+      </div>
+      <div id="ended-status" class="hint"></div>
+    </div>
+  </div>
+
   <script type="module">
     const vncContainer = document.getElementById("vnc-container");
     const badgeVnc = document.getElementById("badge-vnc");
@@ -374,7 +443,6 @@
 
     const screenshotBtn = document.getElementById("btn-screenshot");
     const screenshotStatus = document.getElementById("screenshot-status");
-    const artifactsRoot = document.getElementById("artifacts-root");
 
     const recordStartBtn = document.getElementById("btn-record-start");
     const recordPauseBtn = document.getElementById("btn-record-pause");
@@ -387,12 +455,30 @@
     const lifecycleEvents = document.getElementById("lifecycle-events");
     const shutdownBtn = document.getElementById("btn-shutdown");
     const powerOffBtn = document.getElementById("btn-poweroff");
+    const sessionEndedOverlay = document.getElementById("session-ended");
+    const endedReason = document.getElementById("ended-reason");
+    const endedDetail = document.getElementById("ended-detail");
+    const endedStatus = document.getElementById("ended-status");
+    const resumePollingBtn = document.getElementById("btn-resume");
+    const closeTabBtn = document.getElementById("btn-close-tab");
 
     const API_TOKEN_KEY = "winebot_api_token";
     const VNC_PASSWORD_KEY = "winebot_vnc_password";
-    const ARTIFACTS_ROOT_KEY = "winebot_artifacts_root";
     let rfbInstance = null;
     let vncNeedsCredentials = false;
+    let vncConnected = false;
+    let pollTimer = null;
+    let pollStopped = false;
+    let pollMode = "normal";
+    let pollFailureStreak = 0;
+    let backoffIndex = 0;
+    let backoffElapsedMs = 0;
+    const BASE_BACKOFF_MS = 5000;
+    const MAX_BACKOFF_MS = 180000;
+    const MAX_BACKOFF_DELAY_MS = 60000;
+    let sessionEndedReason = null;
+    let nextPollAt = 0;
+    let countdownTimer = null;
 
     function getToken() {
       return localStorage.getItem(API_TOKEN_KEY) || "";
@@ -418,22 +504,6 @@
       }
     }
 
-    function getArtifactsRoot() {
-      return localStorage.getItem(ARTIFACTS_ROOT_KEY) || "/artifacts";
-    }
-
-    function setArtifactsRoot(value) {
-      if (value) {
-        localStorage.setItem(ARTIFACTS_ROOT_KEY, value);
-      } else {
-        localStorage.removeItem(ARTIFACTS_ROOT_KEY);
-      }
-    }
-
-    function artifactsPath(root, subdir) {
-      const cleaned = (root || "/artifacts").replace(/\/+$/, "");
-      return `${cleaned}/${subdir}`;
-    }
 
     function resetVncCanvas() {
       const canvases = vncContainer.querySelectorAll("canvas");
@@ -453,6 +523,107 @@
       setBadge(element, `${label}: ${status}`, running ? "ok" : "error");
     }
 
+    function showSessionEnded(reasonKey, reasonText, detailText) {
+      sessionEndedReason = reasonKey;
+      endedReason.textContent = reasonText;
+      endedDetail.textContent = detailText;
+      sessionEndedOverlay.classList.remove("hidden");
+      endedStatus.textContent = "";
+    }
+
+    function hideSessionEnded() {
+      sessionEndedReason = null;
+      sessionEndedOverlay.classList.add("hidden");
+      endedStatus.textContent = "";
+    }
+
+    function enterBackoff(reasonKey, reasonText, detailText) {
+      const switchingReason = sessionEndedReason && sessionEndedReason !== reasonKey;
+      if (pollMode !== "backoff" || switchingReason) {
+        backoffIndex = 0;
+        backoffElapsedMs = 0;
+      }
+      pollMode = "backoff";
+      if (!sessionEndedReason || sessionEndedReason !== reasonKey) {
+        showSessionEnded(reasonKey, reasonText, detailText);
+      }
+    }
+
+    function exitBackoff(reasonKey) {
+      if (sessionEndedReason === reasonKey) {
+        hideSessionEnded();
+      }
+      pollMode = "normal";
+      pollFailureStreak = 0;
+      backoffIndex = 0;
+      backoffElapsedMs = 0;
+      pollStopped = false;
+      stopCountdown();
+    }
+
+    function nextPollDelay() {
+      if (pollMode === "backoff") {
+        const delay = Math.min(MAX_BACKOFF_DELAY_MS, BASE_BACKOFF_MS * (2 ** backoffIndex));
+        if (backoffElapsedMs + delay >= MAX_BACKOFF_MS) {
+          pollStopped = true;
+          endedStatus.textContent = "Polling stopped. Click Continue polling to retry.";
+          return null;
+        }
+        backoffIndex += 1;
+        backoffElapsedMs += delay;
+        endedStatus.textContent = `Next retry in ${Math.round(delay / 1000)}s (backoff).`;
+        return delay;
+      }
+      return 5000;
+    }
+
+    function stopCountdown() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+    }
+
+    function startCountdown() {
+      stopCountdown();
+      countdownTimer = setInterval(() => {
+        if (!nextPollAt || pollStopped) {
+          return;
+        }
+        const remaining = Math.max(0, Math.ceil((nextPollAt - Date.now()) / 1000));
+        if (pollMode === "backoff") {
+          endedStatus.textContent = remaining
+            ? `Next retry in ${remaining}s (backoff).`
+            : "Retrying now...";
+        }
+      }, 1000);
+    }
+
+    function scheduleNextPoll(delay) {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+      }
+      if (delay === null) {
+        stopCountdown();
+        return;
+      }
+      nextPollAt = Date.now() + delay;
+      if (pollMode === "backoff") {
+        startCountdown();
+      } else {
+        stopCountdown();
+      }
+      pollTimer = setTimeout(runPoll, delay);
+    }
+
+    async function runPoll() {
+      await updateDashboard();
+      if (pollStopped) {
+        return;
+      }
+      scheduleNextPoll(nextPollDelay());
+    }
+
     async function apiFetch(path, options = {}) {
       const headers = new Headers(options.headers || {});
       const token = getToken();
@@ -464,7 +635,7 @@
 
     async function updateDashboard() {
       try {
-        const [health, x11, windows, recording, storage, lifecycle, events] = await Promise.all([
+        const results = await Promise.allSettled([
           apiFetch("/health"),
           apiFetch("/health/x11"),
           apiFetch("/health/windows"),
@@ -474,29 +645,69 @@
           apiFetch("/lifecycle/events?limit=6")
         ]);
 
-        if (health.ok) {
-          const data = await health.json();
-          setBadge(badgeHealth, `/health: ${data.status}`, data.status === "ok" ? "ok" : "warn");
+        const [healthRes, x11Res, windowsRes, recordingRes, storageRes, lifecycleRes, eventsRes] =
+          results.map((result) => (result.status === "fulfilled" ? result.value : null));
+
+        const healthData = healthRes ? await safeJson(healthRes) : null;
+        const x11Data = x11Res ? await safeJson(x11Res) : null;
+        const windowsData = windowsRes ? await safeJson(windowsRes) : null;
+        const recordingData = recordingRes ? await safeJson(recordingRes) : null;
+        const storageData = storageRes ? await safeJson(storageRes) : null;
+        const lifecycleData = lifecycleRes ? await safeJson(lifecycleRes) : null;
+        const eventsData = eventsRes ? await safeJson(eventsRes) : null;
+
+        const apiForbidden = Boolean(healthRes && healthRes.status === 403);
+        const apiHealthy = Boolean(healthRes && healthRes.ok && healthData);
+        if (apiHealthy) {
+          setBadge(badgeHealth, `/health: ${healthData.status}`, healthData.status === "ok" ? "ok" : "warn");
+        } else if (healthRes) {
+          const label = healthRes.status === 403 ? "auth required" : healthRes.status;
+          setBadge(badgeHealth, `/health: ${label}`, healthRes.status === 403 ? "warn" : "error");
         } else {
-          setBadge(badgeHealth, `/health: ${health.status}`, "error");
+          setBadge(badgeHealth, `/health: error`, "error");
         }
 
-        if (x11.ok) {
-          const data = await x11.json();
+        if (!apiHealthy && !apiForbidden) {
+          pollFailureStreak += 1;
+          if (pollFailureStreak >= 2) {
+            enterBackoff("api", "Session disconnected", "API is unreachable. Waiting for reconnect...");
+          }
+        } else if (apiHealthy && pollFailureStreak > 0) {
+          pollFailureStreak = 0;
+          if (sessionEndedReason === "api") {
+            if (!vncConnected) {
+              enterBackoff("vnc", "Live session reconnecting", "API is back. Waiting for live session...");
+              restartVnc();
+            } else {
+              exitBackoff("api");
+            }
+          } else {
+            exitBackoff("api");
+          }
+        }
+
+        if (x11Res && x11Res.ok && x11Data) {
+          const data = x11Data;
           setBadge(badgeX11, `/health/x11: ${data.connected ? "connected" : "down"}`, data.connected ? "ok" : "error");
+        } else if (x11Res) {
+          const label = x11Res.status === 403 ? "auth required" : x11Res.status;
+          setBadge(badgeX11, `/health/x11: ${label}`, x11Res.status === 403 ? "warn" : "error");
         } else {
-          setBadge(badgeX11, `/health/x11: ${x11.status}`, "error");
+          setBadge(badgeX11, `/health/x11: error`, "error");
         }
 
-        if (windows.ok) {
-          const data = await windows.json();
+        if (windowsRes && windowsRes.ok && windowsData) {
+          const data = windowsData;
           setBadge(badgeWindows, `/health/windows: ${data.count} windows`, data.count > 0 ? "ok" : "warn");
+        } else if (windowsRes) {
+          const label = windowsRes.status === 403 ? "auth required" : windowsRes.status;
+          setBadge(badgeWindows, `/health/windows: ${label}`, windowsRes.status === 403 ? "warn" : "error");
         } else {
-          setBadge(badgeWindows, `/health/windows: ${windows.status}`, "error");
+          setBadge(badgeWindows, `/health/windows: error`, "error");
         }
 
-        if (recording.ok) {
-          const data = await recording.json();
+        if (recordingRes && recordingRes.ok && recordingData) {
+          const data = recordingData;
           const running = data.recorder_running === true;
           const state = data.state || (running ? "recording" : "idle");
           setBadge(badgeRecording, `/health/recording: ${state}`, running ? "ok" : "warn");
@@ -507,7 +718,7 @@
             recordPauseBtn.disabled = true;
             recordResumeBtn.disabled = true;
             recordStopBtn.disabled = true;
-            return;
+            // Recording disabled; keep updating the rest of the dashboard.
           }
           recordStartBtn.disabled = running;
           recordStopBtn.disabled = !running;
@@ -518,23 +729,29 @@
             recordPauseBtn.disabled = !running;
             recordResumeBtn.disabled = true;
           }
-        } else {
-          setBadge(badgeRecording, `/health/recording: ${recording.status}`, "error");
+        } else if (recordingRes) {
+          const label = recordingRes.status === 403 ? "auth required" : recordingRes.status;
+          setBadge(badgeRecording, `/health/recording: ${label}`, recordingRes.status === 403 ? "warn" : "error");
           recordStartBtn.disabled = false;
           recordPauseBtn.disabled = true;
           recordResumeBtn.disabled = true;
           recordStopBtn.disabled = true;
-        }
-
-        if (storage.ok) {
-          const data = await storage.json();
-          setBadge(badgeStorage, `/health/storage: ${data.ok ? "ok" : "check"}`, data.ok ? "ok" : "warn");
         } else {
-          setBadge(badgeStorage, `/health/storage: ${storage.status}`, "error");
+          setBadge(badgeRecording, `/health/recording: error`, "error");
         }
 
-        if (lifecycle.ok) {
-          const data = await lifecycle.json();
+        if (storageRes && storageRes.ok && storageData) {
+          const data = storageData;
+          setBadge(badgeStorage, `/health/storage: ${data.ok ? "ok" : "check"}`, data.ok ? "ok" : "warn");
+        } else if (storageRes) {
+          const label = storageRes.status === 403 ? "auth required" : storageRes.status;
+          setBadge(badgeStorage, `/health/storage: ${label}`, storageRes.status === 403 ? "warn" : "error");
+        } else {
+          setBadge(badgeStorage, `/health/storage: error`, "error");
+        }
+
+        if (lifecycleRes && lifecycleRes.ok && lifecycleData) {
+          const data = lifecycleData;
           lifecycleStatus.textContent = "Lifecycle: ok";
           if (data.session_id) {
             const session = data.session_id;
@@ -551,35 +768,57 @@
           setProcessBadge(badgeWine, "Wine", processes.wine_explorer?.ok === true);
           shutdownBtn.disabled = false;
           powerOffBtn.disabled = false;
-        } else {
-          lifecycleStatus.textContent = `Lifecycle: ${lifecycle.status}`;
+        } else if (lifecycleRes) {
+          const label = lifecycleRes.status === 403 ? "auth required" : lifecycleRes.status;
+          lifecycleStatus.textContent = `Lifecycle: ${label}`;
           lifecycleSession.textContent = "";
           setBadge(badgeXvfb, "Xvfb: unknown", "warn");
           setBadge(badgeOpenbox, "Openbox: unknown", "warn");
           setBadge(badgeVncProcess, "VNC: unknown", "warn");
           setBadge(badgeNoVnc, "noVNC: unknown", "warn");
           setBadge(badgeWine, "Wine: unknown", "warn");
+          shutdownBtn.disabled = lifecycleRes.status === 403;
+          powerOffBtn.disabled = lifecycleRes.status === 403;
+        } else {
+          lifecycleStatus.textContent = "Lifecycle: error";
+          lifecycleSession.textContent = "";
+          setBadge(badgeXvfb, "Xvfb: error", "error");
+          setBadge(badgeOpenbox, "Openbox: error", "error");
+          setBadge(badgeVncProcess, "VNC: error", "error");
+          setBadge(badgeNoVnc, "noVNC: error", "error");
+          setBadge(badgeWine, "Wine: error", "error");
           shutdownBtn.disabled = true;
           powerOffBtn.disabled = true;
         }
 
-        if (events.ok) {
-          const data = await events.json();
-          renderLifecycleEvents(data.events || []);
+        if (eventsRes && eventsRes.ok && eventsData) {
+          renderLifecycleEvents(eventsData.events || []);
+        } else if (eventsRes && eventsRes.status === 403) {
+          lifecycleEvents.textContent = "Events: auth required";
         } else {
           renderLifecycleEvents([]);
         }
       } catch (err) {
         setBadge(badgeHealth, "/health: error", "error");
+        pollFailureStreak += 1;
+        if (pollFailureStreak >= 2) {
+          enterBackoff("api", "Session disconnected", "API is unreachable. Waiting for reconnect...");
+        }
+      }
+    }
+
+    async function safeJson(response) {
+      try {
+        return await response.json();
+      } catch (err) {
+        return null;
       }
     }
 
     async function takeScreenshot() {
       screenshotStatus.textContent = "Capturing screenshot...";
       try {
-        const root = getArtifactsRoot();
-        const sessionRoot = encodeURIComponent(artifactsPath(root, "sessions"));
-        const response = await apiFetch(`/screenshot?session_root=${sessionRoot}`);
+        const response = await apiFetch("/screenshot");
         if (!response.ok) {
           throw new Error(`Screenshot failed: ${response.status}`);
         }
@@ -608,11 +847,6 @@
       recordStatus.textContent = `${action}...`;
       try {
         const options = { method: "POST" };
-        if (action === "start") {
-          const root = getArtifactsRoot();
-          options.headers = { "Content-Type": "application/json" };
-          options.body = JSON.stringify({ session_root: artifactsPath(root, "sessions") });
-        }
         const response = await apiFetch(`/recording/${action}`, options);
         if (!response.ok) {
           throw new Error(`Recording ${action} failed: ${response.status}`);
@@ -707,13 +941,6 @@
       });
     }
 
-    function initArtifactsControls() {
-      artifactsRoot.value = getArtifactsRoot();
-      artifactsRoot.addEventListener("change", () => {
-        setArtifactsRoot(artifactsRoot.value);
-      });
-    }
-
     function initActions() {
       screenshotBtn.addEventListener("click", takeScreenshot);
       recordStartBtn.addEventListener("click", () => postRecordingAction("start"));
@@ -722,6 +949,26 @@
       recordStopBtn.addEventListener("click", () => postRecordingAction("stop"));
       shutdownBtn.addEventListener("click", () => requestShutdown(false));
       powerOffBtn.addEventListener("click", () => requestShutdown(true));
+      resumePollingBtn.addEventListener("click", () => {
+        const reason = sessionEndedReason;
+        pollStopped = false;
+        pollMode = "backoff";
+        backoffIndex = 0;
+        backoffElapsedMs = 0;
+        if (reason === "vnc") {
+          restartVnc();
+        }
+        endedStatus.textContent = "Resuming polling...";
+        scheduleNextPoll(BASE_BACKOFF_MS);
+      });
+      closeTabBtn.addEventListener("click", () => {
+        window.close();
+        setTimeout(() => {
+          if (!window.closed) {
+            endedStatus.textContent = "Tab could not be closed automatically. Please close it manually.";
+          }
+        }, 300);
+      });
     }
 
     async function initVnc() {
@@ -732,9 +979,15 @@
         rfbInstance = new mod.default(vncContainer, "ws://localhost:6080");
         rfbInstance.addEventListener("connect", () => {
           setBadge(badgeVnc, "connected", "ok");
+          vncConnected = true;
+          if (sessionEndedReason === "vnc") {
+            exitBackoff("vnc");
+          }
         });
         rfbInstance.addEventListener("disconnect", () => {
           setBadge(badgeVnc, "disconnected", "error");
+          vncConnected = false;
+          enterBackoff("vnc", "Live session disconnected", "noVNC connection lost. Waiting for reconnect...");
         });
         rfbInstance.addEventListener("credentialsrequired", () => {
           const password = getVncPassword();
@@ -765,12 +1018,10 @@
 
     initTokenControls();
     initVncControls();
-    initArtifactsControls();
     initActions();
     initVnc();
 
-    updateDashboard();
-    setInterval(updateDashboard, 5000);
+    runPoll();
   </script>
 </body>
 </html>

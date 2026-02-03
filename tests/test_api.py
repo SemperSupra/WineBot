@@ -302,7 +302,7 @@ def test_lifecycle_events(tmp_path, auth_headers):
             assert len(events) == 1
             assert events[0]["kind"] == "two"
 
-@patch("api.server._shutdown_process")
+@patch("api.server.schedule_shutdown")
 def test_lifecycle_shutdown(mock_shutdown, tmp_path, auth_headers):
     session_dir = tmp_path / "session-2"
     (session_dir / "logs").mkdir(parents=True)
@@ -320,7 +320,7 @@ def test_lifecycle_shutdown(mock_shutdown, tmp_path, auth_headers):
                         assert "wine_shutdown" in payload
                         assert "component_shutdown" in payload
 
-@patch("api.server._shutdown_process")
+@patch("api.server.schedule_shutdown")
 def test_lifecycle_power_off(mock_shutdown, tmp_path, auth_headers):
     session_dir = tmp_path / "session-3"
     (session_dir / "logs").mkdir(parents=True)

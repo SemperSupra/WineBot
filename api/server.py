@@ -17,6 +17,7 @@ import json
 import re
 import fcntl
 import signal
+import threading
 
 app = FastAPI(title="WineBot API", description="Internal API for controlling WineBot")
 START_TIME = time.time()
@@ -560,12 +561,44 @@ def lifecycle_events(limit: int = 100):
         pass
     return {"events": events}
 
-def _shutdown_process(delay: float, sig: int = signal.SIGTERM) -> None:
+def _shutdown_process(session_dir: Optional[str], delay: float, sig: int = signal.SIGTERM) -> None:
     time.sleep(delay)
+    append_lifecycle_event(
+        session_dir,
+        "shutdown_signal",
+        f"Sending signal {sig} to pid 1",
+        source="api",
+        extra={"signal": sig, "delay": delay},
+    )
     try:
         os.kill(1, sig)
-    except Exception:
+    except Exception as exc:
+        append_lifecycle_event(
+            session_dir,
+            "shutdown_signal_failed",
+            "Failed to signal pid 1",
+            source="api",
+            extra={"signal": sig, "error": str(exc)},
+        )
         os._exit(0)
+
+def schedule_shutdown(session_dir: Optional[str], delay: float, sig: int) -> None:
+    append_lifecycle_event(
+        session_dir,
+        "shutdown_scheduled",
+        "Shutdown scheduled",
+        source="api",
+        extra={"signal": sig, "delay": delay},
+    )
+    thread = threading.Thread(target=_shutdown_process, args=(session_dir, delay, sig), daemon=True)
+    thread.start()
+    try:
+        subprocess.Popen(
+            ["/bin/sh", "-c", f"sleep {max(0.0, delay)}; kill -{int(sig)} 1"],
+            start_new_session=True,
+        )
+    except Exception:
+        pass
 
 def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
@@ -618,7 +651,7 @@ def lifecycle_shutdown(
     append_lifecycle_event(session_dir, "shutdown_requested", "Shutdown requested via API", source="api")
     if power_off:
         append_lifecycle_event(session_dir, "power_off", "Immediate shutdown requested", source="api")
-        background_tasks.add_task(_shutdown_process, max(0.0, delay), signal.SIGKILL)
+        schedule_shutdown(session_dir, max(0.0, delay), signal.SIGKILL)
         return {"status": "powering_off", "delay_seconds": delay}
 
     wine_result = None
@@ -631,7 +664,7 @@ def lifecycle_shutdown(
         except Exception:
             pass
     component_result = graceful_component_shutdown(session_dir)
-    background_tasks.add_task(_shutdown_process, delay, signal.SIGTERM)
+    schedule_shutdown(session_dir, delay, signal.SIGTERM)
     response: Dict[str, Any] = {"status": "shutting_down", "delay_seconds": delay}
     if wine_shutdown:
         response["wine_shutdown"] = wine_result
