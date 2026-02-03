@@ -17,3 +17,7 @@ __pycache__/
 
 # Local archives
 WineBot-codex-starter-files.zip
+
+# Artifacts (keep empty dir)
+/artifacts/*
+!/artifacts/.gitkeep
