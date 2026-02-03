@@ -92,6 +92,9 @@ service_running() {
 compose_up() {
   local profile="$1"
   local service="$2"
+  # Docker Compose v1 sometimes fails with ContainerConfig errors if stale containers exist.
+  # Proactively clear any leftovers before starting.
+  "${compose_cmd[@]}" -f "$compose_file" down --remove-orphans >/dev/null 2>&1 || true
   local args=("${compose_cmd[@]}" -f "$compose_file" --profile "$profile" up -d)
   if [ "$build" = "1" ]; then
     args+=(--build)
@@ -314,12 +317,15 @@ compose_exec headless winebot "
     
     echo 'Starting Server for Integration Check (Secured)...'
     export API_TOKEN='smoke-secret'
-    uvicorn api.server:app --host 0.0.0.0 --port 8000 > /tmp/uvicorn.log 2>&1 &
+    export WINEBOT_RECORD='1'
+    API_PORT=18000
+    BASE_URL=\"http://localhost:\${API_PORT}\"
+    uvicorn api.server:app --host 0.0.0.0 --port \${API_PORT} > /tmp/uvicorn.log 2>&1 &
     PID=\$!
     sleep 5
     
     echo 'Checking Health Endpoint (with Token)...'
-    if curl -s --fail -H 'X-API-Key: smoke-secret' http://localhost:8000/health; then
+    if curl -s --fail -H 'X-API-Key: smoke-secret' \"\${BASE_URL}/health\"; then
         echo ' API Health OK'
     else
         echo ' API Health Failed'
@@ -330,7 +336,7 @@ compose_exec headless winebot "
 
     echo 'Checking Health Subendpoints (with Token)...'
     for ep in /health/system /health/x11 /health/windows /health/wine /health/tools /health/storage /health/recording; do
-        if curl -s --fail -H 'X-API-Key: smoke-secret' http://localhost:8000\${ep} >/dev/null; then
+        if curl -s --fail -H 'X-API-Key: smoke-secret' \"\${BASE_URL}\${ep}\" >/dev/null; then
             echo \" \${ep} OK\"
         else
             echo \" \${ep} Failed\"
@@ -343,7 +349,7 @@ compose_exec headless winebot "
     echo 'Checking Inspect Window Endpoint (list_only)...'
     if curl -s --fail -H 'X-API-Key: smoke-secret' \\
         -H 'Content-Type: application/json' \\
-        -X POST http://localhost:8000/inspect/window \\
+        -X POST \"\${BASE_URL}/inspect/window\" \\
         -d '{\"list_only\":true}' | grep -q '\"status\":\"success\"'; then
         echo ' /inspect/window OK'
     else
@@ -356,7 +362,7 @@ compose_exec headless winebot "
     echo 'Checking Screenshot Metadata (PNG + JSON)...'
     curl -s --fail -H 'X-API-Key: smoke-secret' \\
         -D /tmp/screenshot_headers.txt \\
-        'http://localhost:8000/screenshot?label=smoke-metadata&tag=smoke-test' \\
+        \"\${BASE_URL}/screenshot?label=smoke-metadata&tag=smoke-test\" \\
         -o /dev/null
     sleep 1
     req_id=\$(awk 'BEGIN{IGNORECASE=1} /^x-request-id:/ {print \$2}' /tmp/screenshot_headers.txt | tr -d '\\r')
@@ -366,14 +372,20 @@ compose_exec headless winebot "
         kill \$PID
         exit 1
     fi
-    latest_json=\$(ls -t /tmp/screenshot_*.png.json 2>/dev/null | head -n 1)
-    if [ -z \"\$latest_json\" ]; then
-        echo ' Missing screenshot JSON sidecar'
+    meta_path=\$(awk 'BEGIN{IGNORECASE=1} /^x-screenshot-metadata-path:/ {print \$2}' /tmp/screenshot_headers.txt | tr -d '\\r')
+    if [ -z \"\$meta_path\" ]; then
+        echo ' Missing X-Screenshot-Metadata-Path header'
         cat /tmp/uvicorn.log
         kill \$PID
         exit 1
     fi
-    python3 /scripts/verify-screenshot-metadata.py --json \"\$latest_json\" --req-id \"\$req_id\" --tag smoke-test
+    if ! test -s \"\$meta_path\"; then
+        echo ' Missing screenshot JSON sidecar in container'
+        cat /tmp/uvicorn.log
+        kill \$PID
+        exit 1
+    fi
+    python3 /scripts/verify-screenshot-metadata.py --json \"\$meta_path\" --req-id \"\$req_id\" --tag smoke-test
     if [ \$? -ne 0 ]; then
         echo ' Screenshot metadata validation failed'
         cat /tmp/uvicorn.log
@@ -382,10 +394,13 @@ compose_exec headless winebot "
     fi
     echo ' Screenshot metadata OK'
 
+    echo 'Checking Recording API state machine...'
+    BASE_URL=\"\${BASE_URL}\" API_TOKEN='smoke-secret' /scripts/recording-smoke-test.sh
+
     echo 'Checking winedbg API (default command)...'
     if curl -s --fail -H 'X-API-Key: smoke-secret' \\
         -H 'Content-Type: application/json' \\
-        -X POST http://localhost:8000/run/winedbg \\
+        -X POST \"\${BASE_URL}/run/winedbg\" \\
         -d '{\"path\":\"/wineprefix/drive_c/windows/system32/cmd.exe\",\"mode\":\"default\",\"command\":\"info proc\"}' | grep -q '\"status\":\"launched\"'; then
         echo ' /run/winedbg OK'
     else

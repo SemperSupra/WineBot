@@ -7,7 +7,7 @@ Usage: scripts/auto-view.sh [options]
 
 Options:
   --mode auto|novnc|vnc  Viewer mode (default: auto)
-  --novnc-url URL        noVNC URL (default: http://localhost:6080/vnc.html?autoconnect=1&resize=scale)
+  --novnc-url URL        Dashboard/noVNC URL (default: http://localhost:8000/ui)
   --novnc-password PASS  noVNC password (optional; enables auto-connect without prompts)
   --no-password-url      Do not embed the password in the URL (disables auto-connect if password required)
   --vnc-host HOST        VNC host (default: localhost)
@@ -20,7 +20,7 @@ EOF
 }
 
 mode="auto"
-novnc_url="http://localhost:6080/vnc.html?autoconnect=1&resize=scale"
+novnc_url="http://localhost:8000/ui"
 novnc_password=""
 no_password_url="0"
 vnc_host="localhost"

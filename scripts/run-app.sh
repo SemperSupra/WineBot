@@ -21,7 +21,7 @@ Options:
   --winedbg-script PATH        Run winedbg commands from a file (default mode only).
   --record                     Enable session recording.
   --view [novnc|vnc|auto]      Auto-open viewer (forces --mode interactive, implies --detach).
-  --novnc-url URL              Override noVNC URL (default: http://localhost:6080/vnc.html?autoconnect=1&resize=scale).
+  --novnc-url URL              Override dashboard/noVNC URL (default: http://localhost:8000/ui).
   --novnc-password PASS        noVNC password (optional; enables auto-connect without prompts).
   --no-password-url            Do not embed the password in the URL.
   --vnc-host HOST              VNC host (default: localhost).
@@ -309,9 +309,8 @@ env "${env_vars[@]}" "${compose_args[@]}"
 
 if [ -n "$view_mode" ]; then
   novnc_host="${NOVNC_HOST:-localhost}"
-  novnc_port="${NOVNC_PORT:-6080}"
   if [ -z "$novnc_url" ]; then
-    novnc_url="http://${novnc_host}:${novnc_port}/vnc.html?autoconnect=1&resize=scale"
+    novnc_url="http://${novnc_host}:8000/ui"
   fi
   if [ "$novnc_password_set" != "1" ]; then
     if [ -n "${NOVNC_PASSWORD:-}" ]; then

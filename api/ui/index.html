@@ -128,6 +128,16 @@
       font-size: 0.9rem;
     }
 
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0d1418;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+
     button {
       border: 0;
       border-radius: 8px;
@@ -256,14 +266,30 @@
       </div>
 
       <div class="panel-section">
+        <div class="section-title">VNC Access</div>
+        <label for="vnc-password">VNC Password</label>
+        <input id="vnc-password" type="password" placeholder="VNC password" />
+        <div class="button-row" style="margin-top: 10px;">
+          <button id="save-vnc" class="secondary">Save Password</button>
+          <button id="clear-vnc" class="secondary">Clear</button>
+        </div>
+        <div class="hint">Used only for the embedded noVNC session.</div>
+      </div>
+
+      <div class="panel-section">
         <div class="section-title">Quick Actions</div>
+        <label for="artifacts-root">Save artifacts to</label>
+        <select id="artifacts-root">
+          <option value="/artifacts" selected>/artifacts (persistent)</option>
+          <option value="/tmp">/tmp (ephemeral)</option>
+        </select>
         <div class="button-row">
           <button id="btn-screenshot">Take Screenshot</button>
         </div>
         <div id="screenshot-status" class="status-text"></div>
       </div>
 
-      <div class="panel-section">
+      <div class="panel-section" id="recording-panel">
         <div class="section-title">Recording</div>
         <div class="button-row">
           <button id="btn-record-start">Start</button>
@@ -288,8 +314,6 @@
   </div>
 
   <script type="module">
-    import RFB from "./core/rfb.js";
-
     const vncContainer = document.getElementById("vnc-container");
     const badgeVnc = document.getElementById("badge-vnc");
     const badgeHealth = document.getElementById("badge-health");
@@ -301,17 +325,26 @@
     const tokenInput = document.getElementById("api-token");
     const saveTokenBtn = document.getElementById("save-token");
     const clearTokenBtn = document.getElementById("clear-token");
+    const vncPasswordInput = document.getElementById("vnc-password");
+    const saveVncBtn = document.getElementById("save-vnc");
+    const clearVncBtn = document.getElementById("clear-vnc");
 
     const screenshotBtn = document.getElementById("btn-screenshot");
     const screenshotStatus = document.getElementById("screenshot-status");
+    const artifactsRoot = document.getElementById("artifacts-root");
 
     const recordStartBtn = document.getElementById("btn-record-start");
     const recordPauseBtn = document.getElementById("btn-record-pause");
     const recordResumeBtn = document.getElementById("btn-record-resume");
     const recordStopBtn = document.getElementById("btn-record-stop");
     const recordStatus = document.getElementById("recording-status");
+    const recordingPanel = document.getElementById("recording-panel");
 
     const API_TOKEN_KEY = "winebot_api_token";
+    const VNC_PASSWORD_KEY = "winebot_vnc_password";
+    const ARTIFACTS_ROOT_KEY = "winebot_artifacts_root";
+    let rfbInstance = null;
+    let vncNeedsCredentials = false;
 
     function getToken() {
       return localStorage.getItem(API_TOKEN_KEY) || "";
@@ -323,6 +356,40 @@
       } else {
         localStorage.removeItem(API_TOKEN_KEY);
       }
+    }
+
+    function getVncPassword() {
+      return localStorage.getItem(VNC_PASSWORD_KEY) || "";
+    }
+
+    function setVncPassword(value) {
+      if (value) {
+        localStorage.setItem(VNC_PASSWORD_KEY, value);
+      } else {
+        localStorage.removeItem(VNC_PASSWORD_KEY);
+      }
+    }
+
+    function getArtifactsRoot() {
+      return localStorage.getItem(ARTIFACTS_ROOT_KEY) || "/artifacts";
+    }
+
+    function setArtifactsRoot(value) {
+      if (value) {
+        localStorage.setItem(ARTIFACTS_ROOT_KEY, value);
+      } else {
+        localStorage.removeItem(ARTIFACTS_ROOT_KEY);
+      }
+    }
+
+    function artifactsPath(root, subdir) {
+      const cleaned = (root || "/artifacts").replace(/\/+$/, "");
+      return `${cleaned}/${subdir}`;
+    }
+
+    function resetVncCanvas() {
+      const canvases = vncContainer.querySelectorAll("canvas");
+      canvases.forEach((canvas) => canvas.remove());
     }
 
     function setBadge(element, text, state) {
@@ -375,16 +442,30 @@
 
         if (recording.ok) {
           const data = await recording.json();
-          const state = data.recorder_running ? "recording" : "idle";
-          setBadge(badgeRecording, `/health/recording: ${state}`, data.recorder_running ? "ok" : "warn");
-          const enabled = data.enabled === true;
-          recordStartBtn.disabled = !enabled;
-          recordPauseBtn.disabled = !enabled;
-          recordResumeBtn.disabled = !enabled;
-          recordStopBtn.disabled = !enabled;
+          const running = data.recorder_running === true;
+          const state = data.state || (running ? "recording" : "idle");
+          setBadge(badgeRecording, `/health/recording: ${state}`, running ? "ok" : "warn");
+          const enabled = data.enabled !== false;
+          recordingPanel.style.display = enabled ? "" : "none";
+          if (!enabled) {
+            recordStartBtn.disabled = true;
+            recordPauseBtn.disabled = true;
+            recordResumeBtn.disabled = true;
+            recordStopBtn.disabled = true;
+            return;
+          }
+          recordStartBtn.disabled = running;
+          recordStopBtn.disabled = !running;
+          if (state === "paused") {
+            recordPauseBtn.disabled = true;
+            recordResumeBtn.disabled = false;
+          } else {
+            recordPauseBtn.disabled = !running;
+            recordResumeBtn.disabled = true;
+          }
         } else {
           setBadge(badgeRecording, `/health/recording: ${recording.status}`, "error");
-          recordStartBtn.disabled = true;
+          recordStartBtn.disabled = false;
           recordPauseBtn.disabled = true;
           recordResumeBtn.disabled = true;
           recordStopBtn.disabled = true;
@@ -404,19 +485,28 @@
     async function takeScreenshot() {
       screenshotStatus.textContent = "Capturing screenshot...";
       try {
-        const response = await apiFetch("/screenshot");
+        const root = getArtifactsRoot();
+        const sessionRoot = encodeURIComponent(artifactsPath(root, "sessions"));
+        const response = await apiFetch(`/screenshot?session_root=${sessionRoot}`);
         if (!response.ok) {
           throw new Error(`Screenshot failed: ${response.status}`);
         }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
+        const savedPath = response.headers.get("X-Screenshot-Path");
+        const metaPath = response.headers.get("X-Screenshot-Metadata-Path");
         const link = document.createElement("a");
         link.href = url;
         link.download = `winebot_${Date.now()}.png`;
         link.textContent = "Download screenshot";
         link.style.color = "var(--accent-2)";
         screenshotStatus.textContent = "";
+        const info = document.createElement("div");
+        info.textContent = savedPath
+          ? `Saved in container: ${savedPath}${metaPath ? ` (metadata: ${metaPath})` : ""}`
+          : "Saved in container.";
         screenshotStatus.appendChild(link);
+        screenshotStatus.appendChild(info);
       } catch (err) {
         screenshotStatus.textContent = `Screenshot error: ${err.message}`;
       }
@@ -425,7 +515,13 @@
     async function postRecordingAction(action) {
       recordStatus.textContent = `${action}...`;
       try {
-        const response = await apiFetch(`/recording/${action}`, { method: "POST" });
+        const options = { method: "POST" };
+        if (action === "start") {
+          const root = getArtifactsRoot();
+          options.headers = { "Content-Type": "application/json" };
+          options.body = JSON.stringify({ session_root: artifactsPath(root, "sessions") });
+        }
+        const response = await apiFetch(`/recording/${action}`, options);
         if (!response.ok) {
           throw new Error(`Recording ${action} failed: ${response.status}`);
         }
@@ -449,6 +545,35 @@
       });
     }
 
+    function initVncControls() {
+      vncPasswordInput.value = getVncPassword();
+      saveVncBtn.addEventListener("click", () => {
+        setVncPassword(vncPasswordInput.value);
+        if (vncNeedsCredentials && rfbInstance) {
+          const password = getVncPassword();
+          if (password) {
+            rfbInstance.sendCredentials({ password });
+            setBadge(badgeVnc, "sending password…", "warn");
+            vncNeedsCredentials = false;
+            return;
+          }
+        }
+        restartVnc();
+      });
+      clearVncBtn.addEventListener("click", () => {
+        vncPasswordInput.value = "";
+        setVncPassword("");
+        vncNeedsCredentials = false;
+      });
+    }
+
+    function initArtifactsControls() {
+      artifactsRoot.value = getArtifactsRoot();
+      artifactsRoot.addEventListener("change", () => {
+        setArtifactsRoot(artifactsRoot.value);
+      });
+    }
+
     function initActions() {
       screenshotBtn.addEventListener("click", takeScreenshot);
       recordStartBtn.addEventListener("click", () => postRecordingAction("start"));
@@ -457,21 +582,48 @@
       recordStopBtn.addEventListener("click", () => postRecordingAction("stop"));
     }
 
-    function initVnc() {
+    async function initVnc() {
       badgeVnc.textContent = "connecting...";
-      const rfb = new RFB(vncContainer, "ws://localhost:6080");
-      rfb.addEventListener("connect", () => {
-        setBadge(badgeVnc, "connected", "ok");
-      });
-      rfb.addEventListener("disconnect", () => {
-        setBadge(badgeVnc, "disconnected", "error");
-      });
-      rfb.addEventListener("credentialsrequired", () => {
-        setBadge(badgeVnc, "password required", "warn");
-      });
+      try {
+        const mod = await import("./core/rfb.js");
+        resetVncCanvas();
+        rfbInstance = new mod.default(vncContainer, "ws://localhost:6080");
+        rfbInstance.addEventListener("connect", () => {
+          setBadge(badgeVnc, "connected", "ok");
+        });
+        rfbInstance.addEventListener("disconnect", () => {
+          setBadge(badgeVnc, "disconnected", "error");
+        });
+        rfbInstance.addEventListener("credentialsrequired", () => {
+          const password = getVncPassword();
+          vncNeedsCredentials = true;
+          if (password) {
+            rfbInstance.sendCredentials({ password });
+            setBadge(badgeVnc, "sending password…", "warn");
+            vncNeedsCredentials = false;
+          } else {
+            setBadge(badgeVnc, "password required", "warn");
+          }
+        });
+      } catch (err) {
+        setBadge(badgeVnc, "noVNC load failed", "error");
+      }
+    }
+
+    function restartVnc() {
+      try {
+        if (rfbInstance) {
+          rfbInstance.disconnect();
+        }
+      } catch (err) {
+        // Ignore disconnect errors.
+      }
+      initVnc();
     }
 
     initTokenControls();
+    initVncControls();
+    initArtifactsControls();
     initActions();
     initVnc();
 

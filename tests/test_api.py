@@ -162,11 +162,12 @@ def test_recording_start_creates_session(tmp_path, auth_headers):
                 assert response.status_code == 200
                 payload = response.json()
                 assert "session_dir" in payload
+                assert "output_file" in payload
                 assert Path(session_file).exists()
                 assert Path(session_file).read_text().strip() == payload["session_dir"]
                 mock_popen.assert_called_once()
 
-def test_recording_stop_clears_session(tmp_path, auth_headers):
+def test_recording_stop_keeps_session(tmp_path, auth_headers):
     session_dir = tmp_path / "session-1"
     session_dir.mkdir()
     (session_dir / "recorder.pid").write_text("123")
@@ -180,7 +181,7 @@ def test_recording_stop_clears_session(tmp_path, auth_headers):
                     mock_run.return_value.stderr = ""
                     response = client.post("/recording/stop", headers=auth_headers)
                     assert response.status_code == 200
-                    assert not session_file.exists()
+                    assert session_file.exists()
 
 def test_recording_pause_resume(tmp_path, auth_headers):
     session_dir = tmp_path / "session-2"
@@ -189,13 +190,40 @@ def test_recording_pause_resume(tmp_path, auth_headers):
     session_file.write_text(str(session_dir))
     with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
         with patch("api.server.SESSION_FILE", str(session_file)):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                mock_run.return_value.stderr = ""
-                response = client.post("/recording/pause", headers=auth_headers)
+            with patch("api.server.recorder_running", return_value=True):
+                with patch("api.server.recorder_state", return_value="recording"):
+                    with patch("subprocess.run") as mock_run:
+                        mock_run.return_value.returncode = 0
+                        mock_run.return_value.stderr = ""
+                        response = client.post("/recording/pause", headers=auth_headers)
+                        assert response.status_code == 200
+                with patch("api.server.recorder_state", return_value="paused"):
+                    with patch("subprocess.run") as mock_run:
+                        mock_run.return_value.returncode = 0
+                        mock_run.return_value.stderr = ""
+                        response = client.post("/recording/resume", headers=auth_headers)
+                        assert response.status_code == 200
+
+def test_recording_idempotent_actions(tmp_path, auth_headers):
+    session_dir = tmp_path / "session-3"
+    session_dir.mkdir()
+    session_file = tmp_path / "session_file"
+    session_file.write_text(str(session_dir))
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.server.SESSION_FILE", str(session_file)):
+            with patch("api.server.recorder_running", return_value=True):
+                with patch("api.server.recorder_state", return_value="recording"):
+                    response = client.post("/recording/start", headers=auth_headers, json={})
+                    assert response.status_code == 200
+                    assert response.json()["status"] == "already_recording"
+            with patch("api.server.recorder_running", return_value=False):
+                response = client.post("/recording/stop", headers=auth_headers)
                 assert response.status_code == 200
-                response = client.post("/recording/resume", headers=auth_headers)
-                assert response.status_code == 200
+                assert response.json()["status"] == "already_stopped"
+            response = client.post("/recording/pause", headers=auth_headers)
+            assert response.status_code == 200
+            response = client.post("/recording/resume", headers=auth_headers)
+            assert response.status_code == 200
 
 @patch("subprocess.run")
 def test_run_app_valid_path(mock_run, auth_headers):
@@ -232,6 +260,18 @@ def test_click_at(mock_run, auth_headers):
     with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
         response = client.post("/input/mouse/click", json={"x": 100, "y": 200}, headers=auth_headers)
         assert response.status_code == 200
+
+def test_screenshot_output_dir_header(tmp_path, auth_headers):
+    out_dir = tmp_path / "shots"
+    out_dir.mkdir()
+    shot_path = out_dir / "screenshot_123.png"
+    shot_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.server.time.time", return_value=123):
+            with patch("api.server.run_command"):
+                response = client.get(f"/screenshot?output_dir={out_dir}", headers=auth_headers)
+                assert response.status_code == 200
+                assert response.headers.get("X-Screenshot-Path") == str(shot_path)
 
 @patch("subprocess.run")
 @patch("builtins.open", new_callable=MagicMock)
