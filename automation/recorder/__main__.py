@@ -7,6 +7,8 @@ import signal
 import logging
 import fcntl
 import datetime
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +21,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("winebot-recorder")
 FFMPEG_PID_FILE = "ffmpeg.pid"
 STATE_FILE = "recorder.state"
+SEGMENT_FILE = "segment.current"
+EVENTS_FILE = "events.current"
+PART_INDEX_FILE = "part_index.current"
 
 def get_iso_time():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -29,8 +34,8 @@ def lock_file(f):
 def unlock_file(f):
     fcntl.flock(f, fcntl.LOCK_UN)
 
-def append_event(session_dir: str, event: Event):
-    events_path = os.path.join(session_dir, "events.jsonl")
+def append_event(session_dir: str, event: Event, events_path: Optional[str] = None):
+    events_path = events_path or os.path.join(session_dir, "events.jsonl")
     with open(events_path, "a") as f:
         lock_file(f)
         try:
@@ -39,9 +44,9 @@ def append_event(session_dir: str, event: Event):
         finally:
             unlock_file(f)
 
-def load_events(session_dir: str):
+def load_events(session_dir: str, events_path: Optional[str] = None):
     events = []
-    events_path = os.path.join(session_dir, "events.jsonl")
+    events_path = events_path or os.path.join(session_dir, "events.jsonl")
     if not os.path.exists(events_path):
         return []
     
@@ -82,11 +87,10 @@ def signal_ffmpeg(session_dir: str, sig: int, action: str):
         logger.error(f"ffmpeg process {pid} not found.")
         sys.exit(1)
 
-    session_json = os.path.join(session_dir, "session.json")
-    if os.path.exists(session_json):
+    manifest = load_manifest(session_dir)
+    events_path = read_current_events_path(session_dir)
+    if manifest:
         try:
-            with open(session_json, "r") as f:
-                manifest = json.load(f)
             start_time_epoch = manifest["start_time_epoch"]
             now_epoch = time.time() * 1000
             t_rel = int(now_epoch - start_time_epoch)
@@ -97,11 +101,148 @@ def signal_ffmpeg(session_dir: str, sig: int, action: str):
                 level="INFO",
                 kind=f"recorder_{action}",
                 message=f"Recorder {action}"
-            ))
+            ), events_path=events_path)
         except Exception:
             pass
 
     write_state(session_dir, "paused" if action == "pause" else "recording")
+
+def read_current_events_path(session_dir: str) -> Optional[str]:
+    path = os.path.join(session_dir, EVENTS_FILE)
+    try:
+        with open(path, "r") as f:
+            value = f.read().strip()
+        return value or None
+    except Exception:
+        return None
+
+def read_current_segment(session_dir: str) -> Optional[int]:
+    path = os.path.join(session_dir, SEGMENT_FILE)
+    try:
+        with open(path, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+def segment_paths(session_dir: str, segment: Optional[int]):
+    if segment is None:
+        output_file = os.path.join(session_dir, "video.mkv")
+        events_path = os.path.join(session_dir, "events.jsonl")
+        vtt_path = os.path.join(session_dir, "events.vtt")
+        ass_path = os.path.join(session_dir, "events.ass")
+        segment_manifest = os.path.join(session_dir, "session.json")
+        return output_file, events_path, vtt_path, ass_path, segment_manifest
+    suffix = f"{segment:03d}"
+    output_file = os.path.join(session_dir, f"video_{suffix}.mkv")
+    events_path = os.path.join(session_dir, f"events_{suffix}.jsonl")
+    vtt_path = os.path.join(session_dir, f"events_{suffix}.vtt")
+    ass_path = os.path.join(session_dir, f"events_{suffix}.ass")
+    segment_manifest = os.path.join(session_dir, f"segment_{suffix}.json")
+    return output_file, events_path, vtt_path, ass_path, segment_manifest
+
+def load_manifest(session_dir: str) -> Optional[dict]:
+    seg = read_current_segment(session_dir)
+    manifest_path = None
+    if seg is not None:
+        _, _, _, _, manifest_path = segment_paths(session_dir, seg)
+    if manifest_path and os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    session_path = os.path.join(session_dir, "session.json")
+    if os.path.exists(session_path):
+        try:
+            with open(session_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+def parts_file_path(session_dir: str, segment: int) -> str:
+    return os.path.join(session_dir, f"parts_{segment:03d}.txt")
+
+def part_index_path(session_dir: str, segment: int) -> str:
+    return os.path.join(session_dir, f"part_index_{segment:03d}.txt")
+
+def next_part_index(session_dir: str, segment: int) -> int:
+    path = part_index_path(session_dir, segment)
+    current = None
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                current = int(f.read().strip())
+        except Exception:
+            current = None
+    if current is None:
+        current = 1
+    next_value = current + 1
+    try:
+        with open(path, "w") as f:
+            f.write(str(next_value))
+    except Exception:
+        pass
+    return current
+
+def append_part(parts_file: str, part_path: str):
+    with open(parts_file, "a") as f:
+        f.write(f"file '{part_path}'\n")
+
+def concat_parts(parts_file: str, output_file: str) -> bool:
+    if not os.path.exists(parts_file):
+        return False
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", parts_file,
+        "-c", "copy",
+        output_file
+    ]
+    logger.info(f"Concatenating parts: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to concat parts: {e.stderr.decode()}")
+        return False
+
+def adjust_events_for_pauses(events):
+    pauses = []
+    pause_start = None
+    for event in events:
+        if event.kind == "recorder_pause":
+            pause_start = event.t_epoch_ms
+        elif event.kind == "recorder_resume" and pause_start is not None:
+            pauses.append((pause_start, event.t_epoch_ms))
+            pause_start = None
+
+    if not pauses:
+        return events
+
+    adjusted = []
+    for event in events:
+        offset = 0
+        for start, end in pauses:
+            if event.t_epoch_ms >= end:
+                offset += (end - start)
+            elif event.t_epoch_ms >= start:
+                offset += (event.t_epoch_ms - start)
+        new_event = Event(
+            session_id=event.session_id,
+            t_rel_ms=max(0, event.t_rel_ms - offset),
+            t_epoch_ms=event.t_epoch_ms,
+            level=event.level,
+            kind=event.kind,
+            message=event.message,
+            pos=event.pos,
+            style=event.style,
+            tags=event.tags,
+            source=event.source,
+            extra=event.extra,
+        )
+        adjusted.append(new_event)
+    return adjusted
 
 def cmd_start(args):
     session_dir = args.session_dir
@@ -115,29 +256,78 @@ def cmd_start(args):
     start_time_monotonic = time.monotonic() * 1000
     start_time_epoch = time.time() * 1000
     
-    # Write Manifest
-    manifest = SessionManifest(
-        session_id=os.path.basename(session_dir),
-        start_time_epoch=start_time_epoch,
-        start_time_iso=get_iso_time(),
-        hostname=os.uname().nodename,
-        display=args.display,
-        resolution=args.resolution,
-        fps=args.fps,
-        git_sha=os.environ.get("GIT_SHA") # Optional
-    )
-    
-    with open(os.path.join(session_dir, "session.json"), "w") as f:
-        f.write(manifest.to_json())
+    # Write session manifest if missing
+    session_manifest_path = os.path.join(session_dir, "session.json")
+    if not os.path.exists(session_manifest_path):
+        manifest = SessionManifest(
+            session_id=os.path.basename(session_dir),
+            start_time_epoch=start_time_epoch,
+            start_time_iso=get_iso_time(),
+            hostname=os.uname().nodename,
+            display=args.display,
+            resolution=args.resolution,
+            fps=args.fps,
+            git_sha=os.environ.get("GIT_SHA") # Optional
+        )
+        with open(session_manifest_path, "w") as f:
+            f.write(manifest.to_json())
+    else:
+        with open(session_manifest_path, "r") as f:
+            manifest = SessionManifest.from_json(f.read())
+
+    segment = args.segment
+    output_file, events_path, vtt_path, ass_path, segment_manifest_path = segment_paths(session_dir, segment)
+    parts_file = None
+    part_index = None
+    if segment is not None:
+        parts_file = parts_file_path(session_dir, segment)
+        segment_manifest = {
+            "session_id": manifest.session_id,
+            "segment": segment,
+            "start_time_epoch": start_time_epoch,
+            "start_time_iso": get_iso_time(),
+            "hostname": manifest.hostname,
+            "display": args.display,
+            "resolution": args.resolution,
+            "fps": args.fps,
+            "git_sha": manifest.git_sha,
+        }
+        with open(segment_manifest_path, "w") as f:
+            json.dump(segment_manifest, f)
+        with open(os.path.join(session_dir, SEGMENT_FILE), "w") as f:
+            f.write(str(segment))
+        with open(os.path.join(session_dir, EVENTS_FILE), "w") as f:
+            f.write(events_path)
+        with open(os.path.join(session_dir, PART_INDEX_FILE), "w") as f:
+            f.write(str(segment))
         
-    # Start FFMpeg
-    output_file = os.path.join(session_dir, "video.mkv")
-    recorder = FFMpegRecorder(args.display, args.resolution, args.fps, output_file)
-    recorder.start()
-    if recorder.process and recorder.process.pid:
-        with open(os.path.join(session_dir, FFMPEG_PID_FILE), "w") as f:
-            f.write(str(recorder.process.pid))
-    write_state(session_dir, "recording")
+    # Start FFMpeg (part-based to enable fast pause/resume)
+    paused = False
+    recorder = None
+
+    def start_part():
+        nonlocal recorder, part_index, output_file
+        if segment is not None:
+            part_index = next_part_index(session_dir, segment)
+            output_file = os.path.join(session_dir, f"video_{segment:03d}_part{part_index:03d}.mkv")
+            if parts_file:
+                append_part(parts_file, output_file)
+        recorder = FFMpegRecorder(args.display, args.resolution, args.fps, output_file)
+        recorder.start()
+        if recorder.process and recorder.process.pid:
+            with open(os.path.join(session_dir, FFMPEG_PID_FILE), "w") as f:
+                f.write(str(recorder.process.pid))
+        write_state(session_dir, "recording")
+
+    def stop_part():
+        nonlocal recorder
+        if recorder:
+            recorder.stop()
+        ffmpeg_pid_path = os.path.join(session_dir, FFMPEG_PID_FILE)
+        if os.path.exists(ffmpeg_pid_path):
+            os.remove(ffmpeg_pid_path)
+
+    start_part()
     
     # Log start event
     append_event(session_dir, Event(
@@ -147,7 +337,7 @@ def cmd_start(args):
         level="INFO",
         kind="lifecycle",
         message="Session started"
-    ))
+    ), events_path=events_path)
     
     append_event(session_dir, Event(
         session_id=manifest.session_id,
@@ -156,9 +346,10 @@ def cmd_start(args):
         level="INFO",
         kind="recorder_start",
         message="Recorder started"
-    ))
+    ), events_path=events_path)
     
     def cleanup(signum, frame):
+        nonlocal paused
         logger.info("Received stop signal. Cleaning up...")
         end_time_monotonic = time.monotonic() * 1000
         t_rel = int(end_time_monotonic - start_time_monotonic)
@@ -171,22 +362,22 @@ def cmd_start(args):
             level="INFO",
             kind="recorder_stop",
             message="Recorder stopped"
-        ))
+        ), events_path=events_path)
         
-        recorder.stop()
+        if not paused:
+            stop_part()
         
         # Generate Subtitles
         logger.info("Generating subtitles...")
-        events = load_events(session_dir)
+        events = load_events(session_dir, events_path=events_path)
+        events = adjust_events_for_pauses(events)
         gen = SubtitleGenerator(events)
         
-        with open(os.path.join(session_dir, "events.vtt"), "w") as f:
+        with open(vtt_path, "w") as f:
             f.write(gen.generate_vtt())
             
         # Parse resolution for ASS
         w, h = map(int, args.resolution.split('x'))
-        ass_path = os.path.join(session_dir, "events.ass")
-        vtt_path = os.path.join(session_dir, "events.vtt")
         with open(ass_path, "w") as f:
             f.write(gen.generate_ass(w, h))
             
@@ -194,13 +385,19 @@ def cmd_start(args):
         meta = {
             "title": manifest.session_id,
             "encoder": "WineBot Recorder",
-            "creation_time": manifest.start_time_iso,
+            "creation_time": get_iso_time(),
             "WINEBOT_SESSION_ID": manifest.session_id,
             "WINEBOT_GIT_SHA": manifest.git_sha,
             "WINEBOT_HOSTNAME": manifest.hostname,
             "WINEBOT_DISPLAY": manifest.display
         }
-        recorder.mux_subtitles(ass_path, vtt_path, metadata=meta)
+        final_output = output_file
+        if segment is not None:
+            final_output = os.path.join(session_dir, f"video_{segment:03d}.mkv")
+            if parts_file and os.path.exists(parts_file):
+                concat_parts(parts_file, final_output)
+        muxer = FFMpegRecorder(args.display, args.resolution, args.fps, final_output)
+        muxer.mux_subtitles(ass_path, vtt_path, metadata=meta)
 
         # Remove PID file
         if os.path.exists(pid_file):
@@ -211,11 +408,50 @@ def cmd_start(args):
         state_path = os.path.join(session_dir, STATE_FILE)
         if os.path.exists(state_path):
             os.remove(state_path)
+        if os.path.exists(os.path.join(session_dir, SEGMENT_FILE)):
+            os.remove(os.path.join(session_dir, SEGMENT_FILE))
+        if os.path.exists(os.path.join(session_dir, EVENTS_FILE)):
+            os.remove(os.path.join(session_dir, EVENTS_FILE))
+        if os.path.exists(os.path.join(session_dir, PART_INDEX_FILE)):
+            os.remove(os.path.join(session_dir, PART_INDEX_FILE))
             
         sys.exit(0)
 
+    def handle_pause(signum, frame):
+        nonlocal paused
+        if paused:
+            return
+        stop_part()
+        append_event(session_dir, Event(
+            session_id=manifest.session_id,
+            t_rel_ms=int(time.monotonic() * 1000 - start_time_monotonic),
+            t_epoch_ms=int(time.time() * 1000),
+            level="INFO",
+            kind="recorder_pause",
+            message="Recorder pause"
+        ), events_path=events_path)
+        write_state(session_dir, "paused")
+        paused = True
+
+    def handle_resume(signum, frame):
+        nonlocal paused
+        if not paused:
+            return
+        start_part()
+        append_event(session_dir, Event(
+            session_id=manifest.session_id,
+            t_rel_ms=int(time.monotonic() * 1000 - start_time_monotonic),
+            t_epoch_ms=int(time.time() * 1000),
+            level="INFO",
+            kind="recorder_resume",
+            message="Recorder resume"
+        ), events_path=events_path)
+        paused = False
+
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGUSR1, handle_pause)
+    signal.signal(signal.SIGUSR2, handle_resume)
     
     logger.info("Recording active. Waiting for signal...")
     while True:
@@ -252,17 +488,10 @@ def cmd_stop(args):
 
 def cmd_annotate(args):
     session_dir = args.session_dir
-    session_json = os.path.join(session_dir, "session.json")
-    
-    if not os.path.exists(session_json):
-        # Fallback if session hasn't fully started or is broken?
-        # We need start time to calculate t_rel_ms
+    manifest = load_manifest(session_dir)
+    if not manifest:
         logger.error("Session manifest not found.")
         sys.exit(1)
-        
-    with open(session_json, "r") as f:
-        manifest = json.load(f)
-        
     start_time_epoch = manifest['start_time_epoch']
     now_epoch = time.time() * 1000
     t_rel = int(now_epoch - start_time_epoch)
@@ -293,14 +522,30 @@ def cmd_annotate(args):
         style=style,
         source=args.source
     )
-    
-    append_event(session_dir, event)
+
+    append_event(session_dir, event, events_path=read_current_events_path(session_dir))
 
 def cmd_pause(args):
-    signal_ffmpeg(args.session_dir, signal.SIGSTOP, "pause")
+    pid = read_pid(os.path.join(args.session_dir, "recorder.pid"))
+    if not pid:
+        logger.error("Recorder PID not found.")
+        sys.exit(1)
+    try:
+        os.kill(pid, signal.SIGUSR1)
+    except ProcessLookupError:
+        logger.error("Recorder process not found.")
+        sys.exit(1)
 
 def cmd_resume(args):
-    signal_ffmpeg(args.session_dir, signal.SIGCONT, "resume")
+    pid = read_pid(os.path.join(args.session_dir, "recorder.pid"))
+    if not pid:
+        logger.error("Recorder PID not found.")
+        sys.exit(1)
+    try:
+        os.kill(pid, signal.SIGUSR2)
+    except ProcessLookupError:
+        logger.error("Recorder process not found.")
+        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(prog="winebot_recorder")
@@ -312,6 +557,7 @@ def main():
     p_start.add_argument("--display", default=":99")
     p_start.add_argument("--resolution", default="1920x1080")
     p_start.add_argument("--fps", type=int, default=30)
+    p_start.add_argument("--segment", type=int, default=None)
     
     # Stop
     p_stop = subparsers.add_parser("stop")

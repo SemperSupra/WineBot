@@ -15,7 +15,7 @@ When using `docker compose exec` (or `docker-compose exec`), run automation as `
 
 ## Scripts
 
-- `automation/screenshot.sh` captures the virtual desktop. Supports specific windows (`-w`), delays (`-d`), annotations (`-l`), and metadata (`--request-id`, `--tag`). A JSON sidecar (`.png.json`) is written alongside the image.
+- `automation/screenshot.sh` captures the virtual desktop. Supports specific windows (`-w`), delays (`-d`), annotations (`-l`), and metadata (`--request-id`, `--tag`). A JSON sidecar (`.png.json`) is written alongside the image. When a session is active, screenshots default to `<session_dir>/screenshots`.
 - `automation/x11.sh click-at <x> <y>` clicks absolute coordinates via `xdotool`.
 - `automation/find_and_click.py` performs OpenCV template matching and clicks the best match
 - `automation/notepad_create_and_verify.py` writes and verifies a file via Notepad

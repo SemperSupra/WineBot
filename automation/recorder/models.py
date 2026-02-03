@@ -17,6 +17,11 @@ class SessionManifest:
     def to_json(self):
         return json.dumps(asdict(self), indent=2)
 
+    @staticmethod
+    def from_json(json_str: str):
+        data = json.loads(json_str)
+        return SessionManifest(**data)
+
 @dataclass
 class Event:
     session_id: str

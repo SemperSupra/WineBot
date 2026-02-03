@@ -44,7 +44,11 @@ class FFMpegRecorder:
             return
 
         logger.info("Stopping ffmpeg...")
-        self.process.terminate()
+        try:
+            self.process.terminate()
+        except ProcessLookupError:
+            self.process = None
+            return
         
         try:
             self.process.wait(timeout=5)

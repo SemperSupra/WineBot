@@ -117,9 +117,14 @@ Capture a screenshot of the desktop or a specific window.
   - `delay` (optional): Seconds to wait before capture (default: 0).
   - `label` (optional): Text to annotate at the bottom of the image.
   - `tag` (optional): User tag stored in screenshot metadata.
+  - `session_root` (optional): Session root to use when creating a session for screenshots (default: `/artifacts/sessions`).
+  - `output_dir` (optional): Override output directory (advanced; if provided, screenshots are written there instead of the session’s `screenshots/` directory). Allowed: `/apps`, `/wineprefix`, `/tmp`, `/artifacts`.
 - **Response:** PNG image file.
   - **Headers:** `X-Request-Id` (unique request ID)
+  - **Headers:** `X-Screenshot-Path` (saved path inside container)
+  - **Headers:** `X-Screenshot-Metadata-Path` (saved metadata JSON path)
   - **Sidecar:** A JSON file is written alongside the PNG (`<file>.png.json`) containing metadata.
+  - **Default storage:** If `output_dir` is not provided, screenshots are stored under `<session_dir>/screenshots`. If no session exists, one is created under `session_root`.
 
 #### `POST /recording/start`
 Start a recording session.
@@ -130,10 +135,12 @@ Start a recording session.
     "session_root": "/artifacts/sessions",
     "display": ":99",
     "resolution": "1920x1080",
-    "fps": 30
+    "fps": 30,
+    "new_session": false
   }
   ```
-- **Response:** `{"status":"started","session_id":"...","session_dir":"..."}`
+- **Response:** `{"status":"started","session_id":"...","session_dir":"...","segment":1,"output_file":"...","events_file":"..."}`
+If a session already exists and `new_session` is false, each start creates a new numbered segment in the same session directory.
 
 #### `POST /recording/pause`
 Pause the active recording session.
@@ -183,6 +190,7 @@ Run an AutoHotkey script.
   }
   ```
 - **Response:** `{"status": "success", "log": "..."}`
+- **Artifacts:** Script and logs are stored under the current session (`<session_dir>/scripts` and `<session_dir>/logs`).
 
 #### `POST /run/autoit`
 Run an AutoIt v3 script.
@@ -194,11 +202,13 @@ Run an AutoIt v3 script.
   }
   ```
 - **Response:** `{"status": "success", "log": "..."}`
+- **Artifacts:** Script and logs are stored under the current session (`<session_dir>/scripts` and `<session_dir>/logs`).
 
 #### `POST /run/python`
 Run a Python script using the embedded Windows Python environment (`winpy`).
 - **Body:** `{"script": "import sys; print(sys.version)"}`
-- **Response:** `{"status": "success", "stdout": "...", "stderr": "..."}`
+- **Response:** `{"status": "success", "stdout": "...", "stderr": "...", "log_path": "..."}`
+- **Artifacts:** Script and logs are stored under the current session (`<session_dir>/scripts` and `<session_dir>/logs`).
 
 #### `POST /inspect/window`
 Inspect a Windows window and its controls (WinSpy-style) via AutoIt.
@@ -220,6 +230,7 @@ Inspect a Windows window and its controls (WinSpy-style) via AutoIt.
   }
   ```
 - **Response:** `{"status": "success", "result": { ... }}`
+- **Artifacts:** Logs are stored under the current session (`<session_dir>/logs`).
 
 #### `POST /run/winedbg`
 Run a Windows app under `winedbg` (gdb proxy or command mode).

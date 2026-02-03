@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Security, Depends, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Security, Depends, Request, Body
 from fastapi.security import APIKeyHeader
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,23 +8,28 @@ import subprocess
 import os
 import glob
 import time
+import datetime
 import shlex
 import shutil
 import platform
 import uuid
 import json
 import re
+import fcntl
 
 app = FastAPI(title="WineBot API", description="Internal API for controlling WineBot")
 START_TIME = time.time()
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 UI_INDEX = os.path.join(UI_DIR, "index.html")
 NOVNC_CORE_DIR = "/usr/share/novnc/core"
+NOVNC_VENDOR_DIR = "/usr/share/novnc/vendor"
 SESSION_FILE = "/tmp/winebot_current_session"
 DEFAULT_SESSION_ROOT = "/artifacts/sessions"
 
 if os.path.isdir(NOVNC_CORE_DIR):
     app.mount("/ui/core", StaticFiles(directory=NOVNC_CORE_DIR), name="novnc-core")
+if os.path.isdir(NOVNC_VENDOR_DIR):
+    app.mount("/ui/vendor", StaticFiles(directory=NOVNC_VENDOR_DIR), name="novnc-vendor")
 
 # Security
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -42,7 +47,7 @@ async def verify_token(request: Request, api_key: str = Security(api_key_header)
 app.router.dependencies.append(Depends(verify_token))
 
 # Path Safety
-ALLOWED_PREFIXES = ["/apps", "/wineprefix", "/tmp"]
+ALLOWED_PREFIXES = ["/apps", "/wineprefix", "/tmp", "/artifacts"]
 
 def validate_path(path: str):
     """Ensure path is within allowed directories to prevent traversal."""
@@ -100,6 +105,7 @@ class RecordingStartModel(BaseModel):
     display: Optional[str] = None
     resolution: Optional[str] = None
     fps: Optional[int] = 30
+    new_session: Optional[bool] = False
 
 # Helpers
 def run_command(cmd: List[str]):
@@ -208,15 +214,120 @@ def recorder_state(session_dir: Optional[str]) -> Optional[str]:
     except Exception:
         return None
 
+def write_recorder_state(session_dir: str, state: str) -> None:
+    try:
+        with open(os.path.join(session_dir, "recorder.state"), "w") as f:
+            f.write(state)
+    except Exception:
+        pass
+
+def recording_status(session_dir: Optional[str], enabled: bool) -> Dict[str, Any]:
+    if not enabled:
+        return {"state": "disabled", "running": False}
+    if not session_dir:
+        return {"state": "idle", "running": False}
+    state = recorder_state(session_dir)
+    running = recorder_running(session_dir)
+    if running:
+        if state == "paused":
+            return {"state": "paused", "running": True}
+        if state == "stopping":
+            return {"state": "stopping", "running": True}
+        return {"state": "recording", "running": True}
+    if state == "stopping":
+        return {"state": "stopping", "running": False}
+    return {"state": "idle", "running": False}
+
 def generate_session_id(label: Optional[str]) -> str:
     ts = int(time.time())
+    date_prefix = time.strftime("%Y-%m-%d", time.gmtime(ts))
     rand = uuid.uuid4().hex[:6]
-    session_id = f"session-{ts}-{rand}"
+    session_id = f"session-{date_prefix}-{ts}-{rand}"
     if label:
         safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", label).strip("-")
         if safe:
             session_id = f"{session_id}-{safe}"
     return session_id
+
+def write_session_manifest(session_dir: str, session_id: str) -> None:
+    try:
+        manifest = {
+            "session_id": session_id,
+            "start_time_epoch": time.time(),
+            "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "hostname": platform.node(),
+            "display": os.getenv("DISPLAY", ":99"),
+            "resolution": parse_resolution(os.getenv("SCREEN", "1920x1080")),
+            "fps": 30,
+            "git_sha": None,
+        }
+        with open(os.path.join(session_dir, "session.json"), "w") as f:
+            json.dump(manifest, f, indent=2)
+    except Exception:
+        pass
+
+def ensure_session_subdirs(session_dir: str) -> None:
+    for subdir in ("logs", "screenshots", "scripts", "user"):
+        try:
+            os.makedirs(os.path.join(session_dir, subdir), exist_ok=True)
+        except Exception:
+            pass
+
+def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
+    session_dir = read_session_dir()
+    if not isinstance(session_dir, str) or not session_dir:
+        session_dir = None
+    if session_dir and os.path.isdir(session_dir):
+        ensure_session_subdirs(session_dir)
+        return session_dir
+    root = session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    safe_root = validate_path(root)
+    os.makedirs(safe_root, exist_ok=True)
+    session_id = generate_session_id(None)
+    session_dir = os.path.join(safe_root, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    write_session_dir(session_dir)
+    write_session_manifest(session_dir, session_id)
+    ensure_session_subdirs(session_dir)
+    return session_dir
+
+def next_segment_index(session_dir: str) -> int:
+    index_path = os.path.join(session_dir, "segment_index.txt")
+    lock_path = os.path.join(session_dir, "segment_index.lock")
+    current = None
+    os.makedirs(session_dir, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except Exception:
+            pass
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, "r") as f:
+                    current = int(f.read().strip())
+            except Exception:
+                current = None
+        if current is None:
+            max_idx = 0
+            for name in os.listdir(session_dir):
+                if name.startswith("video_") and name.endswith(".mkv"):
+                    try:
+                        idx = int(name.split("_", 1)[1].split(".", 1)[0])
+                        max_idx = max(max_idx, idx)
+                    except Exception:
+                        continue
+            current = max_idx + 1
+        next_value = current + 1
+        try:
+            with open(index_path, "w") as f:
+                f.write(str(next_value))
+        except Exception:
+            pass
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+        except Exception:
+            pass
+    return current
 
 @app.get("/health")
 def health_check():
@@ -341,13 +452,15 @@ def health_recording():
     """Recorder status and current session."""
     session_dir = read_session_dir()
     recorder = safe_command(["pgrep", "-f", "automation.recorder start"])
+    enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
+    status = recording_status(session_dir, enabled)
     return {
-        "enabled": os.getenv("WINEBOT_RECORD", "0") == "1",
+        "enabled": enabled,
         "session_dir": session_dir,
         "session_dir_exists": os.path.isdir(session_dir) if session_dir else False,
         "recorder_running": recorder.get("ok", False),
         "recorder_pids": recorder.get("stdout").splitlines() if recorder.get("ok") and recorder.get("stdout") else [],
-        "state": recorder_state(session_dir),
+        "state": status["state"],
     }
 
 @app.get("/ui")
@@ -481,7 +594,13 @@ def run_winedbg(data: WinedbgRunModel):
 @app.post("/run/python")
 def run_python(data: PythonScriptModel):
     """Run a script using Windows Python (winpy)."""
-    script_path = f"/tmp/api_script_{int(time.time())}.py"
+    session_dir = ensure_session_dir()
+    script_dir = os.path.join(session_dir, "scripts") if session_dir else "/tmp"
+    log_dir = os.path.join(session_dir, "logs") if session_dir else "/tmp"
+    os.makedirs(script_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    script_path = os.path.join(script_dir, f"api_script_{int(time.time())}.py")
+    log_path = os.path.join(log_dir, f"{os.path.basename(script_path)}.log")
     
     with open(script_path, "w") as f:
         f.write(data.script)
@@ -491,16 +610,46 @@ def run_python(data: PythonScriptModel):
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return {"status": "success", "stdout": result.stdout, "stderr": result.stderr}
+        with open(log_path, "w") as f:
+            f.write(result.stdout or "")
+            if result.stderr:
+                f.write("\n--- stderr ---\n")
+                f.write(result.stderr)
+        return {"status": "success", "stdout": result.stdout, "stderr": result.stderr, "log_path": log_path}
     except subprocess.CalledProcessError as e:
-        return {"status": "error", "exit_code": e.returncode, "stdout": e.stdout, "stderr": e.stderr}
+        with open(log_path, "w") as f:
+            f.write(e.stdout or "")
+            if e.stderr:
+                f.write("\n--- stderr ---\n")
+                f.write(e.stderr)
+        return {"status": "error", "exit_code": e.returncode, "stdout": e.stdout, "stderr": e.stderr, "log_path": log_path}
 
 @app.get("/screenshot")
-def get_screenshot(window_id: str = "root", delay: int = 0, label: Optional[str] = None, tag: Optional[str] = None):
+def get_screenshot(
+    window_id: str = "root",
+    delay: int = 0,
+    label: Optional[str] = None,
+    tag: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    session_root: Optional[str] = None,
+):
     """Take a screenshot and return the image."""
     request_id = uuid.uuid4().hex
     filename = f"screenshot_{int(time.time())}.png"
-    filepath = os.path.join("/tmp", filename)
+    session_dir = None
+    if output_dir is None:
+        session_dir = ensure_session_dir(session_root)
+
+    if output_dir:
+        target_dir = output_dir
+    elif session_dir:
+        target_dir = os.path.join(session_dir, "screenshots")
+    else:
+        target_dir = "/tmp"
+
+    safe_dir = validate_path(target_dir)
+    os.makedirs(safe_dir, exist_ok=True)
+    filepath = os.path.join(safe_dir, filename)
     
     cmd = ["/automation/screenshot.sh", "--window", window_id, "--delay", str(delay)]
     if label:
@@ -515,26 +664,58 @@ def get_screenshot(window_id: str = "root", delay: int = 0, label: Optional[str]
     if not os.path.exists(filepath):
         raise HTTPException(status_code=500, detail="Screenshot failed to generate")
 
-    return FileResponse(filepath, media_type="image/png", headers={"X-Request-Id": request_id})
+    return FileResponse(
+        filepath,
+        media_type="image/png",
+        headers={
+            "X-Request-Id": request_id,
+            "X-Screenshot-Path": filepath,
+            "X-Screenshot-Metadata-Path": f"{filepath}.json",
+        },
+    )
 
 @app.post("/recording/start")
-def start_recording(data: RecordingStartModel):
+def start_recording(data: Optional[RecordingStartModel] = Body(default=None)):
     """Start a recording session."""
+    if data is None:
+        data = RecordingStartModel()
     current_session = read_session_dir()
     if recorder_running(current_session):
-        raise HTTPException(status_code=409, detail=f"Recorder already running: {current_session}")
+        if recorder_state(current_session) == "paused":
+            cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", current_session]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise HTTPException(status_code=500, detail=(result.stderr or "Failed to resume recorder"))
+            return {"status": "resumed", "session_dir": current_session}
+        return {"status": "already_recording", "session_dir": current_session}
 
-    session_root = data.session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
-    os.makedirs(session_root, exist_ok=True)
-    session_id = generate_session_id(data.session_label)
-    session_dir = os.path.join(session_root, session_id)
-    os.makedirs(session_dir, exist_ok=True)
-    write_session_dir(session_dir)
+    session_dir = None
+    if not data.new_session and current_session and os.path.isdir(current_session):
+        session_json = os.path.join(current_session, "session.json")
+        if os.path.exists(session_json):
+            session_dir = current_session
+
+    if session_dir is None:
+        session_root = data.session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+        os.makedirs(session_root, exist_ok=True)
+        session_id = generate_session_id(data.session_label)
+        session_dir = os.path.join(session_root, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        write_session_dir(session_dir)
+        write_session_manifest(session_dir, session_id)
+        ensure_session_subdirs(session_dir)
+    else:
+        session_id = os.path.basename(session_dir)
+        ensure_session_subdirs(session_dir)
 
     display = data.display or os.getenv("DISPLAY", ":99")
     screen = data.resolution or os.getenv("SCREEN", "1920x1080")
     resolution = parse_resolution(screen)
     fps = data.fps or 30
+    segment = next_segment_index(session_dir)
+    segment_suffix = f"{segment:03d}"
+    output_file = os.path.join(session_dir, f"video_{segment_suffix}.mkv")
+    events_file = os.path.join(session_dir, f"events_{segment_suffix}.jsonl")
 
     cmd = [
         "python3", "-m", "automation.recorder", "start",
@@ -542,6 +723,7 @@ def start_recording(data: RecordingStartModel):
         "--display", display,
         "--resolution", resolution,
         "--fps", str(fps),
+        "--segment", str(segment),
     ]
     subprocess.Popen(cmd)
 
@@ -557,6 +739,9 @@ def start_recording(data: RecordingStartModel):
         "status": "started",
         "session_id": session_id,
         "session_dir": session_dir,
+        "segment": segment,
+        "output_file": output_file,
+        "events_file": events_file,
         "display": display,
         "resolution": resolution,
         "fps": fps,
@@ -568,18 +753,22 @@ def stop_recording():
     """Stop the active recording session."""
     session_dir = read_session_dir()
     if not session_dir:
-        raise HTTPException(status_code=409, detail="No active recording session.")
+        return {"status": "already_stopped"}
+    if not recorder_running(session_dir):
+        write_recorder_state(session_dir, "idle")
+        return {"status": "already_stopped", "session_dir": session_dir}
 
+    write_recorder_state(session_dir, "stopping")
     cmd = ["python3", "-m", "automation.recorder", "stop", "--session-dir", session_dir]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=(result.stderr or "Failed to stop recorder"))
 
-    if not recorder_running(session_dir):
-        try:
-            os.remove(SESSION_FILE)
-        except Exception:
-            pass
+    for _ in range(10):
+        if not recorder_running(session_dir):
+            write_recorder_state(session_dir, "idle")
+            break
+        time.sleep(0.2)
 
     return {"status": "stopped", "session_dir": session_dir}
 
@@ -588,7 +777,11 @@ def pause_recording():
     """Pause the active recording session."""
     session_dir = read_session_dir()
     if not session_dir:
-        raise HTTPException(status_code=409, detail="No active recording session.")
+        return {"status": "idle"}
+    if not recorder_running(session_dir):
+        return {"status": "already_paused", "session_dir": session_dir}
+    if recorder_state(session_dir) == "paused":
+        return {"status": "already_paused", "session_dir": session_dir}
     cmd = ["python3", "-m", "automation.recorder", "pause", "--session-dir", session_dir]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -600,7 +793,11 @@ def resume_recording():
     """Resume the active recording session."""
     session_dir = read_session_dir()
     if not session_dir:
-        raise HTTPException(status_code=409, detail="No active recording session.")
+        return {"status": "idle"}
+    if not recorder_running(session_dir):
+        return {"status": "idle", "session_dir": session_dir}
+    if recorder_state(session_dir) != "paused":
+        return {"status": "already_recording", "session_dir": session_dir}
     cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", session_dir]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -617,8 +814,13 @@ def click_at(data: ClickModel):
 def run_ahk(data: AHKModel):
     """Run an AutoHotkey script."""
     # Write script to temp file
-    script_path = f"/tmp/api_script_{int(time.time())}.ahk"
-    log_path = f"{script_path}.log"
+    session_dir = ensure_session_dir()
+    script_dir = os.path.join(session_dir, "scripts") if session_dir else "/tmp"
+    log_dir = os.path.join(session_dir, "logs") if session_dir else "/tmp"
+    os.makedirs(script_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    script_path = os.path.join(script_dir, f"api_script_{int(time.time())}.ahk")
+    log_path = os.path.join(log_dir, f"{os.path.basename(script_path)}.log")
     
     with open(script_path, "w") as f:
         f.write(data.script)
@@ -647,8 +849,13 @@ def run_ahk(data: AHKModel):
 def run_autoit(data: AutoItModel):
     """Run an AutoIt script."""
     # Write script to temp file
-    script_path = f"/tmp/api_script_{int(time.time())}.au3"
-    log_path = f"{script_path}.log"
+    session_dir = ensure_session_dir()
+    script_dir = os.path.join(session_dir, "scripts") if session_dir else "/tmp"
+    log_dir = os.path.join(session_dir, "logs") if session_dir else "/tmp"
+    os.makedirs(script_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    script_path = os.path.join(script_dir, f"api_script_{int(time.time())}.au3")
+    log_path = os.path.join(log_dir, f"{os.path.basename(script_path)}.log")
     
     with open(script_path, "w") as f:
         f.write(data.script)
@@ -680,7 +887,10 @@ def inspect_window(data: InspectWindowModel):
         raise HTTPException(status_code=400, detail="Provide 'title' or 'handle', or set list_only=true.")
 
     script_path = "/automation/inspect_window.au3"
-    log_path = f"/tmp/api_inspect_{int(time.time())}.log"
+    session_dir = ensure_session_dir()
+    log_dir = os.path.join(session_dir, "logs") if session_dir else "/tmp"
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"api_inspect_{int(time.time())}.log")
 
     cmd = ["/scripts/run-autoit.sh", script_path, "--log", log_path]
     if data.list_only:

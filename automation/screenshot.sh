@@ -23,6 +23,7 @@ LABEL_TEXT=""
 REQUEST_ID="${WINEBOT_REQUEST_ID:-}"
 USER_TAG="${WINEBOT_USER_TAG:-}"
 TARGET="/tmp"
+TARGET_SET="0"
 
 # Helper for usage
 usage() {
@@ -36,7 +37,7 @@ usage() {
     echo "  -h, --help          Show this help"
     echo ""
     echo "Arguments:"
-    echo "  path|directory      Output file path or directory (default: /tmp)"
+    echo "  path|directory      Output file path or directory (default: session screenshots or /tmp)"
 }
 
 # Parse Args
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
             ;; 
         *)
             TARGET="$1"
+            TARGET_SET="1"
             shift
             ;; 
     esac
@@ -113,6 +115,11 @@ if [ -z "$session_id" ] || [ -z "$session_dir" ]; then
             session_id="$(basename "$session_dir")"
         fi
     fi
+fi
+
+if [ "$TARGET_SET" = "0" ] && [ -n "$session_dir" ]; then
+    TARGET="${session_dir%/}/screenshots"
+    mkdir -p "$TARGET"
 fi
 
 app_exe="${APP_EXE:-}"
@@ -264,7 +271,8 @@ if png_path and meta_items:
         crc = zlib.crc32(b"tEXt" + data_bytes) & 0xFFFFFFFF
         text_chunks.append((b"tEXt", data_bytes, struct.pack(">I", crc)))
 
-    with tempfile.NamedTemporaryFile("wb", delete=False) as tmp:
+    target_dir = os.path.dirname(png_path) or "."
+    with tempfile.NamedTemporaryFile("wb", delete=False, dir=target_dir) as tmp:
         tmp.write(sig)
         inserted = False
         for ctype, chunk, crc in chunks:

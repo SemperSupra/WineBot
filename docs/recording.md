@@ -19,18 +19,30 @@ Set `WINEBOT_RECORD=1` when starting the container.
 | `WINEBOT_RECORD` | Enable recording (1 to enable) | 0 |
 | `WINEBOT_SESSION_ROOT` | Root directory for session artifacts | `/artifacts/sessions` |
 | `WINEBOT_SESSION_LABEL` | Optional label appended to the session ID | (empty) |
+| `WINEBOT_USER_DIR` | Override the session user directory (Wine user home) | (empty) |
 | `WINEBOT_RECORD_FORMAT` | Video format (currently MKV is canonical) | `mkv` |
 
-## Artifacts
+## Sessions and Artifacts
 
-Each run generates a unique session directory in `/artifacts/sessions/session-<timestamp>-<rand>/`.
+Each WineBot start generates a unique session directory in `/artifacts/sessions/session-<YYYY-MM-DD>-<unix>-<rand>/`.
+All captured artifacts (recordings, screenshots, API logs, script outputs) are stored beneath that session directory.
 
 Artifacts produced:
-- `video.mkv`: The recorded video (H.264/AAC).
-- `session.json`: Metadata about the session (resolution, fps, start time, etc).
-- `events.jsonl`: Canonical machine-readable event log.
-- `events.vtt`: WebVTT subtitles for use in web players.
-- `events.ass`: Advanced Substation Alpha subtitles for positional overlays.
+- `video_001.mkv`, `video_002.mkv`, ...: Each start/stop creates a new numbered segment.
+- `video_001_part001.mkv`, `video_001_part002.mkv`, ...: Sub‑segments created by pause/resume.
+- `segment_001.json`, `segment_002.json`, ...: Per‑segment metadata (start time, fps, resolution).
+- `events_001.jsonl`, `events_002.jsonl`, ...: Per‑segment event log.
+- `events_001.vtt`, `events_001.ass`, ...: Subtitles/overlays for each segment.
+- `parts_001.txt`: Concatenation list for sub‑segments.
+- `session.json`: Session‑level metadata (resolution, fps, start time, etc).
+- `segment_index.txt`: Next segment number to use.
+ - `screenshots/`: Screenshots captured via API or scripts.
+ - `logs/`: API, entrypoint, and automation logs.
+ - `scripts/`: API-generated script files (AHK/AutoIt/Python).
+- `user/`: Wine user profile directory (default), used for app inputs/outputs. Can be overridden with `WINEBOT_USER_DIR`.
+
+### Pause/Resume behavior
+Pause stops the current sub‑segment quickly; resume starts a new sub‑segment. On stop, sub‑segments are concatenated into `video_###.mkv` and subtitles are generated on the merged timeline.
 
 ## Adding Annotations
 

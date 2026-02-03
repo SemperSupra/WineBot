@@ -78,11 +78,21 @@ See `docs/installing-apps.md` for more options.
 
 Change the default VNC password in `compose/docker-compose.yml`.
 
-Auto-open noVNC or a VNC viewer (host helper):
+## Sessions and artifacts
+
+Every WineBot start creates a new session under `/artifacts/sessions/session-<YYYY-MM-DD>-<unix>-<rand>/`. The session path is exported as `WINEBOT_SESSION_DIR`.
+
+Common locations inside the session directory:
+- `screenshots/` for screenshots captured via API or scripts
+- `logs/` for API/entrypoint/automation logs
+- `scripts/` for API-generated scripts (AHK/AutoIt/Python)
+- `user/` for app inputs/outputs (Wine user home; override with `WINEBOT_USER_DIR`)
+
+Auto-open the dashboard (noVNC + API controls) or a VNC viewer (host helper):
 
 `scripts/run-app.sh "/wineprefix/drive_c/Program Files/MyApp/MyApp.exe" --view novnc`
 
-This forces interactive mode and opens a browser to noVNC with auto-connect. If a VNC password is set, it is passed via the URL to avoid prompts (consider the security tradeoff).
+This forces interactive mode and opens the dashboard (`/ui`) with the embedded noVNC canvas. If a VNC password is set, it is passed via the URL to avoid prompts (consider the security tradeoff).
 
 Explicit example with password:
 
@@ -104,7 +114,7 @@ Dashboard (noVNC + API controls):
 
 `docker compose -f compose/docker-compose.yml --profile headless exec --user winebot winebot ./automation/screenshot.sh`
 
-The image is saved to `/tmp/screenshot_YYYY-MM-DD_HH-MM-SS.png` inside the container. A JSON sidecar with metadata is written next to it (`.png.json`). You can also specify a custom path or directory as an argument.
+If a session is active, the image is saved under `/artifacts/sessions/<session-id>/screenshots/` inside the container. A JSON sidecar with metadata is written next to it (`.png.json`). You can also specify a custom path or directory as an argument.
 
 ## Debug with winedbg
 
