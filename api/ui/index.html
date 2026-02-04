@@ -49,17 +49,22 @@
       flex: 0 0 75%;
       min-width: 0;
       position: relative;
-      display: block;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
       background: linear-gradient(135deg, #0b1114 0%, #0f1a20 60%, #0c1419 100%);
       border-right: 1px solid var(--border);
-      overflow: hidden;
+      overflow: auto;
       pointer-events: auto;
+      touch-action: none;
     }
 
     #vnc-container canvas {
       outline: none;
-      width: 100% !important;
-      height: 100% !important;
+      width: auto !important;
+      height: auto !important;
+      max-width: none !important;
+      max-height: none !important;
       display: block;
       pointer-events: auto;
     }
@@ -609,6 +614,32 @@
 
       <div class="panel-section" data-collapsible>
         <div class="section-title">
+          <span>VNC Settings</span>
+          <button class="section-toggle" type="button" aria-expanded="true">▾</button>
+        </div>
+        <div class="panel-body">
+          <div class="config-block">
+            <label class="toggle">
+              <input type="checkbox" id="vnc-scale" />
+              <span>Scale to Fit</span>
+            </label>
+            <div class="hint">Toggle between 1:1 mapping and scaled viewport.</div>
+          </div>
+          <div class="config-block">
+            <label class="toggle">
+              <input type="checkbox" id="vnc-view-only" />
+              <span>View Only</span>
+            </label>
+          </div>
+          <div class="button-row" style="margin-top: 10px;">
+            <button id="btn-vnc-reconnect" class="secondary">Reconnect VNC</button>
+            <button id="btn-inject-click" class="secondary" disabled>Inject Last Click</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section" data-collapsible>
+        <div class="section-title">
           <span>Lifecycle</span>
           <button class="section-toggle" type="button" aria-expanded="true">▾</button>
         </div>
@@ -645,6 +676,12 @@
             <button id="btn-record-resume" class="secondary">Resume</button>
             <button id="btn-record-stop" class="danger">Stop</button>
           </div>
+          </div>
+          <div id="artifacts-panel" style="margin-top: 14px;">
+            <div class="section-title">Recent Artifacts</div>
+            <div id="artifacts-list" class="events-list">
+              <div class="hint">No artifacts found yet.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -756,6 +793,13 @@
     const saveVncBtn = document.getElementById("save-vnc");
     const clearVncBtn = document.getElementById("clear-vnc");
 
+    const vncScaleToggle = document.getElementById("vnc-scale");
+    const vncViewOnlyToggle = document.getElementById("vnc-view-only");
+    const vncReconnectBtn = document.getElementById("btn-vnc-reconnect");
+    const vncInjectBtn = document.getElementById("btn-inject-click");
+
+    let lastVncClick = null;
+
     const screenshotBtn = document.getElementById("btn-screenshot");
     const screenshotDownloadBtn = document.getElementById("btn-screenshot-download");
 
@@ -764,6 +808,7 @@
     const recordResumeBtn = document.getElementById("btn-record-resume");
     const recordStopBtn = document.getElementById("btn-record-stop");
     const recordingPanel = document.getElementById("recording-panel");
+    const artifactsList = document.getElementById("artifacts-list");
     const apiMethodSelect = document.getElementById("api-method");
     const apiPathInput = document.getElementById("api-path");
     const apiBodyInput = document.getElementById("api-body");
@@ -1040,6 +1085,55 @@
       return fetch(path, { ...options, headers });
     }
 
+    async function updateArtifacts(sessionId) {
+      if (!sessionId || !artifactsList) return;
+      try {
+        const res = await apiFetch(`/sessions/${sessionId}/artifacts`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const files = data.artifacts || [];
+        
+        if (files.length === 0) {
+          artifactsList.innerHTML = '<div class="hint">No artifacts found yet.</div>';
+          return;
+        }
+
+        // Filter for interesting files: mkv, png, jsonl, log
+        const filtered = files.filter(f => 
+          f.path.endsWith(".mkv") || 
+          f.path.endsWith(".png") || 
+          f.path.endsWith(".jsonl") || 
+          f.path.endsWith(".log")
+        ).sort((a, b) => b.mtime - a.mtime);
+
+        artifactsList.innerHTML = "";
+        filtered.forEach(f => {
+          const div = document.createElement("div");
+          div.style.display = "flex";
+          div.style.justify_content = "space-between";
+          div.style.gap = "8px";
+          div.style.marginBottom = "4px";
+
+          const link = document.createElement("a");
+          link.href = `/sessions/${sessionId}/artifacts/${f.path}`;
+          link.textContent = f.path;
+          link.target = "_blank";
+          link.style.color = "var(--accent-2)";
+          link.style.textDecoration = "none";
+          link.style.fontSize = "0.75rem";
+          
+          const size = document.createElement("span");
+          size.textContent = `(${(f.size / 1024 / 1024).toFixed(1)} MB)`;
+          size.style.fontSize = "0.7rem";
+          size.style.color = "var(--muted)";
+
+          div.appendChild(link);
+          div.appendChild(size);
+          artifactsList.appendChild(div);
+        });
+      } catch (err) {}
+    }
+
     async function updateDashboard() {
       try {
         const results = await Promise.allSettled([
@@ -1186,6 +1280,10 @@
           setProcessBadge(badgeWine, "Wine", processes.wine_explorer?.ok === true);
           shutdownBtn.disabled = false;
           powerOffBtn.disabled = false;
+          
+          if (lifecycleData.session_id) {
+            updateArtifacts(lifecycleData.session_id);
+          }
         } else if (lifecycleRes) {
           const label = lifecycleRes.status === 403 ? "auth required" : lifecycleRes.status;
           setBadge(badgeXvfb, "Xvfb: unknown", "warn");
@@ -1417,6 +1515,38 @@
         setVncPassword("");
         vncNeedsCredentials = false;
       });
+
+      vncScaleToggle.addEventListener("change", () => {
+        if (rfbInstance) {
+          rfbInstance.scaleViewport = vncScaleToggle.checked;
+        }
+      });
+      vncViewOnlyToggle.addEventListener("change", () => {
+        if (rfbInstance) {
+          rfbInstance.viewOnly = vncViewOnlyToggle.checked;
+        }
+      });
+      vncReconnectBtn.addEventListener("click", () => {
+        restartVnc();
+      });
+      vncInjectBtn.addEventListener("click", async () => {
+        if (!lastVncClick) return;
+        logMessage("info", `Injecting API click at (${lastVncClick.x}, ${lastVncClick.y})...`);
+        try {
+          const response = await apiFetch("/input/mouse/click", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(lastVncClick)
+          });
+          if (response.ok) {
+            logMessage("info", "API click injected successfully.");
+          } else {
+            logMessage("error", `API click injection failed: ${response.status}`);
+          }
+        } catch (err) {
+          logMessage("error", `API click injection error: ${err.message}`);
+        }
+      });
     }
 
     function initActions() {
@@ -1470,7 +1600,7 @@
 
     function initCollapsibles() {
       const sections = document.querySelectorAll(".panel-section[data-collapsible]");
-      const forcedCollapsed = new Set(["configuration", "api console"]);
+      const forcedCollapsed = new Set(["configuration", "api console", "vnc settings"]);
       sections.forEach((section) => {
         const toggle = section.querySelector(".section-toggle");
         const title = section.querySelector(".section-title span");
@@ -1534,14 +1664,36 @@
         const mod = await import("./core/rfb.js");
         resetVncCanvas();
         rfbInstance = new mod.default(vncContainer, "ws://localhost:6080");
-        rfbInstance.viewOnly = false;
-        rfbInstance.scaleViewport = true;
-        rfbInstance.resizeSession = true;
+        rfbInstance.viewOnly = vncViewOnlyToggle.checked;
+        rfbInstance.scaleViewport = vncScaleToggle.checked;
+        rfbInstance.resizeSession = false;
+        rfbInstance.clipViewport = !vncScaleToggle.checked;
         rfbInstance.addEventListener("connect", () => {
           setBadge(badgeVnc, "connected", "ok");
           vncConnected = true;
           if (typeof rfbInstance.focus === "function") {
             rfbInstance.focus();
+          }
+          const canvas = vncContainer.querySelector("canvas");
+          if (canvas) {
+            canvas.addEventListener("mousedown", (e) => {
+              const rect = canvas.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              const y = e.clientY - rect.top;
+              const vncX = Math.floor(x * (canvas.width / rect.width));
+              const vncY = Math.floor(y * (canvas.height / rect.height));
+              lastVncClick = { x: vncX, y: vncY };
+              vncInjectBtn.disabled = false;
+              logMessage("info", `Mouse down at client(${Math.round(x)}, ${Math.round(y)}) -> VNC(${vncX}, ${vncY})`);
+            });
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = rect.width ? (canvas.width / rect.width) : 0;
+            const scaleY = rect.height ? (canvas.height / rect.height) : 0;
+            logMessage("info", `VNC canvas ${canvas.width}x${canvas.height}, client ${Math.round(rect.width)}x${Math.round(rect.height)} (scale ${scaleX.toFixed(2)}x${scaleY.toFixed(2)})`);
+            if (scaleX && scaleY && (Math.abs(scaleX - 1) > 0.02 || Math.abs(scaleY - 1) > 0.02)) {
+              logMessage("warn", "VNC canvas is scaled in the browser. Mouse clicks can be offset; consider 100% zoom or 1:1 mode.");
+            }
           }
           logMessage("info", "Live session connected.");
           if (sessionEndedReason === "vnc") {

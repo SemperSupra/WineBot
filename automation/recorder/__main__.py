@@ -7,9 +7,7 @@ import signal
 import logging
 import fcntl
 import datetime
-import shutil
 import subprocess
-from pathlib import Path
 from typing import Optional
 
 from .models import SessionManifest, Event
@@ -25,14 +23,18 @@ SEGMENT_FILE = "segment.current"
 EVENTS_FILE = "events.current"
 PART_INDEX_FILE = "part_index.current"
 
+
 def get_iso_time():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
 
 def lock_file(f):
     fcntl.flock(f, fcntl.LOCK_EX)
 
+
 def unlock_file(f):
     fcntl.flock(f, fcntl.LOCK_UN)
+
 
 def append_event(session_dir: str, event: Event, events_path: Optional[str] = None):
     events_path = events_path or os.path.join(session_dir, "events.jsonl")
@@ -508,7 +510,7 @@ def cmd_annotate(args):
     if args.style:
         try:
             style = json.loads(args.style)
-        except:
+        except Exception:
             style = {"raw": args.style}
             
     event = Event(

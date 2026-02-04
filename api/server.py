@@ -7,7 +7,6 @@ from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 import subprocess
 import os
-import glob
 import time
 import datetime
 import shlex
@@ -19,6 +18,10 @@ import re
 import fcntl
 import signal
 import threading
+import asyncio
+from enum import Enum
+from functools import lru_cache
+
 START_TIME = time.time()
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 UI_INDEX = os.path.join(UI_DIR, "index.html")
@@ -27,15 +30,122 @@ NOVNC_VENDOR_DIR = "/usr/share/novnc/vendor"
 SESSION_FILE = "/tmp/winebot_current_session"
 DEFAULT_SESSION_ROOT = "/artifacts/sessions"
 
+
+class RecorderState(str, Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PAUSED = "paused"
+    STOPPING = "stopping"
+
+
+# --- Concurrency & Resource Management ---
+recorder_lock = asyncio.Lock()
+# Store strong references to Popen objects to prevent them from being GC'd
+# and to allow reaping zombies.
+process_store = set()
+
+
+def manage_process(proc: subprocess.Popen):
+    """Track a detached process to ensure it is reaped later."""
+    process_store.add(proc)
+
+
+async def run_async_command(cmd: List[str]) -> Dict[str, Any]:
+    """Run a command asynchronously without blocking the event loop."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        return {
+            "returncode": proc.returncode,
+            "stdout": stdout.decode().strip(),
+            "stderr": stderr.decode().strip(),
+            "ok": proc.returncode == 0
+        }
+    except Exception as e:
+        return {"returncode": -1, "stdout": "", "stderr": str(e), "ok": False}
+
+
+def find_processes(pattern: str, exact: bool = False) -> List[int]:
+    """Find PIDs of processes matching a name or command line pattern (pure Python pgrep)."""
+    pids = []
+    try:
+        for pid_str in os.listdir('/proc'):
+            if not pid_str.isdigit():
+                continue
+            pid = int(pid_str)
+            try:
+                # Check comm (short name) for exact match
+                if exact:
+                    with open(f'/proc/{pid}/comm', 'r') as f:
+                        comm = f.read().strip()
+                        if comm == pattern:
+                            pids.append(pid)
+                            continue
+
+                # Check cmdline for full match
+                with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                    # cmdline is null-separated
+                    cmd_bytes = f.read()
+                    cmd = cmd_bytes.replace(b'\0', b' ').decode('utf-8', errors='ignore').strip()
+                    if pattern in cmd:
+                        pids.append(pid)
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+    except Exception:
+        pass
+    return pids
+
+
+async def resource_monitor_task():
+    """Background task to reap zombies and monitor disk usage."""
+    while True:
+        # 1. Reap zombie processes
+        # We iterate a copy because we might remove items
+        for proc in list(process_store):
+            if proc.poll() is not None:
+                # Process finished, returncode is set, zombie reaped.
+                process_store.discard(proc)
+
+        # 2. Disk Space Watchdog
+        # If recording is active and disk is low (< 300MB), stop recording.
+        session_dir = read_session_dir()
+        if session_dir and recorder_running(session_dir):
+            try:
+                st = os.statvfs(session_dir)
+                free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+                if free_mb < 300:
+                    print(f"WARNING: Low disk space ({free_mb:.1f}MB). Stopping recorder.")
+                    append_lifecycle_event(session_dir, "recorder_force_stop", f"Low disk space ({free_mb:.1f}MB)", source="api_watchdog")
+                    write_recorder_state(session_dir, RecorderState.STOPPING.value)
+                    # We can't await inside this sync-ish loop structure easily for subprocess if using run_async_command
+                    # because we are in an async def, so we CAN await.
+                    # But we need to import command properly.
+                    await run_async_command(["python3", "-m", "automation.recorder", "stop", "--session-dir", session_dir])
+            except Exception:
+                pass
+
+        await asyncio.sleep(5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     session_dir = read_session_dir()
     append_lifecycle_event(session_dir, "api_started", "API server started", source="api")
+
+    # Start background monitor
+    monitor = asyncio.create_task(resource_monitor_task())
+
     try:
         yield
     finally:
+        monitor.cancel()
         session_dir = read_session_dir()
         append_lifecycle_event(session_dir, "api_stopped", "API server stopping", source="api")
+
 
 app = FastAPI(title="WineBot API", description="Internal API for controlling WineBot", lifespan=lifespan)
 
@@ -153,9 +263,34 @@ def safe_command(cmd: List[str], timeout: int = 5) -> Dict[str, Any]:
     except subprocess.CalledProcessError as e:
         return {"ok": False, "exit_code": e.returncode, "stdout": e.stdout.strip(), "stderr": e.stderr.strip()}
 
+@lru_cache(maxsize=None)
 def check_binary(name: str) -> Dict[str, Any]:
     path = shutil.which(name)
     return {"present": path is not None, "path": path}
+
+
+async def safe_async_command(cmd: List[str], timeout: int = 5) -> Dict[str, Any]:
+    try:
+        # Use run_async_command logic but adapted for the 'safe_command' return signature
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return {"ok": proc.returncode == 0, "stdout": stdout.decode().strip(), "stderr": stderr.decode().strip()}
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            return {"ok": False, "error": "timeout"}
+    except FileNotFoundError:
+        return {"ok": False, "error": "command not found"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 
 def statvfs_info(path: str) -> Dict[str, Any]:
     try:
@@ -241,6 +376,7 @@ def recorder_state(session_dir: Optional[str]) -> Optional[str]:
     except Exception:
         return None
 
+
 def write_recorder_state(session_dir: str, state: str) -> None:
     try:
         with open(os.path.join(session_dir, "recorder.state"), "w") as f:
@@ -248,22 +384,23 @@ def write_recorder_state(session_dir: str, state: str) -> None:
     except Exception:
         pass
 
+
 def recording_status(session_dir: Optional[str], enabled: bool) -> Dict[str, Any]:
     if not enabled:
         return {"state": "disabled", "running": False}
     if not session_dir:
-        return {"state": "idle", "running": False}
+        return {"state": RecorderState.IDLE.value, "running": False}
     state = recorder_state(session_dir)
     running = recorder_running(session_dir)
     if running:
-        if state == "paused":
-            return {"state": "paused", "running": True}
-        if state == "stopping":
-            return {"state": "stopping", "running": True}
-        return {"state": "recording", "running": True}
-    if state == "stopping":
-        return {"state": "stopping", "running": False}
-    return {"state": "idle", "running": False}
+        if state == RecorderState.PAUSED.value:
+            return {"state": RecorderState.PAUSED.value, "running": True}
+        if state == RecorderState.STOPPING.value:
+            return {"state": RecorderState.STOPPING.value, "running": True}
+        return {"state": RecorderState.RECORDING.value, "running": True}
+    if state == RecorderState.STOPPING.value:
+        return {"state": RecorderState.STOPPING.value, "running": False}
+    return {"state": RecorderState.IDLE.value, "running": False}
 
 def generate_session_id(label: Optional[str]) -> str:
     ts = int(time.time())
@@ -509,26 +646,27 @@ def health_system():
     return info
 
 @app.get("/health/x11")
-def health_x11():
+async def health_x11():
     """X11 health details."""
-    x11 = safe_command(["xdpyinfo"])
-    wm = safe_command(["pgrep", "-x", "openbox"])
-    active = safe_command(["/automation/x11.sh", "active-window"])
+    x11 = await safe_async_command(["xdpyinfo"])
+    # Use native process check for speed
+    wm_pids = find_processes("openbox", exact=True)
+    active = await safe_async_command(["/automation/x11.sh", "active-window"])
     return {
         "display": os.getenv("DISPLAY"),
         "screen": os.getenv("SCREEN"),
         "connected": x11.get("ok", False),
         "xdpyinfo_error": x11.get("error") or x11.get("stderr"),
-        "window_manager": {"name": "openbox", "running": wm.get("ok", False)},
+        "window_manager": {"name": "openbox", "running": len(wm_pids) > 0},
         "active_window": active.get("stdout") if active.get("ok") else None,
         "active_window_error": None if active.get("ok") else (active.get("error") or active.get("stderr")),
     }
 
 @app.get("/health/windows")
-def health_windows():
+async def health_windows():
     """Window list and active window details."""
-    listing = safe_command(["/automation/x11.sh", "list-windows"])
-    active = safe_command(["/automation/x11.sh", "active-window"])
+    listing = await safe_async_command(["/automation/x11.sh", "list-windows"])
+    active = await safe_async_command(["/automation/x11.sh", "active-window"])
     windows = []
     if listing.get("ok") and listing.get("stdout"):
         for line in listing["stdout"].splitlines():
@@ -583,31 +721,41 @@ def health_storage():
     return {"ok": ok, "paths": details}
 
 @app.get("/health/recording")
-def health_recording():
+async def health_recording():
     """Recorder status and current session."""
     session_dir = read_session_dir()
-    recorder = safe_command(["pgrep", "-f", "automation.recorder start"])
+    # Use native process check
+    recorder_pids = find_processes("automation.recorder start")
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
     status = recording_status(session_dir, enabled)
     return {
         "enabled": enabled,
         "session_dir": session_dir,
         "session_dir_exists": os.path.isdir(session_dir) if session_dir else False,
-        "recorder_running": recorder.get("ok", False),
-        "recorder_pids": recorder.get("stdout").splitlines() if recorder.get("ok") and recorder.get("stdout") else [],
+        "recorder_running": len(recorder_pids) > 0,
+        "recorder_pids": [str(p) for p in recorder_pids],
         "state": status["state"],
     }
 
 @app.get("/lifecycle/status")
-def lifecycle_status():
+async def lifecycle_status():
     """Status for core WineBot components."""
     session_dir = read_session_dir()
     session_id = session_id_from_dir(session_dir)
     wineprefix = os.getenv("WINEPREFIX", "/wineprefix")
     user_dir = os.getenv("WINEBOT_USER_DIR")
-    recorder = safe_command(["pgrep", "-f", "automation.recorder start"])
+
+    # Pure Python process checks (fast)
+    xvfb_pids = find_processes("Xvfb", exact=True)
+    openbox_pids = find_processes("openbox", exact=True)
+    wine_pids = find_processes("explorer.exe")
+    x11vnc_pids = find_processes("x11vnc", exact=True)
+    novnc_pids = find_processes("websockify") + find_processes("novnc_proxy")
+    recorder_pids = find_processes("automation.recorder start")
+
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
     record_status = recording_status(session_dir, enabled)
+
     return {
         "session_id": session_id,
         "session_dir": session_dir,
@@ -615,17 +763,17 @@ def lifecycle_status():
         "wine_user_dir": os.path.join(wineprefix, "drive_c", "users", "winebot"),
         "lifecycle_log": lifecycle_log_path(session_dir) if session_dir else None,
         "processes": {
-            "xvfb": safe_command(["pgrep", "-x", "Xvfb"]),
-            "openbox": safe_command(["pgrep", "-x", "openbox"]),
-            "wine_explorer": safe_command(["pgrep", "-f", "explorer.exe"]),
-            "x11vnc": safe_command(["pgrep", "-x", "x11vnc"]),
-            "novnc": safe_command(["pgrep", "-f", "websockify|novnc_proxy"]),
+            "xvfb": {"ok": len(xvfb_pids) > 0, "stdout": "\n".join(map(str, xvfb_pids))},
+            "openbox": {"ok": len(openbox_pids) > 0, "stdout": "\n".join(map(str, openbox_pids))},
+            "wine_explorer": {"ok": len(wine_pids) > 0, "stdout": "\n".join(map(str, wine_pids))},
+            "x11vnc": {"ok": len(x11vnc_pids) > 0, "stdout": "\n".join(map(str, x11vnc_pids))},
+            "novnc": {"ok": len(novnc_pids) > 0, "stdout": "\n".join(map(str, novnc_pids))},
             "api_pid": os.getpid(),
             "recorder": {
                 "enabled": enabled,
                 "state": record_status["state"],
-                "running": recorder.get("ok", False),
-                "pids": recorder.get("stdout").splitlines() if recorder.get("ok") and recorder.get("stdout") else [],
+                "running": len(recorder_pids) > 0,
+                "pids": [str(p) for p in recorder_pids],
             },
         },
         "can_shutdown": True,
@@ -1018,7 +1166,8 @@ def run_winedbg(data: WinedbgRunModel):
         if data.args:
             cmd.extend(shlex.split(data.args))
         if data.detach:
-            subprocess.Popen(cmd)
+            proc = subprocess.Popen(cmd)
+            manage_process(proc)
             return {"status": "launched", "path": safe_path, "mode": mode, "detached": True}
         run_command(cmd)
         return {"status": "launched", "path": safe_path, "mode": mode}
@@ -1124,134 +1273,176 @@ def get_screenshot(
     )
 
 @app.post("/recording/start")
-def start_recording(data: Optional[RecordingStartModel] = Body(default=None)):
+async def start_recording(data: Optional[RecordingStartModel] = Body(default=None)):
     """Start a recording session."""
-    if data is None:
-        data = RecordingStartModel()
-    current_session = read_session_dir()
-    if recorder_running(current_session):
-        if recorder_state(current_session) == "paused":
-            cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", current_session]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise HTTPException(status_code=500, detail=(result.stderr or "Failed to resume recorder"))
-            return {"status": "resumed", "session_dir": current_session}
-        return {"status": "already_recording", "session_dir": current_session}
+    async with recorder_lock:
+        if data is None:
+            data = RecordingStartModel()
+        current_session = read_session_dir()
+        if recorder_running(current_session):
+            if recorder_state(current_session) == RecorderState.PAUSED.value:
+                cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", current_session]
+                result = await run_async_command(cmd)
+                if not result["ok"]:
+                    raise HTTPException(status_code=500, detail=(result["stderr"] or "Failed to resume recorder"))
+                return {"status": "resumed", "session_dir": current_session}
+            return {"status": "already_recording", "session_dir": current_session}
 
-    session_dir = None
-    if not data.new_session and current_session and os.path.isdir(current_session):
-        session_json = os.path.join(current_session, "session.json")
-        if os.path.exists(session_json):
-            session_dir = current_session
+        session_dir = None
+        if not data.new_session and current_session and os.path.isdir(current_session):
+            session_json = os.path.join(current_session, "session.json")
+            if os.path.exists(session_json):
+                session_dir = current_session
 
-    if session_dir is None:
-        session_root = data.session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
-        os.makedirs(session_root, exist_ok=True)
-        session_id = generate_session_id(data.session_label)
-        session_dir = os.path.join(session_root, session_id)
-        os.makedirs(session_dir, exist_ok=True)
-        write_session_dir(session_dir)
-        write_session_manifest(session_dir, session_id)
-        ensure_session_subdirs(session_dir)
-    else:
-        session_id = os.path.basename(session_dir)
-        ensure_session_subdirs(session_dir)
+        if session_dir is None:
+            session_root = data.session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+            os.makedirs(session_root, exist_ok=True)
+            session_id = generate_session_id(data.session_label)
+            session_dir = os.path.join(session_root, session_id)
+            os.makedirs(session_dir, exist_ok=True)
+            write_session_dir(session_dir)
+            write_session_manifest(session_dir, session_id)
+            ensure_session_subdirs(session_dir)
+        else:
+            session_id = os.path.basename(session_dir)
+            ensure_session_subdirs(session_dir)
 
-    display = data.display or os.getenv("DISPLAY", ":99")
-    screen = data.resolution or os.getenv("SCREEN", "1920x1080")
-    resolution = parse_resolution(screen)
-    fps = data.fps or 30
-    segment = next_segment_index(session_dir)
-    segment_suffix = f"{segment:03d}"
-    output_file = os.path.join(session_dir, f"video_{segment_suffix}.mkv")
-    events_file = os.path.join(session_dir, f"events_{segment_suffix}.jsonl")
+        display = data.display or os.getenv("DISPLAY", ":99")
+        screen = data.resolution or os.getenv("SCREEN", "1920x1080")
+        resolution = parse_resolution(screen)
+        fps = data.fps or 30
+        segment = next_segment_index(session_dir)
+        segment_suffix = f"{segment:03d}"
+        output_file = os.path.join(session_dir, f"video_{segment_suffix}.mkv")
+        events_file = os.path.join(session_dir, f"events_{segment_suffix}.jsonl")
 
-    cmd = [
-        "python3", "-m", "automation.recorder", "start",
-        "--session-dir", session_dir,
-        "--display", display,
-        "--resolution", resolution,
-        "--fps", str(fps),
-        "--segment", str(segment),
-    ]
-    subprocess.Popen(cmd)
+        cmd = [
+            "python3", "-m", "automation.recorder", "start",
+            "--session-dir", session_dir,
+            "--display", display,
+            "--resolution", resolution,
+            "--fps", str(fps),
+            "--segment", str(segment),
+        ]
+        proc = subprocess.Popen(cmd)
+        manage_process(proc)
 
-    pid = None
-    pid_file = os.path.join(session_dir, "recorder.pid")
-    for _ in range(10):
-        pid = read_pid(pid_file)
-        if pid:
-            break
-        time.sleep(0.1)
+        pid = None
+        pid_file = os.path.join(session_dir, "recorder.pid")
+        for _ in range(10):
+            pid = read_pid(pid_file)
+            if pid:
+                break
+            time.sleep(0.1)
 
-    return {
-        "status": "started",
-        "session_id": session_id,
-        "session_dir": session_dir,
-        "segment": segment,
-        "output_file": output_file,
-        "events_file": events_file,
-        "display": display,
-        "resolution": resolution,
-        "fps": fps,
-        "recorder_pid": pid,
-    }
+        return {
+            "status": "started",
+            "session_id": session_id,
+            "session_dir": session_dir,
+            "segment": segment,
+            "output_file": output_file,
+            "events_file": events_file,
+            "display": display,
+            "resolution": resolution,
+            "fps": fps,
+            "recorder_pid": pid,
+        }
 
 @app.post("/recording/stop")
-def stop_recording():
+async def stop_recording():
     """Stop the active recording session."""
-    session_dir = read_session_dir()
-    if not session_dir:
-        return {"status": "already_stopped"}
-    if not recorder_running(session_dir):
-        write_recorder_state(session_dir, "idle")
-        return {"status": "already_stopped", "session_dir": session_dir}
-
-    write_recorder_state(session_dir, "stopping")
-    cmd = ["python3", "-m", "automation.recorder", "stop", "--session-dir", session_dir]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=(result.stderr or "Failed to stop recorder"))
-
-    for _ in range(10):
+    async with recorder_lock:
+        session_dir = read_session_dir()
+        if not session_dir:
+            return {"status": "already_stopped"}
         if not recorder_running(session_dir):
-            write_recorder_state(session_dir, "idle")
-            break
-        time.sleep(0.2)
+            write_recorder_state(session_dir, RecorderState.IDLE.value)
+            return {"status": "already_stopped", "session_dir": session_dir}
 
-    return {"status": "stopped", "session_dir": session_dir}
+        write_recorder_state(session_dir, RecorderState.STOPPING.value)
+        cmd = ["python3", "-m", "automation.recorder", "stop", "--session-dir", session_dir]
+        result = await run_async_command(cmd)
+        if not result["ok"]:
+            raise HTTPException(status_code=500, detail=(result["stderr"] or "Failed to stop recorder"))
+
+        for _ in range(10):
+            if not recorder_running(session_dir):
+                write_recorder_state(session_dir, RecorderState.IDLE.value)
+                break
+            time.sleep(0.2)
+
+        return {"status": "stopped", "session_dir": session_dir}
 
 @app.post("/recording/pause")
-def pause_recording():
+async def pause_recording():
     """Pause the active recording session."""
-    session_dir = read_session_dir()
-    if not session_dir:
-        return {"status": "idle"}
-    if not recorder_running(session_dir):
-        return {"status": "already_paused", "session_dir": session_dir}
-    if recorder_state(session_dir) == "paused":
-        return {"status": "already_paused", "session_dir": session_dir}
-    cmd = ["python3", "-m", "automation.recorder", "pause", "--session-dir", session_dir]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=(result.stderr or "Failed to pause recorder"))
-    return {"status": "paused", "session_dir": session_dir}
+    async with recorder_lock:
+        session_dir = read_session_dir()
+        if not session_dir:
+            return {"status": RecorderState.IDLE.value}
+        if not recorder_running(session_dir):
+            return {"status": "already_paused", "session_dir": session_dir}
+        if recorder_state(session_dir) == RecorderState.PAUSED.value:
+            return {"status": "already_paused", "session_dir": session_dir}
+        cmd = ["python3", "-m", "automation.recorder", "pause", "--session-dir", session_dir]
+        result = await run_async_command(cmd)
+        if not result["ok"]:
+            raise HTTPException(status_code=500, detail=(result["stderr"] or "Failed to pause recorder"))
+        return {"status": "paused", "session_dir": session_dir}
 
 @app.post("/recording/resume")
-def resume_recording():
+async def resume_recording():
     """Resume the active recording session."""
-    session_dir = read_session_dir()
-    if not session_dir:
-        return {"status": "idle"}
-    if not recorder_running(session_dir):
-        return {"status": "idle", "session_dir": session_dir}
-    if recorder_state(session_dir) != "paused":
-        return {"status": "already_recording", "session_dir": session_dir}
-    cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", session_dir]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=(result.stderr or "Failed to resume recorder"))
-    return {"status": "resumed", "session_dir": session_dir}
+    async with recorder_lock:
+        session_dir = read_session_dir()
+        if not session_dir:
+            return {"status": RecorderState.IDLE.value}
+        if not recorder_running(session_dir):
+            return {"status": RecorderState.IDLE.value, "session_dir": session_dir}
+        if recorder_state(session_dir) != RecorderState.PAUSED.value:
+            return {"status": "already_recording", "session_dir": session_dir}
+        cmd = ["python3", "-m", "automation.recorder", "resume", "--session-dir", session_dir]
+        result = await run_async_command(cmd)
+        if not result["ok"]:
+            raise HTTPException(status_code=500, detail=(result["stderr"] or "Failed to resume recorder"))
+        return {"status": "resumed", "session_dir": session_dir}
+
+@app.get("/sessions/{session_id}/artifacts")
+def list_session_artifacts(session_id: str, session_root: Optional[str] = None):
+    """List all files in a session directory."""
+    target_dir = resolve_session_dir(session_id, None, session_root)
+    if not os.path.isdir(target_dir):
+        raise HTTPException(status_code=404, detail="Session directory not found")
+    
+    files = []
+    for root, _, filenames in os.walk(target_dir):
+        for f in filenames:
+            rel_path = os.path.relpath(os.path.join(root, f), target_dir)
+            files.append({
+                "path": rel_path,
+                "size": os.path.getsize(os.path.join(root, f)),
+                "mtime": os.path.getmtime(os.path.join(root, f))
+            })
+    return {"session_id": session_id, "artifacts": files}
+
+@app.get("/sessions/{session_id}/artifacts/{file_path:path}")
+def get_session_artifact(session_id: str, file_path: str, session_root: Optional[str] = None):
+    """Serve a file from a session directory."""
+    target_dir = resolve_session_dir(session_id, None, session_root)
+    full_path = os.path.join(target_dir, file_path)
+    safe_path = validate_path(full_path)
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    
+    media_type = "video/x-matroska" if safe_path.endswith(".mkv") else "application/octet-stream"
+    if safe_path.endswith(".png"):
+        media_type = "image/png"
+    elif safe_path.endswith(".json") or safe_path.endswith(".jsonl"):
+        media_type = "application/json"
+    elif safe_path.endswith(".log") or safe_path.endswith(".txt"):
+        media_type = "text/plain"
+
+    return FileResponse(safe_path, media_type=media_type)
 
 @app.post("/input/mouse/click")
 def click_at(data: ClickModel):

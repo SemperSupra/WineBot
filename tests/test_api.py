@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 from api.server import app
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import os
 import pytest
 from pathlib import Path
@@ -179,9 +179,8 @@ def test_recording_stop_keeps_session(tmp_path, auth_headers):
     with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
         with patch("api.server.SESSION_FILE", str(session_file)):
             with patch("api.server.pid_running", return_value=False):
-                with patch("subprocess.run") as mock_run:
-                    mock_run.return_value.returncode = 0
-                    mock_run.return_value.stderr = ""
+                with patch("api.server.run_async_command", new_callable=AsyncMock) as mock_run:
+                    mock_run.return_value = {"ok": True, "stderr": ""}
                     response = client.post("/recording/stop", headers=auth_headers)
                     assert response.status_code == 200
                     assert session_file.exists()
@@ -195,15 +194,13 @@ def test_recording_pause_resume(tmp_path, auth_headers):
         with patch("api.server.SESSION_FILE", str(session_file)):
             with patch("api.server.recorder_running", return_value=True):
                 with patch("api.server.recorder_state", return_value="recording"):
-                    with patch("subprocess.run") as mock_run:
-                        mock_run.return_value.returncode = 0
-                        mock_run.return_value.stderr = ""
+                    with patch("api.server.run_async_command", new_callable=AsyncMock) as mock_run:
+                        mock_run.return_value = {"ok": True, "stderr": ""}
                         response = client.post("/recording/pause", headers=auth_headers)
                         assert response.status_code == 200
                 with patch("api.server.recorder_state", return_value="paused"):
-                    with patch("subprocess.run") as mock_run:
-                        mock_run.return_value.returncode = 0
-                        mock_run.return_value.stderr = ""
+                    with patch("api.server.run_async_command", new_callable=AsyncMock) as mock_run:
+                        mock_run.return_value = {"ok": True, "stderr": ""}
                         response = client.post("/recording/resume", headers=auth_headers)
                         assert response.status_code == 200
 

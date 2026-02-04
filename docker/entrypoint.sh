@@ -328,7 +328,7 @@ trap 'shutdown_notice' EXIT
 # 4. Start VNC/noVNC if requested
 if [ "${ENABLE_VNC:-0}" = "1" ] || [ "${MODE:-headless}" = "interactive" ]; then
     echo "--> Starting VNC/noVNC services..."
-    VNC_ARGS=("-display" "$DISPLAY" "-forever" "-shared" "-rfbport" "${VNC_PORT:-5900}" "-bg")
+    VNC_ARGS=("-display" "$DISPLAY" "-forever" "-shared" "-rfbport" "${VNC_PORT:-5900}" "-bg" "-noxrecord" "-ncache" "0" "-cursor" "arrow")
     if [ -n "${VNC_PASSWORD:-}" ]; then
         mkdir -p "$HOME/.vnc"
         x11vnc -storepasswd "$VNC_PASSWORD" "$HOME/.vnc/passwd"
@@ -388,7 +388,7 @@ if [ -z "$@" ]; then
     annotate_safe "Container idle (waiting)" "lifecycle" "entrypoint"
     tail -f /dev/null
 else
-    annotate_safe "Launching: $@" "lifecycle" "entrypoint"
+    annotate_safe "Launching: $*" "lifecycle" "entrypoint"
     "$@"
     EXIT_CODE=$?
     annotate_safe "App exited with code $EXIT_CODE" "lifecycle" "entrypoint"
