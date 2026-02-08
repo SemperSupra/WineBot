@@ -30,8 +30,7 @@ jobs:
           file: docker/Dockerfile
           load: true
           tags: winebot:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          no-cache: true
 
       - name: Capability Check - Environment & API
         run: |
