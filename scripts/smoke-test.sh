@@ -11,6 +11,7 @@ Options:
   --include-interactive  Also verify VNC/noVNC services.
   --include-debug        Run a winedbg smoke check.
   --phase NAME           Run a specific diagnostic phase (health, smoke, cv, trace, recording).
+  --skip-base-checks     Skip base desktop/prefix/screenshot checks (for phased CI runs).
   --full                 Run all internal diagnostic phases.
   --no-build             Skip building the image.
   --cleanup              Stop services started by this script.
@@ -24,6 +25,7 @@ phase=""
 full="0"
 build="1"
 cleanup="0"
+skip_base_checks="0"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +38,9 @@ while [ $# -gt 0 ]; do
     --phase)
       phase="$2"
       shift
+      ;;
+    --skip-base-checks)
+      skip_base_checks="1"
       ;;
     --full)
       full="1"
@@ -160,41 +165,45 @@ else
   started_headless="1"
 fi
 
-log "Waiting for headless desktop..."
-wait_for_windows headless winebot
+if [ "$skip_base_checks" != "1" ]; then
+  log "Waiting for headless desktop..."
+  wait_for_windows headless winebot
 
-log "Checking Xvfb and openbox..."
-compose_exec headless winebot "pgrep -x Xvfb >/dev/null"
-compose_exec headless winebot "pgrep -x openbox >/dev/null"
+  log "Checking Xvfb and openbox..."
+  compose_exec headless winebot "pgrep -x Xvfb >/dev/null"
+  compose_exec headless winebot "pgrep -x openbox >/dev/null"
 
-log "Validating Openbox menu commands..."
-compose_exec headless winebot "/scripts/openbox-menu-test.sh --run-x11 --run-wine"
+  log "Validating Openbox menu commands..."
+  compose_exec headless winebot "/scripts/openbox-menu-test.sh --run-x11 --run-wine"
 
-log "Checking window list..."
-window_list="$(compose_exec headless winebot "DISPLAY=:99 wmctrl -l")"
-window_count="$(echo "$window_list" | grep -v "^$" | wc -l)"
-window_count="$(echo "$window_count" | tr -d ' ')"
-log "Found $window_count window(s):"
-log "$window_list"
-if [ "${window_count:-0}" -lt 1 ]; then
-  fail "Expected at least one window, found ${window_count:-0}"
-fi
+  log "Checking window list..."
+  window_list="$(compose_exec headless winebot "DISPLAY=:99 wmctrl -l")"
+  window_count="$(echo "$window_list" | grep -v "^$" | wc -l)"
+  window_count="$(echo "$window_count" | tr -d ' ')"
+  log "Found $window_count window(s):"
+  log "$window_list"
+  if [ "${window_count:-0}" -lt 1 ]; then
+    fail "Expected at least one window, found ${window_count:-0}"
+  fi
 
-log "Capturing screenshot..."
-screenshot_path="$(compose_exec headless winebot "./automation/screenshot.sh" | tail -n 1 | tr -d '\r')"
-compose_exec headless winebot "test -s '$screenshot_path'"
+  log "Capturing screenshot..."
+  screenshot_path="$(compose_exec headless winebot "./automation/screenshot.sh" | tail -n 1 | tr -d '\r')"
+  compose_exec headless winebot "test -s '$screenshot_path'"
 
-log "Validating prefix persistence..."
-marker="/wineprefix/drive_c/winebot_smoke_$(date +%s).txt"
-compose_exec headless winebot "echo 'winebot smoke' > '$marker'"
-"${compose_cmd[@]}" -f "$compose_file" --profile headless run --rm --user winebot --entrypoint bash winebot -lc "test -f '$marker'"
-compose_exec headless winebot "rm -f '$marker'"
+  log "Validating prefix persistence..."
+  marker="/wineprefix/drive_c/winebot_smoke_$(date +%s).txt"
+  compose_exec headless winebot "echo 'winebot smoke' > '$marker'"
+  "${compose_cmd[@]}" -f "$compose_file" --profile headless run --rm --user winebot --entrypoint bash winebot -lc "test -f '$marker'"
+  compose_exec headless winebot "rm -f '$marker'"
 
-if [ "$full" = "1" ]; then
-  log "Running Notepad automation..."
-  notepad_output="/wineprefix/drive_c/users/winebot/Temp/winebot_smoke_test.txt"
-  compose_exec headless winebot "pkill -f '[n]otepad.exe' >/dev/null 2>&1 || true"
-  compose_exec headless winebot "python3 automation/notepad_create_and_verify.py --text 'WineBot smoke test' --output '$notepad_output' --launch --timeout 120 --save-timeout 60 --retry-interval 2 --delay 100"
+  if [ "$full" = "1" ]; then
+    log "Running Notepad automation..."
+    notepad_output="/wineprefix/drive_c/users/winebot/Temp/winebot_smoke_test.txt"
+    compose_exec headless winebot "pkill -f '[n]otepad.exe' >/dev/null 2>&1 || true"
+    compose_exec headless winebot "python3 automation/notepad_create_and_verify.py --text 'WineBot smoke test' --output '$notepad_output' --launch --timeout 120 --save-timeout 60 --retry-interval 2 --delay 100"
+  fi
+else
+  log "Skipping base checks by request (--skip-base-checks)."
 fi
 
 if [ "$include_debug" = "1" ]; then
