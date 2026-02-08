@@ -449,12 +449,17 @@ if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     echo "--> Optimizing Wine Prefix..."
     wine reg add "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\winebth" /v Start /t REG_DWORD /d 4 /f >/dev/null 2>&1
     
-    # Optimization: Enable Font Smoothing for better OCR/CV results
-    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1
-    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1
-
     annotate_safe "WINEPREFIX ready" "lifecycle" "entrypoint"
     log_event "wineboot_ready" "WINEPREFIX ready"
+fi
+
+# Optimization: Enable Font Smoothing for better OCR/CV results
+wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1
+wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1
+
+# Apply WineBot Theme (Fonts, Colors, Metrics)
+if [ -x "/scripts/install-theme.sh" ]; then
+    /scripts/install-theme.sh
 fi
 
 # Supervisor: Ensure explorer runs and stays maximized
@@ -464,15 +469,39 @@ log_event "supervisor_started" "Starting Desktop Supervisor"
 (
   while true; do
     # 1. Ensure Explorer is running
-    # We grep for 'explorer.exe' in the full command line.
+    # We look for the Windows explorer process specifically
     if ! pgrep -f "explorer.exe" > /dev/null; then
-        echo "--> (Supervisor) Explorer not found, starting..."
-        # Use nohup to detach, redirect output to prevent buffer filling
-        nohup wine explorer.exe /desktop=Default,${SCREEN%x*} >/dev/null 2>&1 &
-        sleep 2 # Give it a moment to spawn
+        # Double check to avoid race with startup
+        sleep 1
+        if ! pgrep -f "explorer.exe" > /dev/null; then
+            echo "--> (Supervisor) Explorer not found, starting..."
+            log_event "supervisor_restart_explorer" "Restarting explorer.exe" "supervisor"
+            
+            # Use 'wine start' to launch properly, redirect logs
+            # We use setsid to detach fully
+            if command -v setsid >/dev/null 2>&1; then
+                setsid wine explorer.exe /desktop=Default,${SCREEN%x*} >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+            else
+                nohup wine explorer.exe /desktop=Default,${SCREEN%x*} >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+            fi
+            sleep 5 # Give it plenty of time to initialize
+        fi
     fi
 
-    # 2. Ensure Desktop Window is maximized and undecorated
+    # 2. Check for wineserver crash (critical)
+    # We check for the process. If missing, we log it.
+    if ! pgrep -n "wineserver" > /dev/null; then
+         # Only log if we haven't logged it recently (simple debounce)
+         if [ ! -f /tmp/wineserver_missing_logged ]; then
+             echo "--> (Supervisor) CRITICAL: wineserver process not found!"
+             log_event "supervisor_critical_wineserver_missing" "wineserver missing" "supervisor"
+             touch /tmp/wineserver_missing_logged
+         fi
+    else
+         rm -f /tmp/wineserver_missing_logged
+    fi
+
+    # 3. Ensure Desktop Window is maximized and undecorated
     # Wine 10.0 often uses "Wine Desktop", older versions "Desktop".
     for title in "Desktop" "Wine Desktop"; do
       if xdotool search --name "$title" >/dev/null 2>&1; then
