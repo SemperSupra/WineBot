@@ -24,15 +24,16 @@ if [[ "$PHASE" == "all" || "$PHASE" == "health" ]]; then
             log "API is ready."
             break
         fi
-            if [ $i -eq 30 ]; then
-                log "ERROR: API failed to start within 30 seconds."
-                SESSION_DIR=$(cat /tmp/winebot_current_session 2>/dev/null || echo "")
-                if [ -n "$SESSION_DIR" ] && [ -f "$SESSION_DIR/logs/api.log" ]; then
-                    log "--- API LOG TAIL ---"
-                    tail -n 50 "$SESSION_DIR/logs/api.log"
-                fi
-                exit 1
-            fi        sleep 1
+        if [ $i -eq 30 ]; then
+            log "ERROR: API failed to start within 30 seconds."
+            SESSION_DIR=$(cat /tmp/winebot_current_session 2>/dev/null || echo "")
+            if [ -n "$SESSION_DIR" ] && [ -f "$SESSION_DIR/logs/api.log" ]; then
+                log "--- API LOG TAIL ---"
+                tail -n 50 "$SESSION_DIR/logs/api.log"
+            fi
+            exit 1
+        fi
+        sleep 1
     done
 
     if ! curl -s --fail http://localhost:8000/health/environment | python3 -m json.tool > "$LOG_DIR/env_health.json"; then
