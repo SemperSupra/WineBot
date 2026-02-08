@@ -206,7 +206,11 @@ fi
 if [ "$full" = "1" ] || [ -n "$phase" ]; then
   target_phase="${phase:-all}"
   log "Running internal diagnostics (Phase: $target_phase)..."
-  compose_exec headless winebot "/scripts/diagnose-master.sh $target_phase"
+  if ! compose_exec headless winebot "/scripts/diagnose-master.sh $target_phase"; then
+      log "Internal diagnostics failed. Showing container logs:"
+      "${compose_cmd[@]}" -f "$compose_file" --profile headless logs winebot
+      exit 1
+  fi
 fi
 
 if [ "$include_interactive" = "1" ]; then

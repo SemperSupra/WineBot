@@ -18,18 +18,26 @@ PHASE="${1:-all}"
 # 1. Environment & API Health
 if [[ "$PHASE" == "all" || "$PHASE" == "health" ]]; then
     log "=== PHASE 1: Environment & API Health ==="
-    log "Waiting for API to be ready..."
-    for i in $(seq 1 30); do
+    log "Waiting for API to be ready (up to 60s)..."
+    for i in $(seq 1 60); do
         if curl -s http://localhost:8000/health > /dev/null; then
             log "API is ready."
             break
         fi
-        if [ $i -eq 30 ]; then
-            log "ERROR: API failed to start within 30 seconds."
+        if [ $i -eq 60 ]; then
+            log "ERROR: API failed to start within 60 seconds."
             SESSION_DIR=$(cat /tmp/winebot_current_session 2>/dev/null || echo "")
-            if [ -n "$SESSION_DIR" ] && [ -f "$SESSION_DIR/logs/api.log" ]; then
-                log "--- API LOG TAIL ---"
-                tail -n 50 "$SESSION_DIR/logs/api.log"
+            if [ -n "$SESSION_DIR" ]; then
+                log "Looking for logs in $SESSION_DIR/logs"
+                ls -R "$SESSION_DIR/logs" || true
+                if [ -f "$SESSION_DIR/logs/api.log" ]; then
+                    log "--- API LOG TAIL ---"
+                    tail -n 100 "$SESSION_DIR/logs/api.log"
+                fi
+                if [ -f "$SESSION_DIR/logs/entrypoint.log" ]; then
+                    log "--- ENTRYPOINT LOG TAIL ---"
+                    tail -n 100 "$SESSION_DIR/logs/entrypoint.log"
+                fi
             fi
             exit 1
         fi
