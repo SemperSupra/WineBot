@@ -40,10 +40,10 @@ wineserver -p >/dev/null 2>&1 &
 sleep 2
 
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
-    echo "--> Initializing WINEPREFIX..."
+    echo "--> Initializing WINEPREFIX in background..."
     export WINEDLLOVERRIDES="mscoree,mshtml="
-    wineboot -u >/dev/null 2>&1 || true
-    wineserver -w
+    wineboot -u >/dev/null 2>&1 &
+    # We don't wait here; services will start and can check wine status themselves.
 fi
 
 # Theme & Settings

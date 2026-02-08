@@ -65,6 +65,18 @@ fi
 # 3. Integrated Smoke Tests
 if [[ "$PHASE" == "all" || "$PHASE" == "smoke" ]]; then
     log "=== PHASE 3: Integrated Smoke Tests ==="
+    log "Waiting for Wine to be ready..."
+    for i in $(seq 1 120); do
+        if wine cmd /c "echo ready" >/dev/null 2>&1; then
+            log "Wine is ready."
+            break
+        fi
+        if [ $i -eq 120 ]; then
+            log "ERROR: Wine failed to initialize within 120 seconds."
+            exit 1
+        fi
+        sleep 1
+    done
     # Run the existing smoke tests which cover AHK, AutoIt, winpy, etc.
     if /tests/run_smoke_tests.sh; then
         log "Smoke tests: PASSED"
