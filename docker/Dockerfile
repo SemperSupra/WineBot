@@ -75,3 +75,4 @@ RUN chmod +x /entrypoint.sh
 WORKDIR /
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
+# Cache bust: So 8. Feb 17:01:21 CET 2026
