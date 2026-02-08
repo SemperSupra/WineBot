@@ -1322,20 +1322,37 @@
       return fetch(path, { ...options, headers });
     }
 
-    async function updateArtifacts(sessionId) {
-      if (!sessionId || !artifactsList) return;
+    async function updateArtifacts(activeSessionId) {
+      if (!artifactsList) return;
+      
       try {
-        const res = await apiFetch(`/sessions/${sessionId}/artifacts`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const files = data.artifacts || [];
+        // 1. Get list of all sessions to find recent history
+        const sessionsRes = await apiFetch("/sessions?limit=3");
+        let targetSessions = [];
+        if (sessionsRes.ok) {
+            const sessionsData = await sessionsRes.json();
+            targetSessions = sessionsData.sessions || [];
+        }
         
-        if (files.length === 0) {
+        // If we have an active session, ensure it's in the list
+        if (activeSessionId && !targetSessions.find(s => s.session_id === activeSessionId)) {
+            targetSessions.unshift({ session_id: activeSessionId });
+        }
+
+        if (targetSessions.length === 0) {
           artifactsList.innerHTML = '<div class="hint">No artifacts found yet.</div>';
           return;
         }
 
-        // Filter for interesting files: mkv, png, jsonl, log
+        // 2. Fetch artifacts from the most recent sessions (limit to top 1 for performance, or aggregate)
+        // For simplicity/performance, we focus on the MOST RECENT session (active or not)
+        const primarySession = targetSessions[0]; 
+        const res = await apiFetch(`/sessions/${primarySession.session_id}/artifacts`);
+        if (!res.ok) return;
+        
+        const data = await res.json();
+        const files = data.artifacts || [];
+        
         const filtered = files.filter(f => 
           f.path.endsWith(".mkv") || 
           f.path.endsWith(".png") || 
@@ -1344,6 +1361,23 @@
         ).sort((a, b) => b.mtime - a.mtime);
 
         artifactsList.innerHTML = "";
+        
+        // Header
+        const header = document.createElement("div");
+        header.className = "hint";
+        header.textContent = `Session: ${primarySession.session_id}`;
+        header.style.borderBottom = "1px solid var(--border)";
+        header.style.paddingBottom = "4px";
+        header.style.marginBottom = "6px";
+        artifactsList.appendChild(header);
+
+        if (filtered.length === 0) {
+             const div = document.createElement("div");
+             div.textContent = "No files yet.";
+             div.style.fontSize = "0.75rem";
+             artifactsList.appendChild(div);
+        }
+
         filtered.forEach(f => {
           const div = document.createElement("div");
           div.style.display = "flex";
@@ -1352,7 +1386,7 @@
           div.style.marginBottom = "4px";
 
           const link = document.createElement("a");
-          link.href = `/sessions/${sessionId}/artifacts/${f.path}`;
+          link.href = `/sessions/${primarySession.session_id}/artifacts/${f.path}`;
           link.textContent = f.path;
           link.target = "_blank";
           link.style.color = "var(--accent-2)";
@@ -1720,6 +1754,11 @@
 
     async function postRecordingAction(action) {
       logMessage("info", `Recording ${action} requested.`);
+      
+      // Optimistic UI update
+      const allBtns = [recordStartBtn, recordPauseBtn, recordResumeBtn, recordStopBtn];
+      allBtns.forEach(btn => btn.disabled = true);
+      
       try {
         const options = { method: "POST" };
         const response = await apiFetch(`/recording/${action}`, options);
@@ -1728,8 +1767,12 @@
         }
         const data = await response.json();
         logMessage("info", `Recording ${action}: ${data.status || "ok"}`);
+        // Trigger immediate poll to confirm state
+        setTimeout(runPoll, 500);
       } catch (err) {
         logMessage("error", `Recording ${action} error: ${err.message}`);
+        // Revert UI on error (next poll will fix it anyway, but fast feedback is good)
+        updateDashboard(); 
       }
     }
 

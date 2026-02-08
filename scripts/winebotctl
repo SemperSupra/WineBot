@@ -179,6 +179,13 @@ api_request() {
   status="${status%__}"
   local payload="${response%__HTTP_STATUS__:*}"
 
+  if [ "$status" -eq 423 ]; then
+    echo "Error: Agent control denied (HTTP 423)." >&2
+    echo "Interactive Policy is active. You must grant control via the Dashboard or API." >&2
+    # Return failure
+    return 1
+  fi
+
   if [ -n "$cache_key" ] && [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
     cache_put "$cache_key" "$status" "$payload" >/dev/null 2>&1 || true
   fi
