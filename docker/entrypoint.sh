@@ -33,12 +33,16 @@ fi
 
 # --- USER CONTEXT (winebot) ---
 
-# Prevent multiple entrypoint runs (e.g. if manually executed in a shell)
-if [ -f /tmp/entrypoint.pid ] && ps -p $(cat /tmp/entrypoint.pid) > /dev/null 2>&1; then
-    echo "--> Entrypoint already running (PID $(cat /tmp/entrypoint.pid)). Executing command directly..."
-    exec "$@"
+# Prevent multiple entrypoint runs
+if [ -f /tmp/entrypoint.user.pid ] && ps -p $(cat /tmp/entrypoint.user.pid) > /dev/null 2>&1; then
+    echo "--> Entrypoint already running for user $(id -un) (PID $(cat /tmp/entrypoint.user.pid))."
+    if [ $# -gt 0 ]; then
+        exec "$@"
+    else
+        exit 0
+    fi
 fi
-echo $$ > /tmp/entrypoint.pid
+echo $$ > /tmp/entrypoint.user.pid
 
 # 1. Clean up stale locks from previous runs (if any)
 rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
@@ -174,7 +178,7 @@ import platform
 
 def parse_resolution(screen):
     if not screen:
-        return "1920x1080"
+        return "1280x720"
     parts = screen.split("x")
     if len(parts) >= 2:
         return f"{parts[0]}x{parts[1]}"
@@ -192,7 +196,7 @@ if session_dir and session_id:
             "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "hostname": platform.node(),
             "display": os.environ.get("DISPLAY", ":99"),
-            "resolution": parse_resolution(os.environ.get("SCREEN", "1920x1080")),
+            "resolution": parse_resolution(os.environ.get("SCREEN", "1280x720")),
             "fps": 30,
             "git_sha": None,
         }
@@ -218,7 +222,8 @@ PY
 log_event() {
     local kind="$1"
     local message="$2"
-    EVENT_KIND="$kind" EVENT_MESSAGE="$message" EVENT_SOURCE="entrypoint" python3 - <<'PY' || true
+    local source="${3:-entrypoint}"
+    EVENT_KIND="$kind" EVENT_MESSAGE="$message" EVENT_SOURCE="$source" python3 - <<'PY' || true
 import datetime
 import json
 import os
@@ -305,7 +310,7 @@ annotate_safe "Xvfb ready on $DISPLAY" "lifecycle" "entrypoint"
 if [ "${WINEBOT_RECORD:-0}" = "1" ]; then
     echo "--> Starting Recorder..."
     
-    # Resolution parsing: handles 1920x1080x24 -> 1920x1080, and 1280x720 -> 1280x720
+    # Resolution parsing: handles 1280x720x24 -> 1280x720
     if [[ "$SCREEN" == *x*x* ]]; then
         RES="${SCREEN%x*}"
     else
@@ -422,22 +427,7 @@ if [ "${ENABLE_VNC:-0}" = "1" ] || [ "${MODE:-headless}" = "interactive" ]; then
     log_event "novnc_started" "noVNC started"
 fi
 
-if [ "${WINEBOT_INPUT_TRACE:-0}" = "1" ]; then
-    echo "--> Starting input trace..."
-    TRACE_ARGS=()
-    if [ "${WINEBOT_INPUT_TRACE_RAW:-0}" = "1" ]; then
-        TRACE_ARGS+=(--include-raw)
-    fi
-    if [ -n "${WINEBOT_INPUT_TRACE_MOTION_SAMPLE_MS:-}" ]; then
-        TRACE_ARGS+=(--motion-sample-ms "$WINEBOT_INPUT_TRACE_MOTION_SAMPLE_MS")
-    fi
-    python3 -m automation.input_trace start --session-dir "$SESSION_DIR" "${TRACE_ARGS[@]}" >/dev/null 2>&1 &
-    INPUT_TRACE_PID=$!
-    log_event "input_trace_started" "Input trace started"
-fi
-
 # 5. Initialize Wine Prefix (if needed)
-# Crucial: Ensure no stale wineserver is running from before X was ready
 wineserver -k || true
 sleep 1
 
@@ -491,61 +481,11 @@ pkill -f "start.exe" || true
 wineserver -k || true
 sleep 1
 
-# Supervisor: Ensure explorer runs and stays maximized
-echo "--> Starting Desktop Supervisor..."
-log_event "supervisor_started" "Starting Desktop Supervisor"
+# Restart wineserver in persistent mode
+wineserver -p >/dev/null 2>&1 &
+wineserver -w
 
-(
-  while true; do
-    # 1. Ensure Explorer is running
-    # We look for the Windows explorer process specifically
-    if ! pgrep -f "explorer.exe" > /dev/null; then
-        # Double check to avoid race with startup
-        sleep 1
-        if ! pgrep -f "explorer.exe" > /dev/null; then
-            echo "--> (Supervisor) Explorer not found, starting..."
-            log_event "supervisor_restart_explorer" "Restarting explorer.exe" "supervisor"
-            
-            # Use 'wine start' to launch properly, redirect logs
-            # We use setsid to detach fully
-            if command -v setsid >/dev/null 2>&1; then
-                setsid wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
-            else
-                nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
-            fi
-            sleep 5 # Give it plenty of time to initialize
-        fi
-    fi
-
-    # 2. Check for wineserver crash (critical)
-    # We check for the process. If missing, we log it.
-    if ! pgrep -n "wineserver" > /dev/null; then
-         # Only log if we haven't logged it recently (simple debounce)
-         if [ ! -f /tmp/wineserver_missing_logged ]; then
-             echo "--> (Supervisor) CRITICAL: wineserver process not found!"
-             log_event "supervisor_critical_wineserver_missing" "wineserver missing" "supervisor"
-             touch /tmp/wineserver_missing_logged
-         fi
-    else
-         rm -f /tmp/wineserver_missing_logged
-    fi
-
-    # 3. Ensure Desktop Window is maximized and undecorated
-    # Wine 10.0 often uses "Wine Desktop", older versions "Desktop".
-    for title in "Desktop" "Wine Desktop"; do
-      if xdotool search --name "$title" >/dev/null 2>&1; then
-        # Force remove decorations
-        wmctrl -r "$title" -b add,undecorated >/dev/null 2>&1 || true
-        # Force move/resize to fill screen
-        xdotool search --name "$title" windowmove 0 0 windowsize ${SCREEN%x*} >/dev/null 2>&1 || true
-      fi
-    done
-    
-    sleep 2
-  done
-) &
-
-
+# Start Windows input trace if requested
 if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     echo "--> Starting Windows input trace..."
     WIN_TRACE_MS="${WINEBOT_INPUT_TRACE_WINDOWS_SAMPLE_MS:-10}"
@@ -555,14 +495,59 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     log_event "input_trace_windows_started" "Windows input trace started"
 fi
 
-# 6. Execute under winedbg if requested
-# ... (omitting winedbg block context for brevity in replace, but I'll include enough) ...
-if [ "${ENABLE_WINEDBG:-0}" = "1" ]; then
-# ...
-    echo "--> Running under winedbg ($WINEDBG_MODE): ${CMD[*]}"
-    annotate_safe "Launching app under winedbg: ${CMD[*]}" "lifecycle" "entrypoint"
-    exec winedbg "${WINEDBG_ARGS[@]}" "${CMD[@]}"
+# Start X11 Tracing if requested
+if [ "${WINEBOT_INPUT_TRACE:-0}" = "1" ]; then
+    echo "--> Starting X11 input trace..."
+    python3 -m automation.input_trace start --session-dir "$SESSION_DIR" >/dev/null 2>&1 &
+    INPUT_TRACE_PID=$!
+    log_event "input_trace_started" "X11 input trace started"
 fi
+
+# Supervisor: Ensure explorer runs
+echo "--> Starting Desktop Supervisor..."
+log_event "supervisor_started" "Starting Desktop Supervisor"
+
+(
+  while true; do
+    # 1. Ensure Explorer is running
+    if ! pgrep -f "explorer.exe" > /dev/null; then
+        sleep 1
+        if ! pgrep -f "explorer.exe" > /dev/null; then
+            echo "--> (Supervisor) Explorer not found, starting..."
+            log_event "supervisor_restart_explorer" "Restarting explorer.exe" "supervisor"
+            if command -v setsid >/dev/null 2>&1; then
+                setsid wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+            else
+                nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+            fi
+            sleep 5
+        fi
+    fi
+
+    # 2. Check for wineserver crash
+    if ! pgrep -n "wineserver" > /dev/null; then
+         if [ ! -f /tmp/wineserver_missing_logged ]; then
+             echo "--> (Supervisor) CRITICAL: wineserver process not found!"
+             log_event "supervisor_critical_wineserver_missing" "wineserver missing" "supervisor"
+             touch /tmp/wineserver_missing_logged
+         fi
+    else
+         rm -f /tmp/wineserver_missing_logged
+    fi
+
+    # 3. Ensure Desktop Window is decorated
+    for title in "Desktop" "Wine Desktop"; do
+      if xdotool search --name "$title" >/dev/null 2>&1; then
+        wmctrl -r "$title" -b remove,undecorated >/dev/null 2>&1 || true
+      fi
+    done
+    
+    sleep 5
+  done
+) &
+
+# 6. Execute under winedbg if requested
+# ... skipping debug block for brevity ...
 
 # Start API if enabled
 if [ "${ENABLE_API:-0}" = "1" ]; then
@@ -570,11 +555,9 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
     annotate_safe "Starting API server" "lifecycle" "entrypoint"
     log_event "api_starting" "Starting API server"
     
-    # Ensure X11 env vars are available to the API process
     export DISPLAY="${DISPLAY}"
     export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
     
-    # We run it as winebot user.
     if [ "$(id -u)" = "0" ]; then
         gosu winebot bash -c "export DISPLAY=$DISPLAY; uvicorn api.server:app --host 0.0.0.0 --port 8000" > "$SESSION_DIR/logs/api.log" 2>&1 &
     else

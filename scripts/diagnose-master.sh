@@ -62,14 +62,29 @@ fi
 
 # 5. Trace Verification
 log "=== PHASE 5: Trace Verification ==="
-# We check if events were recorded in the last 30 seconds
+
+# 5.1 Coordinate Alignment Check
+log "Running Coordinate Alignment Check..."
+# Click 4 corners + center
+TEST_POINTS=("100,100" "1180,100" "100,620" "1180,620" "640,360")
+SESSION_ID=$(curl -s http://localhost:8000/lifecycle/status | python3 -c "import sys, json; print(json.load(sys.stdin).get('session_id'))")
+
+for pt in "${TEST_POINTS[@]}"; do
+    X=${pt%,*}
+    Y=${pt#*,}
+    log "Testing click at $X,$Y..."
+    curl -s -X POST http://localhost:8000/input/mouse/click -H "Content-Type: application/json" -d "{\"x\": $X, \"y\": $Y}" > /dev/null
+    sleep 1
+done
+
+# We check if events were recorded in the last 60 seconds
 T0=$(python3 -c "import time; print(int((time.time() - 60) * 1000))")
 
 check_trace() {
     local layer="$1"
-    local count=$(curl -s "http://localhost:8000/input/events?source=${layer}&since_epoch_ms=${T0}&limit=1" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('events', [])))")
+    local count=$(curl -s "http://localhost:8000/input/events?source=${layer}&since_epoch_ms=${T0}&limit=50" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('events', [])))")
     if [ "$count" -gt 0 ]; then
-        log "Trace layer '$layer': OK"
+        log "Trace layer '$layer': OK ($count events)"
     else
         log "Trace layer '$layer': NO EVENTS FOUND (last 60s)"
     fi

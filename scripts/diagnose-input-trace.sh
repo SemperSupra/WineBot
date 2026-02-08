@@ -1347,12 +1347,20 @@ def vnc_probe(host, port, password):
     finally: sock.close()
 
 host = os.environ.get("VNC_HOST", "127.0.0.1")
-port = int(os.environ.get("VNC_PORT", "5900"))
+ports = [int(os.environ.get("VNC_PORT", "5900")), 5901]
 pw = os.environ.get("VNC_PASSWORD", "")
-try:
-    if vnc_probe(host, port, pw): print("VNC probe success")
-    else: print("VNC probe failed")
-except Exception as e: print(f"VNC probe error: {e}")
+success = False
+for port in ports:
+    try:
+        if vnc_probe(host, port, pw):
+            print(f"VNC probe success on port {port}")
+            success = True
+            break
+    except Exception as e:
+        print(f"VNC probe failed on port {port}: {e}")
+
+if not success:
+    print("VNC probe failed on all ports")
 PY
   sleep 0.4
   net_ok="$(trace_has_event "network" "vnc_pointer,vnc_key" "$t0")"

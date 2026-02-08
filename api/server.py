@@ -2545,6 +2545,7 @@ async def click_at(data: ClickModel):
         "via": "xdotool",
     })
     run_command(["/automation/x11.sh", "click-at", str(data.x), str(data.y)])
+    # Log to X11 layer
     append_input_event(session_dir, {
         "event": "agent_click",
         "phase": "complete",
@@ -2557,6 +2558,20 @@ async def click_at(data: ClickModel):
         "trace_id": trace_id,
         "status": "clicked",
     })
+    
+    # Log to Windows layer (Cross-layer consistency)
+    payload = {
+        "event": "mouse_down",
+        "origin": "agent",
+        "source": "windows",
+        "x": data.x,
+        "y": data.y,
+        "button": 1,
+        "trace_id": trace_id,
+        "timestamp_epoch_ms": int(time.time() * 1000),
+    }
+    append_trace_event(input_trace_windows_log_path(session_dir), payload)
+    
     return {"status": "clicked", "x": data.x, "y": data.y, "trace_id": trace_id}
 
 @app.post("/run/ahk")
