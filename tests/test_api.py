@@ -85,7 +85,7 @@ def test_recording_stop(mock_running, mock_run, tmp_path, auth_headers):
                 response = client.post("/recording/stop", headers=auth_headers)
                 assert response.status_code == 200
 
-@patch("api.server.safe_command")
+@patch("api.routers.automation.safe_command")
 @patch("api.routers.automation.validate_path")
 def test_run_app(mock_validate, mock_run, auth_headers):
     mock_run.return_value = {"ok": True, "stdout": "Success", "stderr": ""}
