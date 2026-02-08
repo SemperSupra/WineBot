@@ -268,13 +268,14 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                 procs.append(proc)
                 selector.register(
                     proc.stdout,
-                    data={
+                    selectors.EVENT_READ,
+                    {
                         "label": label,
                         "id": device_id,
                         "name": device_name,
                         "proc": proc,
                         "spec": spec,
-                    },
+                    }
                 )
                 return proc
 
