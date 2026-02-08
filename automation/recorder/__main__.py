@@ -139,9 +139,21 @@ def input_event_message(event: dict) -> str:
 def load_input_trace_events(session_dir: str) -> list:
     if not input_recording_enabled():
         return []
-    start_epoch_ms = read_manifest_start_epoch_ms(session_dir)
+    
+    # Try to find start time from session.json
+    start_epoch_ms = None
+    session_path = os.path.join(session_dir, "session.json")
+    if os.path.exists(session_path):
+        try:
+            with open(session_path, "r") as f:
+                data = json.load(f)
+            start_epoch_ms = int(float(data.get("start_time_epoch", 0)) * 1000)
+        except Exception:
+            pass
+            
     if start_epoch_ms is None:
         return []
+
     session_id = os.path.basename(session_dir)
     events = []
     for layer, path in input_log_paths(session_dir):
@@ -158,9 +170,13 @@ def load_input_trace_events(session_dir: str) -> list:
                         continue
                     if not should_record_input_event(data):
                         continue
-                    t_epoch = int(data.get("timestamp_epoch_ms", 0))
-                    if t_epoch <= 0:
+                    
+                    # Try canonical field first, then fallback
+                    t_epoch = data.get("t_wall_ms") or data.get("timestamp_epoch_ms")
+                    if t_epoch is None:
                         continue
+                    
+                    t_epoch = int(t_epoch)
                     t_rel = max(0, t_epoch - start_epoch_ms)
                     pos = None
                     if data.get("x") is not None and data.get("y") is not None:

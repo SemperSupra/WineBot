@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
-# Versions
-AUTOIT_URL="https://www.autoitscript.com/cgi-bin/getfile.pl?autoit3/autoit-v3.zip"
-AHK_URL="https://github.com/AutoHotkey/AutoHotkey/releases/download/v1.1.37.02/AutoHotkey_1.1.37.02.zip"
+# Versions (Pinned for reproducibility)
+AUTOIT_VER="3.3.16.1"
+AUTOIT_URL="https://www.autoitscript.com/autoit3/files/archive/autoit/autoit-v${AUTOIT_VER}.zip"
+AHK_VER="1.1.37.02"
+AHK_URL="https://github.com/AutoHotkey/AutoHotkey/releases/download/v${AHK_VER}/AutoHotkey_${AHK_VER}.zip"
 PYTHON_VER="3.13.11"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VER}/python-${PYTHON_VER}-embed-amd64.zip"
+WINSPY_VER="1.8.4"
+WINSPY_URL="https://github.com/strobejb/winspy/releases/download/v${WINSPY_VER}/WinSpy_Release_x86.zip"
 
 TOOLS_DIR="/opt/winebot/windows-tools"
 mkdir -p "$TOOLS_DIR"

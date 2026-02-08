@@ -1,22 +1,26 @@
-FROM debian:trixie-slim
+# Pinned to debian:trixie-slim as of 2026-02-08
+FROM debian@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN if [ -f /etc/apt/sources.list ]; then \
         sed -i 's/ main/ main contrib non-free non-free-firmware/' /etc/apt/sources.list; \
-    elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-        sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.d/debian.sources ]; then \
+        sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.d/debian.sources; \
     fi \
     && dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends \
-        wine wine64 wine32 winetricks cabextract \
+        wine wine64 wine32 cabextract \
         xvfb xauth openbox xdotool wmctrl x11vnc novnc websockify xinput \
         libxcomposite1 libxinerama1 libxrandr2 libxrender1 libxcursor1 libxi6 libxtst6 libxfixes3 libvulkan1 \
+        fonts-liberation x11-xserver-utils tint2 \
         python3 python3-pip python3-opencv gdb \
         imagemagick x11-utils procps ffmpeg \
         ca-certificates curl gosu unzip \
+    && curl -sL -o /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/20250102/src/winetricks \
+    && chmod +x /usr/local/bin/winetricks \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /tmp/.X11-unix \
@@ -37,8 +41,9 @@ RUN curl -sL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py \
 # --------------------------------
 
 # Install Python dependencies for API and Testing
-RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed \
-    fastapi uvicorn python-multipart httpx pytest
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 RUN useradd -m -u 1000 -s /bin/bash winebot \
     && mkdir -p /wineprefix /apps /automation /api \
@@ -47,7 +52,7 @@ RUN useradd -m -u 1000 -s /bin/bash winebot \
 
 ENV WINEPREFIX=/wineprefix \
     DISPLAY=:99 \
-    SCREEN=1920x1080x24 \
+    SCREEN=1280x720x24 \
     MODE=headless \
     INIT_PREFIX=1 \
     ENABLE_VNC=0 \
@@ -56,6 +61,7 @@ ENV WINEPREFIX=/wineprefix \
 
 COPY automation /automation
 COPY docker/openbox/ /etc/xdg/openbox/
+COPY docker/tint2/tint2rc /etc/xdg/tint2/tint2rc
 COPY scripts /scripts
 COPY api /api
 COPY tests /tests

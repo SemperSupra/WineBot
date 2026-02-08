@@ -12,8 +12,8 @@ from typing import Any, Dict, Optional
 
 TRACE_PID_FILE = "input_trace.pid"
 TRACE_STATE_FILE = "input_trace.state"
-TRACE_LOG_FILE = "input_events.jsonl"
-TRACE_STDERR_LOG = "input_trace.log"
+TRACE_LOG_FILE = "logs/input_events.jsonl"
+TRACE_STDERR_LOG = "logs/input_trace.log"
 DEFAULT_LAYER = "x11"
 DEFAULT_TOOL = "xinput"
 
@@ -23,6 +23,7 @@ DEVICE_RE = re.compile(r"^\s*device:\s*(\d+)\s+\((.+)\)")
 DETAIL_RE = re.compile(r"^\s*detail:\s*(\d+)")
 ROOT_RE = re.compile(r"^\s*root:\s*([0-9.+-]+)/([0-9.+-]+)")
 FLAGS_RE = re.compile(r"^\s*flags:\s*(.*)")
+MODIFIERS_RE = re.compile(r"^\s*modifiers:.*effective:\s*(\d+)")
 
 
 def now_ts() -> Dict[str, Any]:
@@ -133,9 +134,12 @@ def input_event_from_xi2(
 
     payload: Dict[str, Any] = {
         "session_id": session_id,
+        "event_id": f"{session_id}-{seq}",
+        "seq": seq,
         "source": "x11",
         "layer": DEFAULT_LAYER,
-        "event": event_type,
+        "type": event_type,  # Canonical name
+        "event": event_type, # Backwards compat
         "origin": "unknown",
         "tool": DEFAULT_TOOL,
         "device": {
@@ -144,11 +148,15 @@ def input_event_from_xi2(
         },
         "detail": current.get("detail"),
         "xi2_type": xi2_name,
-        "seq": seq,
     }
     if raw_event:
         payload["xi2_raw"] = True
-    payload.update(now_ts())
+    
+    ts = now_ts()
+    payload.update(ts)
+    payload["t_wall_ms"] = ts["timestamp_epoch_ms"]
+    # t_mono_ms is hard to get from python without CLOCK_MONOTONIC sync, using wall for now
+    payload["t_mono_ms"] = ts["timestamp_epoch_ms"] 
 
     if current.get("root_x") is not None and current.get("root_y") is not None:
         payload["x"] = current.get("root_x")
@@ -159,6 +167,16 @@ def input_event_from_xi2(
         payload["keycode"] = current.get("detail")
     if current.get("flags"):
         payload["flags"] = current.get("flags")
+    
+    # Parse modifiers mask (Base X11: Shift=1, Lock=2, Ctrl=4, Mod1=8 ...)
+    mods = []
+    mask = current.get("modifiers_effective", 0)
+    if mask & 1: mods.append("shift")
+    if mask & 4: mods.append("ctrl")
+    if mask & 8: mods.append("alt") # Mod1
+    if mask & 64: mods.append("meta") # Mod4 often
+    payload["modifiers"] = mods
+
     if include_raw and current.get("raw"):
         payload["raw"] = current.get("raw")
     return payload
@@ -224,6 +242,11 @@ def parse_xi2_stream(
         flags_match = FLAGS_RE.match(line)
         if flags_match:
             current["flags"] = flags_match.group(1).strip()
+            continue
+        mods_match = MODIFIERS_RE.match(line)
+        if mods_match:
+            current["modifiers_effective"] = int(mods_match.group(1))
+            continue
 
     if current is not None:
         seq += 1

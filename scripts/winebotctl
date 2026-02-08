@@ -33,6 +33,7 @@ Commands:
   apps list|run [opts]
   input click X Y
   input trace start|stop|status|events [opts]
+  config set|get|list|apply [opts]
   run ahk|autoit|python|winedbg [opts]
   inspect window [opts]
 
@@ -178,6 +179,13 @@ api_request() {
   local status="${response##*__HTTP_STATUS__:}"
   status="${status%__}"
   local payload="${response%__HTTP_STATUS__:*}"
+
+  if [ "$status" -eq 423 ]; then
+    echo "Error: Agent control denied (HTTP 423)." >&2
+    echo "Interactive Policy is active. You must grant control via the Dashboard or API." >&2
+    # Return failure
+    return 1
+  fi
 
   if [ -n "$cache_key" ] && [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
     cache_put "$cache_key" "$status" "$payload" >/dev/null 2>&1 || true
@@ -916,6 +924,76 @@ PY
       exit 1
     fi
     printf '%s\n' "$body"
+    ;;
+
+  config)
+    action="${1:-list}"
+    shift || true
+    
+    config_file="/wineprefix/winebot.env"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --instance)
+          config_file="/wineprefix/winebot.${HOSTNAME}.env"
+          shift
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+
+    touch "$config_file" 2>/dev/null || config_file="${HOME}/.config/winebot/env"
+    touch "$config_file"
+
+    case "$action" in
+      set)
+        key="$1"
+        val="$2"
+        if [ -z "$key" ]; then die "Usage: config set <KEY> <VALUE>"; fi
+        
+        # 1. Validate Key (Alphanumeric and underscores only)
+        if [[ ! "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+            die "Invalid key name: $key (Only alphanumeric and underscores allowed)"
+        fi
+
+        # 2. Sanitize Value (Escape double quotes and backslashes)
+        # Note: We wrap in single quotes in the file for better isolation
+        val_escaped="${val//\'/\'\\\'\'}"
+        
+        # 3. Remove existing key
+        if [ -s "$config_file" ]; then
+            grep -v "^export ${key}=" "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
+        fi
+
+        # 4. Add new key safely
+        echo "export ${key}='${val_escaped}'" >> "$config_file"
+        
+        # 5. Secure file permissions
+        chmod 600 "$config_file"
+        echo "Set ${key} (stored securely in $config_file)"
+        ;;
+      get)
+        key="$1"
+        if [ -z "$key" ]; then die "Usage: config get <KEY>"; fi
+        grep "^export ${key}=" "$config_file" | cut -d'"' -f2
+        ;;
+      list)
+        if [ -s "$config_file" ]; then
+            cat "$config_file"
+        else
+            echo "No overrides set."
+        fi
+        ;;
+      apply)
+        echo "Configuration saved to $config_file."
+        echo "Restarting session to apply changes..."
+        api_request POST "/lifecycle/shutdown" ""
+        ;;
+      *)
+        die "Unknown config action: $action"
+        ;;
+    esac
     ;;
 
   run)

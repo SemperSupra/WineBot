@@ -32,8 +32,32 @@ jobs:
           tags: winebot:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Run smoke tests (headless)
-        run: scripts/smoke-test.sh --full --include-debug --include-debug-proxy --cleanup --no-build
+
+      - name: Capability Check - Environment & API
+        run: |
+          scripts/smoke-test.sh --phase health --no-build
+        timeout-minutes: 10
+
+      - name: Capability Check - Automation (AHK/AutoIt)
+        run: |
+          scripts/smoke-test.sh --phase smoke --no-build
+        timeout-minutes: 10
+
+      - name: Capability Check - Input Tracing & CV
+        run: |
+          scripts/smoke-test.sh --phase cv --no-build
+        timeout-minutes: 10
+
+      - name: Capability Check - Trace Verification
+        run: |
+          scripts/smoke-test.sh --phase trace --no-build
+        timeout-minutes: 10
+
+      - name: Capability Check - Recording & Artifacts
+        run: |
+          scripts/smoke-test.sh --phase recording --no-build --cleanup
+        timeout-minutes: 10
+
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
         with:

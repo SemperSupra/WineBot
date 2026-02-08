@@ -115,17 +115,11 @@
   </keyboard>
 
   <applications>
-    <application name="Desktop">
-      <decor>no</decor>
-      <maximized>yes</maximized>
-    </application>
-    <application name="Wine Desktop">
-      <decor>no</decor>
-      <maximized>yes</maximized>
-    </application>
     <application class="explorer.exe">
-      <decor>no</decor>
-      <maximized>yes</maximized>
+      <decor>yes</decor>
+    </application>
+    <application name="Desktop">
+      <decor>yes</decor>
     </application>
   </applications>
 </openbox_config>

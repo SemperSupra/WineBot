@@ -1,96 +1,64 @@
-# AGENTS.md — WineBot Agent Guide
+# WineBot Agent Map
 
-This document is the definitive guide for autonomous agents (LLMs, scripts, CI runners) interacting with WineBot.
+This document is a navigation aid for autonomous agents working on the WineBot codebase.
 
-## 1. Primary Interface: HTTP API
+## 1. System Architecture
 
-The preferred method for agents to control WineBot is via the internal HTTP API (port 8000).
+WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 display stack, controlled via a Python FastAPI.
 
-**Base URL:** `http://localhost:8000` (inside container) or mapped port.
+### Core Layers
+| Layer | Components | Description |
+| :--- | :--- | :--- |
+| **Control** | `api/` | FastAPI server, Input Broker, Policy enforcement. |
+| **Orchestration** | `docker/entrypoint.sh` | Startup sequence, Xvfb/Openbox launch, Supervisor loop. |
+| **Automation** | `automation/` | Python/AHK scripts for recording, tracing, and interacting with Wine. |
+| **Tools** | `scripts/` | Shell helpers for local management (`winebotctl`) and diagnostics. |
 
-### Capabilities
-- **Vision:** `GET /screenshot` (returns PNG; metadata written to `.png.json`, `X-Request-Id` header)
-- **State:** `GET /windows` (list open windows), `GET /health` and `/health/*`
-- **Control:** `POST /input/mouse/click`, `POST /windows/focus`
-- **Automation:** `POST /run/ahk`, `POST /run/autoit`, `POST /run/python`, `POST /inspect/window`
-- **Management:** `POST /apps/run`, `GET /apps`
-- **Debug:** `POST /run/winedbg`
+## 2. Key File Map
 
-### Authentication
-If `API_TOKEN` is set in the container environment, you MUST provide it:
-- **Header:** `X-API-Key: <your-token>`
+| Path | Purpose | Key Symbols |
+| :--- | :--- | :--- |
+| `api/server.py` | Main API entrypoint. Mounts routers. | `app`, `lifespan` |
+| `api/core/broker.py` | Input Control Policy state machine. | `InputBroker`, `ControlMode` |
+| `api/routers/*.py` | API endpoints by category. | `/health`, `/input`, `/recording` |
+| `docker/entrypoint.sh` | Container boot logic. Handles Xvfb, Openbox, Wine init. | `Xvfb`, `wineserver`, `tint2` |
+| `docker/openbox/rc.xml` | Window Manager config. Controls input focus/decorations. | `<applications>`, `<mouse>` |
+| `scripts/diagnose-master.sh` | End-to-end system validation suite. | `Environment Health`, `Trace Verification` |
+| `tests/` | Pytest suite. | `test_policy.py`, `test_api.py` |
 
-### Example Workflow (Agent)
-1. **Launch App:** `POST /apps/run` `{"path": "notepad.exe", "detach": true}`
-2. **Verify:** `GET /windows/search?name=Notepad` -> returns ID.
-3. **Focus:** `POST /windows/focus` `{"window_id": "..."}`
-4. **Interact:** `POST /run/ahk` `{"script": "Send, Hello World"}`
-5. **Verify:** `GET /screenshot` -> Analyze image.
+## 3. Environment Variables
 
-### Agent Quick Start
-Minimal, fully-authenticated flow:
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `WINEBOT_RECORD` | `0` | Enable session recording (ffmpeg). |
+| `WINEBOT_INPUT_TRACE` | `0` | Enable X11 input event logging. |
+| `WINEBOT_INPUT_TRACE_WINDOWS` | `0` | Enable Windows-side (AHK) input logging. |
+| `WINEBOT_INPUT_TRACE_NETWORK` | `0` | Enable VNC proxy logging. |
+| `API_TOKEN` | (None) | Secure API access key. |
+| `VNC_PASSWORD` | (None) | Password for x11vnc. |
+| `SCREEN` | `1280x720x24` | Xvfb display resolution. |
 
+## 4. Common Tasks
+
+### How to run tests?
 ```bash
-# 1) Check health
-curl -H "X-API-Key: $API_TOKEN" http://localhost:8000/health
+# Unit tests
+docker compose run --rm winebot pytest /tests
 
-# 2) List windows (X11)
-curl -H "X-API-Key: $API_TOKEN" http://localhost:8000/windows
-
-# 3) Inspect Windows controls (WinSpy-style)
-curl -H "X-API-Key: $API_TOKEN" -H "Content-Type: application/json" \
-  -X POST http://localhost:8000/inspect/window \
-  -d '{"list_only":true}'
-
-# 4) Take a screenshot with metadata
-curl -H "X-API-Key: $API_TOKEN" \
-  "http://localhost:8000/screenshot?label=agent-run&tag=agent" \
-  -o /tmp/agent.png
+# Full diagnostic suite (Smoke + CV + Trace)
+docker compose run --rm winebot /scripts/diagnose-master.sh
 ```
 
-See `docs/api.md` for the full OpenAPI specification.
+### How to apply config changes?
+```bash
+# 1. Edit config
+scripts/winebotctl config set KEY VALUE
 
----
+# 2. Apply (Restarts container)
+scripts/winebotctl config apply
+```
 
-## 2. Secondary Interface: CLI Tools
-
-If direct shell access (`docker exec`) is preferred, use the optimized helper scripts.
-
-### X11 & Vision
-- **Inspection:** `/automation/x11.sh list-windows` (IDs + Titles)
-- **Search:** `/automation/x11.sh search --name "Pattern"`
-- **Focus:** `/automation/x11.sh focus <id>`
-- **Click:** `/automation/x11.sh click-at <x> <y>`
-- **Screenshot:** `/automation/screenshot.sh /tmp/out.png` (Supports `--window`, `--label`)
-- **Screenshot Metadata:** `/automation/screenshot.sh --request-id <id> --tag <tag> /tmp/out.png` (writes `.png.json`)
-
-### Execution
-- **AutoHotkey:** `/scripts/run-ahk.sh script.ahk` (Handles Wine bootstrapping automatically)
-- **AutoIt:** `/scripts/run-autoit.sh script.au3`
-- **App Launch:** `/scripts/run-app.sh "C:/Path/To/App.exe"`
-- **Auto-View:** `/scripts/run-app.sh "C:/Path/To/App.exe" --view novnc` (host helper)
-
----
-
-## 3. Deployment Strategy for Agents
-
-### Docker Compose (Recommended)
-Use the provided `docker-compose.yml` to spin up the environment.
-- **Headless:** Use `profile: headless` for background tasks.
-- **Environment:** Set `API_TOKEN` for security.
-
-### Troubleshooting
-- **No Windows?** Check `GET /health` (or `/health/x11`). Ensure `wine explorer` or the app is running.
-- **Input fails?** Ensure the window is focused (`POST /windows/focus`).
-- **Crashes?** Check container logs or use `/run/ahk` logging.
-- **API health from host:** `scripts/health-check.sh --all` (requires `API_TOKEN` if set).
-
----
-
-## 4. Development & Extension
-
-If you (the Agent) need to extend WineBot:
-1. **Python:** Add dependencies to `Dockerfile` (`pip install ...`).
-2. **API:** Extend `api/server.py` (FastAPI).
-3. **Scripts:** Add bash helpers to `scripts/` (ensure `chmod +x`).
-4. **Validation:** ALWAYS run `scripts/smoke-test.sh` after changes.
+### How to debug input issues?
+1. Enable traces: `WINEBOT_INPUT_TRACE=1` etc.
+2. Check `logs/input_events_*.jsonl` in session dir.
+3. Run `scripts/diagnose-input-suite.sh` inside container.

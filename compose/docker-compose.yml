@@ -1,7 +1,7 @@
 x-winebot-env: &winebot_env
   WINEPREFIX: /wineprefix
   DISPLAY: :99
-  SCREEN: 1920x1080x24
+  SCREEN: 1280x720x24
   APP_EXE: ${APP_EXE:-}
   APP_ARGS: ${APP_ARGS:-}
   WORKDIR: ${WORKDIR:-}

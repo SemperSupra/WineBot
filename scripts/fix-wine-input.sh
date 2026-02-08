@@ -19,7 +19,7 @@ wine reg add "HKCU\Software\Wine\X11 Driver" /v UseTakeFocus /t REG_SZ /d "N" /f
 
 # Force Wine virtual desktop to match screen resolution
 wine reg add "HKCU\Software\Wine\Explorer" /v Desktop /t REG_SZ /d "Default" /f
-wine reg add "HKCU\Software\Wine\Explorer\Desktops" /v Default /t REG_SZ /d "1920x1080" /f
+wine reg add "HKCU\Software\Wine\Explorer\Desktops" /v Default /t REG_SZ /d "1280x720" /f
 
 echo "Restarting Wine..."
 # wineserver -k

@@ -886,10 +886,11 @@ start_x11_core_trace() {
   local pointer_id keyboard_id pointer_xtest_id keyboard_xtest_id
   local xlist
   xlist="$(xinput --list --short 2>/dev/null || true)"
-  pointer_id="$(printf '%s\n' "$xlist" | awk '/Virtual core pointer/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
-  pointer_xtest_id="$(printf '%s\n' "$xlist" | awk '/Virtual core XTEST pointer/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
-  keyboard_id="$(printf '%s\n' "$xlist" | awk '/Virtual core keyboard/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
-  keyboard_xtest_id="$(printf '%s\n' "$xlist" | awk '/Virtual core XTEST keyboard/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
+  pointer_id="$(printf '%s\n' "$xlist" | awk '/Virtual core XTEST pointer/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
+  keyboard_id="$(printf '%s\n' "$xlist" | awk '/Virtual core XTEST keyboard/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
+  # (Backup to master if XTEST not found)
+  [ -z "$pointer_id" ] && pointer_id="$(printf '%s\n' "$xlist" | awk '/Virtual core pointer/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
+  [ -z "$keyboard_id" ] && keyboard_id="$(printf '%s\n' "$xlist" | awk '/Virtual core keyboard/ {for (i=1;i<=NF;i++) if ($i ~ /^id=/) {sub("id=","",$i); print $i; exit}}')"
 
   start_core_trace_device() {
     local label="$1"
@@ -914,9 +915,7 @@ start_x11_core_trace() {
   }
 
   start_core_trace_device "pointer_master" "$pointer_id"
-  start_core_trace_device "pointer_xtest" "$pointer_xtest_id"
   start_core_trace_device "keyboard_master" "$keyboard_id"
-  start_core_trace_device "keyboard_xtest" "$keyboard_xtest_id"
 }
 
 stop_x11_core_trace() {
@@ -1347,12 +1346,20 @@ def vnc_probe(host, port, password):
     finally: sock.close()
 
 host = os.environ.get("VNC_HOST", "127.0.0.1")
-port = int(os.environ.get("VNC_PORT", "5900"))
+ports = [int(os.environ.get("VNC_PORT", "5900")), 5901]
 pw = os.environ.get("VNC_PASSWORD", "")
-try:
-    if vnc_probe(host, port, pw): print("VNC probe success")
-    else: print("VNC probe failed")
-except Exception as e: print(f"VNC probe error: {e}")
+success = False
+for port in ports:
+    try:
+        if vnc_probe(host, port, pw):
+            print(f"VNC probe success on port {port}")
+            success = True
+            break
+    except Exception as e:
+        print(f"VNC probe failed on port {port}: {e}")
+
+if not success:
+    print("VNC probe failed on all ports")
 PY
   sleep 0.4
   net_ok="$(trace_has_event "network" "vnc_pointer,vnc_key" "$t0")"
