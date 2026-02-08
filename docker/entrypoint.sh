@@ -464,6 +464,10 @@ fi
 wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1
 wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1
 
+# Disable Wine Desktop (force windowed mode) to fix input blocking
+wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Explorer" /v Desktop /f >/dev/null 2>&1 || true
+wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops" /f >/dev/null 2>&1 || true
+
 # Apply WineBot Theme (Fonts, Colors, Metrics)
 if [ -x "/scripts/install-theme.sh" ]; then
     /scripts/install-theme.sh
@@ -487,9 +491,9 @@ log_event "supervisor_started" "Starting Desktop Supervisor"
             # Use 'wine start' to launch properly, redirect logs
             # We use setsid to detach fully
             if command -v setsid >/dev/null 2>&1; then
-                setsid wine explorer.exe /desktop=Default,${SCREEN%x*} >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+                setsid wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
             else
-                nohup wine explorer.exe /desktop=Default,${SCREEN%x*} >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+                nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
             fi
             sleep 5 # Give it plenty of time to initialize
         fi

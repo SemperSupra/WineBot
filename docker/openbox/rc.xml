@@ -123,9 +123,5 @@
       <decor>no</decor>
       <maximized>yes</maximized>
     </application>
-    <application class="explorer.exe">
-      <decor>no</decor>
-      <maximized>yes</maximized>
-    </application>
   </applications>
 </openbox_config>
