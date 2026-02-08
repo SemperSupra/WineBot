@@ -33,12 +33,16 @@ fi
 
 # --- USER CONTEXT (winebot) ---
 
-# Prevent multiple entrypoint runs (e.g. if manually executed in a shell)
-if [ -f /tmp/entrypoint.pid ] && ps -p $(cat /tmp/entrypoint.pid) > /dev/null 2>&1; then
-    echo "--> Entrypoint already running (PID $(cat /tmp/entrypoint.pid)). Executing command directly..."
-    exec "$@"
+# Prevent multiple entrypoint runs
+if [ -f /tmp/entrypoint.user.pid ] && ps -p $(cat /tmp/entrypoint.user.pid) > /dev/null 2>&1; then
+    echo "--> Entrypoint already running for user $(id -un) (PID $(cat /tmp/entrypoint.user.pid))."
+    if [ $# -gt 0 ]; then
+        exec "$@"
+    else
+        exit 0
+    fi
 fi
-echo $$ > /tmp/entrypoint.pid
+echo $$ > /tmp/entrypoint.user.pid
 
 # 1. Clean up stale locks from previous runs (if any)
 rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
@@ -260,7 +264,7 @@ if [ -f "/etc/xdg/openbox/menu.xml" ] && [ ! -f "${OPENBOX_CONFIG_DIR}/menu.xml"
 fi
 
 # Start Window Manager (Openbox)
-openbox >/dev/null 2>&1 &
+openbox --replace >/dev/null 2>&1 &
 
 if [ "$RESUMED" = "1" ]; then
     log_event "session_resumed" "Session resumed"
