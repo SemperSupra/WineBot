@@ -63,10 +63,24 @@ jobs:
           scripts/smoke-test.sh --phase recording --no-build --skip-base-checks --cleanup
         timeout-minutes: 10
 
+      - name: Free disk before scan
+        run: |
+          docker system df || true
+          docker image prune -af || true
+          docker builder prune -af || true
+          rm -rf /tmp/trivy-* || true
+          df -h
+
+      - name: Prepare Trivy temp dir
+        run: mkdir -p "${GITHUB_WORKSPACE}/.trivy-tmp"
+
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        env:
+          TRIVY_TEMP_DIR: ${{ github.workspace }}/.trivy-tmp
         with:
           image-ref: winebot:latest
+          scanners: vuln
           format: table
           exit-code: 1
           ignore-unfixed: true
