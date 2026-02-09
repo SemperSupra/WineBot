@@ -49,3 +49,18 @@ By default the smoke test leaves services running. To stop them:
 `scripts/smoke-test.sh --cleanup`
 
 For CI, prefer `--full --cleanup` and set `API_TOKEN` if security is enforced.
+
+## Soak Diagnostics
+
+Use the soak checker to watch for unbounded trace/recording growth and memory drift over time:
+
+`scripts/diagnose-trace-soak.sh`
+
+Useful environment knobs:
+
+- `DURATION_SECONDS` (default `600`)
+- `INTERVAL_SECONDS` (default `15`)
+- `MAX_LOG_MB` (default `512`)
+- `MAX_SESSION_MB` (default `4096`)
+- `MAX_PID1_RSS_MB` (default `2048`)
+- `API_URL` and `API_TOKEN`

@@ -21,7 +21,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate release guardrails
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName !== "release") {
+              core.info("Manual dispatch run: skipping release-only guardrails.");
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const release = context.payload.release || {};
+            const tag = release.tag_name || context.ref.replace("refs/tags/", "");
+            const target = release.target_commitish;
+
+            if (!/^[A-Za-z0-9._-]{1,128}$/.test(tag)) {
+              core.setFailed(`Invalid release tag: ${tag}`);
+              return;
+            }
+
+            if (target !== "main") {
+              core.setFailed(`Release target must be 'main', got '${target}'`);
+              return;
+            }
+
+            const branch = await github.rest.repos.getBranch({
+              owner,
+              repo,
+              branch: "main",
+            });
+            if (!branch.data.protected) {
+              core.setFailed("Branch protection is required on 'main' before publishing releases.");
+              return;
+            }
+            core.info(`Release guards passed for tag ${tag} on protected branch main.`);
+
   smoke-test:
+    needs: release-guards
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -88,9 +129,12 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    needs: smoke-test
+    needs: [release-guards, smoke-test]
     timeout-minutes: 60
     environment: release
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -164,3 +208,33 @@ jobs:
             exit 1
           fi
           cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  verify-publish-artifacts:
+    runs-on: ubuntu-latest
+    needs: publish
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+      - name: Verify signature and SBOM
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          if [ -z "$DIGEST" ]; then
+            echo "Missing image digest from publish job outputs" >&2
+            exit 1
+          fi
+          IDENTITY_RE="https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/(heads/main|tags/.+)"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "$IDENTITY_RE" \
+            "${IMAGE}@${DIGEST}" >/tmp/cosign-verify.json
+
+          cosign download sbom "${IMAGE}@${DIGEST}" >/tmp/sbom.spdx.json
+          if [ ! -s /tmp/sbom.spdx.json ]; then
+            echo "SBOM payload is empty" >&2
+            exit 1
+          fi

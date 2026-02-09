@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import subprocess
+from collections import deque
 from api.utils.files import (read_session_dir, lifecycle_log_path, append_lifecycle_event, 
                              resolve_session_dir, ensure_session_subdirs, ensure_user_profile, write_session_dir,
                              write_session_manifest, link_wine_user_dir, write_session_state, recorder_running,
@@ -128,10 +129,12 @@ def lifecycle_events(limit: int = 100):
     if not os.path.exists(path):
         return {"events": []}
     events = []
+    lines = deque(maxlen=limit)
     try:
         with open(path, "r") as f:
-            lines = f.read().splitlines()
-        for line in lines[-limit:]:
+            for line in f:
+                lines.append(line.rstrip("\n"))
+        for line in lines:
             try:
                 events.append(json.loads(line))
             except json.JSONDecodeError:
