@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${WINEBOT_API_URL:-${WINEBOT_BASE_URL:-${API_URL:-http://localhost:8000}}}"
 API_TOKEN="${WINEBOT_API_TOKEN:-${API_TOKEN:-}}"
 IDEMPOTENT_DEFAULT="${WINEBOT_IDEMPOTENT:-1}"
@@ -34,6 +35,7 @@ Commands:
   input click X Y
   input trace start|stop|status|events [opts]
   config set|get|list|apply [opts]
+  diag bundle [opts]
   run ahk|autoit|python|winedbg [opts]
   inspect window [opts]
 
@@ -45,6 +47,7 @@ Examples:
   scripts/winebotctl input trace start --layer network
   scripts/winebotctl input trace events --source client --limit 50
   scripts/winebotctl api POST /sessions/suspend --json '{"shutdown_wine":true}'
+  scripts/winebotctl diag bundle --session-root /artifacts/sessions --max-mb 200
 EOF
 }
 
@@ -992,6 +995,61 @@ PY
         ;;
       *)
         die "Unknown config action: $action"
+        ;;
+    esac
+    ;;
+
+  diag)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      bundle)
+        session_dir=""
+        session_id=""
+        session_root="/artifacts/sessions"
+        out=""
+        max_mb="200"
+        build_intent="${BUILD_INTENT:-rel}"
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --session-dir)
+              session_dir="$2"
+              shift 2
+              ;;
+            --session-id)
+              session_id="$2"
+              shift 2
+              ;;
+            --session-root)
+              session_root="$2"
+              shift 2
+              ;;
+            --out)
+              out="$2"
+              shift 2
+              ;;
+            --max-mb)
+              max_mb="$2"
+              shift 2
+              ;;
+            --build-intent)
+              build_intent="$2"
+              shift 2
+              ;;
+            *)
+              die "Unknown diag bundle option: $1"
+              ;;
+          esac
+        done
+
+        cmd=("${SCRIPT_DIR}/diag-bundle.sh" --session-root "$session_root" --max-mb "$max_mb" --build-intent "$build_intent")
+        if [ -n "$session_dir" ]; then cmd+=(--session-dir "$session_dir"); fi
+        if [ -n "$session_id" ]; then cmd+=(--session-id "$session_id"); fi
+        if [ -n "$out" ]; then cmd+=(--out "$out"); fi
+        "${cmd[@]}"
+        ;;
+      *)
+        die "Unknown diag command: $sub"
         ;;
     esac
     ;;

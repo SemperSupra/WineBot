@@ -3,6 +3,15 @@
 
 # VNC/noVNC
 if [ "${ENABLE_VNC:-0}" = "1" ] || [ "${MODE:-headless}" = "interactive" ]; then
+    if [ "${BUILD_INTENT:-rel}" = "rel-runner" ]; then
+        echo "ERROR: BUILD_INTENT=rel-runner does not support interactive VNC/noVNC services." >&2
+        echo "Use MODE=headless and ENABLE_VNC=0 for automation-only runner deployments." >&2
+        exit 1
+    fi
+    if ! command -v x11vnc >/dev/null 2>&1 || ! command -v websockify >/dev/null 2>&1; then
+        echo "ERROR: interactive VNC/noVNC dependencies are missing from this image." >&2
+        exit 1
+    fi
     echo "--> Starting VNC/noVNC services..."
     VNC_PORT="${VNC_PORT:-5900}"
     X11VNC_PORT="$VNC_PORT"

@@ -16,6 +16,43 @@ Interactive (VNC + noVNC):
 
 If you only have `docker-compose` v1 installed, replace `docker compose` with `docker-compose`.
 
+## Build Intents
+
+`BUILD_INTENT` controls packaged capabilities and defaults independently from compose profiles:
+
+- profiles select runtime UX (`headless`/`interactive`)
+- build intent selects image intent (`dev`/`test`/`rel`/`rel-runner`)
+
+Examples:
+
+`BUILD_INTENT=dev docker compose -f compose/docker-compose.yml --profile interactive up --build`
+
+`BUILD_INTENT=test docker compose -f compose/docker-compose.yml --profile headless up --build`
+
+`BUILD_INTENT=rel docker compose -f compose/docker-compose.yml --profile headless up --build`
+
+`BUILD_INTENT=rel-runner docker compose -f compose/docker-compose.yml --profile headless up --build`
+
+`rel-runner` is automation-only: no VNC/noVNC interactive stack is available. Use CLI/API-driven execution and diagnostics.
+
+Local images are named by version+intent:
+
+`winebot:${WINEBOT_IMAGE_VERSION:-local}-${BUILD_INTENT}`
+
+Base runtime can be pinned independently:
+
+`BASE_IMAGE=ghcr.io/<owner>/winebot-base:<base-version>`
+
+CI/release builds read repository variable `WINEBOT_BASE_IMAGE` (fallback is pinned Debian digest).
+
+In `rel` and `rel-runner`, default logging is capped (`WARN`). Enable bounded support mode for triage:
+
+`WINEBOT_SUPPORT_MODE=1 WINEBOT_SUPPORT_MODE_MINUTES=60 BUILD_INTENT=rel docker compose -f compose/docker-compose.yml --profile headless up --build`
+
+Generate a local support bundle:
+
+`scripts/winebotctl diag bundle --max-mb 200`
+
 ## Simplified Usage (v0.4+)
 
 The updated entrypoint allows running commands directly with automatic Xvfb management and host user mapping.
@@ -213,11 +250,21 @@ Variants:
 
 GitHub Actions runs smoke tests and publishes images to GHCR on release:
 
-- `ghcr.io/<owner>/winebot:<release-tag>`
-- `ghcr.io/<owner>/winebot:latest`
-- `ghcr.io/<owner>/winebot:sha-<short>`
+- `ghcr.io/<owner>/winebot:<release-tag>-rel`
+- `ghcr.io/<owner>/winebot:<release-tag>-rel-runner`
+- `ghcr.io/<owner>/winebot:latest` (alias for rel)
+- `ghcr.io/<owner>/winebot:latest-rel`
+- `ghcr.io/<owner>/winebot:latest-rel-runner`
+- `ghcr.io/<owner>/winebot:sha-<short>-rel`
+- `ghcr.io/<owner>/winebot:sha-<short>-rel-runner`
 
 Manual runs are supported via Actions → Release → Run workflow. Provide `image_tag` or it defaults to `manual-<sha>`.
+
+Use the `Base Image` workflow to publish versioned base images:
+
+- `ghcr.io/<owner>/winebot-base:<base-version>`
+- `ghcr.io/<owner>/winebot-base:base-latest`
+- optional `ghcr.io/<owner>/winebot-base:base-stable`
 
 ## Documentation
 
@@ -225,6 +272,7 @@ Manual runs are supported via Actions → Release → Run workflow. Provide `ima
 - `docs/automation.md`
 - `docs/api.md`
 - `docs/debugging.md`
+- `docs/build-intents.md`
 - `docs/installing-apps.md`
 - `docs/testing.md`
 - `docs/troubleshooting.md`

@@ -1,5 +1,11 @@
 # Pinned to debian:trixie-slim as of 2026-02-08
-FROM debian@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba
+ARG BASE_IMAGE=debian@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+ARG SOURCE_REPO="https://github.com/mark-e-deyoung/WineBot"
+
+FROM ${BASE_IMAGE} AS base-runtime
+ARG BASE_IMAGE
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,10 +46,10 @@ RUN curl -sL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && rm /tmp/get-pip.py
 # --------------------------------
 
-# Install Python dependencies for API and Testing
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# Install runtime Python dependencies shared by release-like intents.
+COPY requirements-rel.txt /tmp/requirements-rel.txt
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r /tmp/requirements-rel.txt \
+    && rm /tmp/requirements-rel.txt
 
 RUN useradd -m -u 1000 -s /bin/bash winebot \
     && mkdir -p /wineprefix /apps /automation /api \
@@ -64,15 +70,79 @@ COPY docker/openbox/ /etc/xdg/openbox/
 COPY docker/tint2/tint2rc /etc/xdg/tint2/tint2rc
 COPY scripts /scripts
 COPY api /api
-COPY tests /tests
 COPY VERSION /VERSION
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chown -R winebot:winebot /automation /scripts /api /tests \
-    && find /automation /scripts /tests -name "*.sh" -exec chmod +x {} + \
-    && find /automation /scripts /tests -name "*.py" -exec chmod +x {} +
+RUN chown -R winebot:winebot /automation /scripts /api \
+    && find /automation /scripts -name "*.sh" -exec chmod +x {} + \
+    && find /automation /scripts -name "*.py" -exec chmod +x {} +
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /
 EXPOSE 8000
+
+FROM base-runtime AS intent-dev
+ARG VCS_REF
+ARG BUILD_DATE
+ARG SOURCE_REPO
+RUN apt-get update && apt-get install -y --no-install-recommends strace lsof nano && rm -rf /var/lib/apt/lists/*
+COPY requirements-devtest.txt /tmp/requirements-devtest.txt
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r /tmp/requirements-devtest.txt \
+    && rm /tmp/requirements-devtest.txt
+COPY tests /tests
+RUN chown -R winebot:winebot /tests \
+    && find /tests -name "*.sh" -exec chmod +x {} + \
+    && find /tests -name "*.py" -exec chmod +x {} +
+ENV BUILD_INTENT=dev
+LABEL io.winebot.build_intent="dev" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${SOURCE_REPO}"
 ENTRYPOINT ["/entrypoint.sh"]
-# Cache bust: So 8. Feb 17:01:21 CET 2026
+
+FROM base-runtime AS intent-test
+ARG VCS_REF
+ARG BUILD_DATE
+ARG SOURCE_REPO
+COPY requirements-devtest.txt /tmp/requirements-devtest.txt
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r /tmp/requirements-devtest.txt \
+    && rm /tmp/requirements-devtest.txt
+COPY tests /tests
+RUN chown -R winebot:winebot /tests \
+    && find /tests -name "*.sh" -exec chmod +x {} + \
+    && find /tests -name "*.py" -exec chmod +x {} +
+ENV BUILD_INTENT=test
+LABEL io.winebot.build_intent="test" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${SOURCE_REPO}"
+ENTRYPOINT ["/entrypoint.sh"]
+
+FROM base-runtime AS intent-rel
+ARG VCS_REF
+ARG BUILD_DATE
+ARG SOURCE_REPO
+ENV BUILD_INTENT=rel
+LABEL io.winebot.build_intent="rel" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${SOURCE_REPO}"
+ENTRYPOINT ["/entrypoint.sh"]
+
+FROM base-runtime AS intent-rel-runner
+ARG VCS_REF
+ARG BUILD_DATE
+ARG SOURCE_REPO
+RUN apt-get update \
+    && apt-get purge -y --auto-remove x11vnc novnc websockify \
+    && rm -rf /var/lib/apt/lists/*
+ENV BUILD_INTENT=rel-runner \
+    MODE=headless \
+    ENABLE_VNC=0
+LABEL io.winebot.build_intent="rel-runner" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${SOURCE_REPO}"
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Compose and workflows should build target: intent-${BUILD_INTENT}.
+# Cache bust: Mon Feb 09 2026

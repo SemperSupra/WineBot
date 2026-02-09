@@ -1,0 +1,2 @@
+# Extra Python dependencies for DEV/TEST intents (runtime deps come from requirements-rel.txt)
+pytest==9.0.2

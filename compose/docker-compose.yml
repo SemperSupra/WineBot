@@ -30,12 +30,22 @@ x-winebot-env: &winebot_env
   NOVNC_TITLE: ${NOVNC_TITLE:-}
   VNC_PASSWORD: ${VNC_PASSWORD:-}
   VNC_BIND: ${VNC_BIND:-}
+  BUILD_INTENT: ${BUILD_INTENT:-rel}
+  WINEBOT_SUPPORT_MODE: ${WINEBOT_SUPPORT_MODE:-0}
+  WINEBOT_SUPPORT_MODE_MINUTES: ${WINEBOT_SUPPORT_MODE_MINUTES:-60}
 
 x-winebot-base: &winebot_base
   build:
     context: ..
     dockerfile: docker/Dockerfile
-  image: winebot:latest
+    target: intent-${BUILD_INTENT:-rel}
+    args:
+      BASE_IMAGE: ${BASE_IMAGE:-debian@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba}
+      VCS_REF: ${VCS_REF:-local}
+      BUILD_DATE: ${BUILD_DATE:-local}
+      SOURCE_REPO: ${SOURCE_REPO:-https://github.com/mark-e-deyoung/WineBot}
+      BUILD_INTENT: ${BUILD_INTENT:-rel}
+  image: winebot:${WINEBOT_IMAGE_VERSION:-local}-${BUILD_INTENT:-rel}
   volumes:
     - wineprefix:/wineprefix
     - ../apps:/apps

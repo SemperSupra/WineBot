@@ -17,8 +17,13 @@ fi
 # --- USER CONTEXT (winebot) ---
 
 # Prevent multiple entrypoint runs
-if [ -f /tmp/entrypoint.user.pid ] && ps -p $(cat /tmp/entrypoint.user.pid) > /dev/null 2>&1; then
-    echo "--> Entrypoint already running for user $(id -un) (PID $(cat /tmp/entrypoint.user.pid))."
+if [ -f /tmp/entrypoint.user.pid ]; then
+    existing_pid="$(cat /tmp/entrypoint.user.pid)"
+else
+    existing_pid=""
+fi
+if [ -n "$existing_pid" ] && ps -p "$existing_pid" > /dev/null 2>&1; then
+    echo "--> Entrypoint already running for user $(id -un) (PID ${existing_pid})."
     if [ $# -gt 0 ]; then
         exec "$@"
     else
@@ -38,6 +43,23 @@ fi
 if [ -f "$WINEBOT_INSTANCE_CONFIG" ]; then
     chmod 600 "$WINEBOT_INSTANCE_CONFIG"
     set -a; source "$WINEBOT_INSTANCE_CONFIG"; set +a
+fi
+
+export BUILD_INTENT="${BUILD_INTENT:-rel}"
+if [ -z "${WINEBOT_LOG_LEVEL:-}" ]; then
+    case "$BUILD_INTENT" in
+        dev) export WINEBOT_LOG_LEVEL="DEBUG" ;;
+        test) export WINEBOT_LOG_LEVEL="INFO" ;;
+        *) export WINEBOT_LOG_LEVEL="WARN" ;;
+    esac
+fi
+
+if { [ "$BUILD_INTENT" = "rel" ] || [ "$BUILD_INTENT" = "rel-runner" ]; } && [ "${WINEBOT_SUPPORT_MODE:-0}" = "1" ]; then
+    export WINEBOT_LOG_LEVEL="INFO"
+    ttl_min="${WINEBOT_SUPPORT_MODE_MINUTES:-60}"
+    now_epoch="$(date -u +%s)"
+    export WINEBOT_SUPPORT_MODE_UNTIL_EPOCH="$((now_epoch + (ttl_min * 60)))"
+    echo "--> Support Mode enabled for ${ttl_min} minutes (until epoch ${WINEBOT_SUPPORT_MODE_UNTIL_EPOCH})."
 fi
 
 # 2. Infrastructure Setup (Session, X11, WM)

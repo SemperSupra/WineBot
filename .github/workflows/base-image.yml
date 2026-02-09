@@ -1,0 +1,81 @@
+name: Base Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        description: Base image version tag (e.g. base-2026-02-09)
+        required: true
+      update_base_stable:
+        description: Also move base-stable tag
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  publish-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare base tags
+        id: meta
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/winebot-base"
+          version="${{ github.event.inputs.base_version }}"
+          if [[ ! "$version" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
+            echo "Invalid base_version: $version" >&2
+            exit 1
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${image}:${version}"
+            echo "${image}:base-latest"
+            if [ "${{ github.event.inputs.update_base_stable }}" = "true" ]; then
+              echo "${image}:base-stable"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build & push base-runtime
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: base-runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+
+      - name: Sign base digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ -z "$DIGEST" ]; then
+            echo "Missing base digest from build" >&2
+            exit 1
+          fi
+          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/winebot-base@${DIGEST}"

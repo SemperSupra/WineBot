@@ -1,0 +1,4 @@
+# Paths/binaries that must not exist in REL images.
+/tests
+/usr/local/bin/pytest
+/usr/bin/pytest
