@@ -43,32 +43,36 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
 fi
 
 # Supervisor
-echo "--> Starting Desktop Supervisor..."
-(
-  while true; do
-    if ! pgrep -f "explorer.exe" > /dev/null; then
-        sleep 1
+if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
+    echo "--> Starting Desktop Supervisor..."
+    (
+      while true; do
         if ! pgrep -f "explorer.exe" > /dev/null; then
-            if command -v setsid >/dev/null 2>&1; then
-                setsid wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
-            else
-                nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+            sleep 1
+            if ! pgrep -f "explorer.exe" > /dev/null; then
+                if command -v setsid >/dev/null 2>&1; then
+                    setsid wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+                else
+                    nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
+                fi
+                sleep 5
             fi
-            sleep 5
         fi
-    fi
-    
-    # Check for wineserver crash
-    if ! pgrep -n "wineserver" > /dev/null; then
-         rm -f /tmp/wineserver_missing_logged
-    fi
 
-    # Ensure windows are managed
-    for title in "Desktop" "Wine Desktop"; do
-      if xdotool search --name "$title" >/dev/null 2>&1; then
-        wmctrl -r "$title" -b remove,undecorated >/dev/null 2>&1 || true
-      fi
-    done
-    sleep 5
-  done
-) &
+        # Check for wineserver crash
+        if ! pgrep -n "wineserver" > /dev/null; then
+             rm -f /tmp/wineserver_missing_logged
+        fi
+
+        # Ensure windows are managed
+        for title in "Desktop" "Wine Desktop"; do
+          if xdotool search --name "$title" >/dev/null 2>&1; then
+            wmctrl -r "$title" -b remove,undecorated >/dev/null 2>&1 || true
+          fi
+        done
+        sleep 5
+      done
+    ) &
+else
+    echo "--> Desktop Supervisor disabled (WINEBOT_SUPERVISE_EXPLORER=0)."
+fi

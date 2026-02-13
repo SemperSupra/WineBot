@@ -9,6 +9,7 @@ Run a Windows app from either /apps or the Wine prefix.
 
 Options:
   --mode headless|interactive  Run mode (default: headless).
+  --direct-cli                 Run via API /apps/run and print stdout (headless only).
   --args "..."                 Arguments for the app (optional).
   --workdir PATH               Working directory inside the container (optional).
   --winarch win32              Use a 32-bit Wine prefix for this run.
@@ -49,6 +50,7 @@ app_exe="$1"
 shift
 
 mode="headless"
+direct_cli="0"
 app_args=""
 workdir=""
 winearch=""
@@ -92,6 +94,9 @@ while [ $# -gt 0 ]; do
     --args)
       app_args="${2:-}"
       shift
+      ;;
+    --direct-cli)
+      direct_cli="1"
       ;;
     --workdir)
       workdir="${2:-}"
@@ -206,6 +211,11 @@ if [ -n "$view_mode" ]; then
   fi
 fi
 
+if [ "$direct_cli" = "1" ] && [ "$mode" != "headless" ]; then
+  echo "--direct-cli cannot be combined with interactive/viewer mode." >&2
+  exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; pwd)"
 
 resolve_app_exe() {
@@ -261,9 +271,14 @@ else
   service="winebot"
 fi
 
-env_vars=(APP_EXE="$container_app_exe")
-if [ -n "$app_args" ]; then
-  env_vars+=(APP_ARGS="$app_args")
+env_vars=()
+if [ "$direct_cli" != "1" ]; then
+  env_vars+=(APP_EXE="$container_app_exe")
+  if [ -n "$app_args" ]; then
+    env_vars+=(APP_ARGS="$app_args")
+  fi
+else
+  env_vars+=(WINEBOT_SUPERVISE_EXPLORER="0")
 fi
 if [ -n "$workdir" ]; then
   env_vars+=(WORKDIR="$workdir")
@@ -305,7 +320,58 @@ if [ "$detach" = "1" ]; then
 fi
 compose_args+=("$service")
 
+direct_cli_cleanup="0"
+if [ "$direct_cli" = "1" ]; then
+  if [ "$detach" != "1" ]; then
+    direct_cli_cleanup="1"
+  fi
+  detach="1"
+  compose_args=("${compose_cmd[@]}" -f "$compose_file" --profile "$profile" up --force-recreate -d)
+  if [ "$build" = "1" ]; then
+    compose_args+=(--build)
+  fi
+  compose_args+=("$service")
+fi
+
 env "${env_vars[@]}" "${compose_args[@]}"
+
+if [ "$direct_cli" = "1" ]; then
+  cleanup_direct_cli() {
+    if [ "$direct_cli_cleanup" = "1" ]; then
+      "${compose_cmd[@]}" -f "$compose_file" --profile "$profile" down --remove-orphans >/dev/null 2>&1 || true
+    fi
+  }
+  trap cleanup_direct_cli EXIT
+
+  for i in $(seq 1 90); do
+    if [ -n "${API_TOKEN:-}" ]; then
+      if curl -fsS -H "X-API-Key: ${API_TOKEN}" http://localhost:8000/health >/dev/null 2>&1; then
+        break
+      fi
+    elif curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$i" -eq 90 ]; then
+      echo "Timed out waiting for API readiness in direct CLI mode." >&2
+      "${compose_cmd[@]}" -f "$compose_file" --profile "$profile" logs --tail 200 "$service" >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+
+  run_args=(apps run "$container_app_exe")
+  if [ -n "$app_args" ]; then
+    run_args+=(--args "$app_args")
+  fi
+
+  run_output="$("$repo_root/scripts/winebotctl" "${run_args[@]}")"
+  if parsed_stdout="$(printf '%s' "$run_output" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("stdout", ""), end="")' 2>/dev/null)"; then
+    printf '%s' "$parsed_stdout"
+    exit 0
+  fi
+  printf '%s\n' "$run_output"
+  exit 0
+fi
 
 if [ -n "$view_mode" ]; then
   novnc_host="${NOVNC_HOST:-localhost}"
