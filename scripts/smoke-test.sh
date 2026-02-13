@@ -119,7 +119,7 @@ compose_exec() {
 wait_for_windows() {
   local profile="$1"
   local service="$2"
-  local attempts="${WINEBOT_WAIT_FOR_WINDOWS_ATTEMPTS:-120}"
+  local attempts="${WINEBOT_WAIT_FOR_WINDOWS_ATTEMPTS:-360}"
   local delay_s="${WINEBOT_WAIT_FOR_WINDOWS_DELAY_S:-1}"
   local attempt
   for attempt in $(seq 1 "$attempts"); do
@@ -129,6 +129,9 @@ wait_for_windows() {
     set -e
     if [ "$rc" -eq 0 ] && [ -n "${windows:-}" ]; then
       return 0
+    fi
+    if [ $((attempt % 30)) -eq 0 ]; then
+      log "Still waiting for windows on DISPLAY=:99 for $service (attempt ${attempt}/${attempts})..."
     fi
     sleep "$delay_s"
   done
