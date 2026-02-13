@@ -119,8 +119,10 @@ compose_exec() {
 wait_for_windows() {
   local profile="$1"
   local service="$2"
+  local attempts="${WINEBOT_WAIT_FOR_WINDOWS_ATTEMPTS:-120}"
+  local delay_s="${WINEBOT_WAIT_FOR_WINDOWS_DELAY_S:-1}"
   local attempt
-  for attempt in $(seq 1 20); do
+  for attempt in $(seq 1 "$attempts"); do
     set +e
     windows="$(compose_exec "$profile" "$service" "DISPLAY=:99 wmctrl -l" 2>/dev/null)"
     rc=$?
@@ -128,9 +130,11 @@ wait_for_windows() {
     if [ "$rc" -eq 0 ] && [ -n "${windows:-}" ]; then
       return 0
     fi
-    sleep 0.5
+    sleep "$delay_s"
   done
-  fail "No windows detected on DISPLAY=:99 for $service"
+  log "Timed out waiting for windows on DISPLAY=:99 for $service; showing recent service logs."
+  "${compose_cmd[@]}" -f "$compose_file" --profile "$profile" logs --tail 200 "$service" || true
+  fail "No windows detected on DISPLAY=:99 for $service after ${attempts} attempts"
 }
 
 started_headless="0"
