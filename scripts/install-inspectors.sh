@@ -3,8 +3,14 @@ set -e
 
 TOOLS_DIR="/opt/winebot/windows-tools"
 
+# 1. Check for pre-installed location (from build-time template)
 if [ -f "$TOOLS_DIR/WinSpy/WinSpy.exe" ]; then
-    echo "WinSpy++ already installed."
+    echo "WinSpy++ already pre-installed at $TOOLS_DIR/WinSpy/WinSpy.exe"
+    exit 0
+fi
+
+if [ -f "$TOOLS_DIR/WinSpy/winspy.exe" ]; then
+    echo "WinSpy++ already pre-installed at $TOOLS_DIR/WinSpy/winspy.exe"
     exit 0
 fi
 
