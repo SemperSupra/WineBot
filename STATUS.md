@@ -1,7 +1,8 @@
 # Status
 
 ## Current state
-- **Version:** v0.9.2 (Stable)
+- **Version:** v0.9.3 (Stable)
+- **Linting:** Massive reduction in lint debt across `api/` and core scripts.
 - **Image Optimization:** Refactored Dockerfile with multi-stage builds, reducing `rel` image size by ~35% (to ~4.3GB).
 - **API Hardening:** Fixed concurrency races and path validation in session lifecycle (`suspend`/`resume`) endpoints. Added rigorous regression tests.
 - **Stability Monitoring:** Integrated `scripts/diagnose-trace-soak.sh` into a new GitHub Actions nightly workflow (`nightly-soak.yml`).
