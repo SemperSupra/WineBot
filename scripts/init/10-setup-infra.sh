@@ -73,3 +73,6 @@ if [ -f "/etc/xdg/tint2/tint2rc" ]; then
     cp "/etc/xdg/tint2/tint2rc" ~/.config/tint2/tint2rc
 fi
 tint2 >/dev/null 2>&1 &
+
+# Allow time for WM/Taskbar windows to map
+sleep 2

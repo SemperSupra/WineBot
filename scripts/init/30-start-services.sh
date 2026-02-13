@@ -45,6 +45,8 @@ fi
 # Supervisor
 if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
     echo "--> Starting Desktop Supervisor..."
+    # Settle time
+    sleep 2
     (
       while true; do
         if ! pgrep -f "explorer.exe" > /dev/null; then
