@@ -59,7 +59,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          target: base-runtime
+          target: base-ready
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
