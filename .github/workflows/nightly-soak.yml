@@ -50,14 +50,23 @@ jobs:
           MAX_SESSION_MB: 8192
         run: |
           # Wait for API to be ready
-          for i in {1..30}; do
+          ready=0
+          for i in {1..90}; do
             if curl -s http://localhost:8000/health >/dev/null; then
               echo "API is ready"
+              ready=1
               break
             fi
             echo "Waiting for API..."
-            sleep 2
+            sleep 1
           done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "ERROR: API failed to become ready in allotted time"
+            docker compose -f compose/docker-compose.yml --profile interactive ps
+            docker compose -f compose/docker-compose.yml --profile interactive logs --tail 200 winebot-interactive || true
+            exit 1
+          fi
 
           # Run the soak diagnostic script inside the container
           docker compose -f compose/docker-compose.yml exec -T --user winebot \

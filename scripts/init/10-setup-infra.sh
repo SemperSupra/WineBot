@@ -26,7 +26,16 @@ export WINEBOT_SESSION_DIR="$SESSION_DIR"
 export WINEBOT_SESSION_RESUMED="$RESUMED"
 echo "$SESSION_DIR" > /tmp/winebot_current_session
 
-mkdir -p "$SESSION_DIR"/{logs,screenshots,scripts}
+if ! mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"; then
+    FALLBACK_SESSION_ROOT="/tmp/winebot-sessions"
+    echo "WARN: Unable to create session dir at ${SESSION_DIR}; falling back to ${FALLBACK_SESSION_ROOT}." >&2
+    SESSION_ROOT="$FALLBACK_SESSION_ROOT"
+    SESSION_DIR="${SESSION_ROOT}/${SESSION_ID}"
+    export WINEBOT_SESSION_ROOT="$SESSION_ROOT"
+    export WINEBOT_SESSION_DIR="$SESSION_DIR"
+    echo "$SESSION_DIR" > /tmp/winebot_current_session
+    mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"
+fi
 
 # --- Xvfb Setup ---
 rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
