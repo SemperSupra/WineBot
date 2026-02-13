@@ -80,6 +80,27 @@ RUN chown -R winebot:winebot /automation /scripts /api \
     && find /automation /scripts -name "*.py" -exec chmod +x {} + \
     && chmod +x /entrypoint.sh
 
+# --- Stage 2.5: Prefix Warm-up ---
+# This stage creates a pre-configured Wine prefix template to speed up first-run startup.
+FROM base-core AS prefix-warmer
+USER winebot
+ENV WINEPREFIX=/opt/winebot/prefix-template
+RUN mkdir -p /opt/winebot/prefix-template \
+    && Xvfb :95 -screen 0 1280x720x24 >/dev/null 2>&1 & XVFB_PID=$! \
+    && export DISPLAY=:95 \
+    && wineboot -u \
+    && wineserver -w \
+    && /scripts/install-theme.sh \
+    && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f \
+    && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f \
+    && wineserver -w \
+    && kill $XVFB_PID || true \
+    && rm -rf /tmp/.X95-lock /tmp/.X11-unix/X95
+
+# Return to base-core and copy the template
+FROM base-core
+COPY --from=prefix-warmer --chown=winebot:winebot /opt/winebot/prefix-template /opt/winebot/prefix-template
+
 WORKDIR /
 EXPOSE 8000
 
@@ -98,7 +119,8 @@ ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_REPO
 ENV BUILD_INTENT=rel-runner
-LABEL io.winebot.build_intent="rel-runner" \
+LABEL io.winebot.version="0.9.3" \
+      io.winebot.build_intent="rel-runner" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE_REPO}"
@@ -109,7 +131,8 @@ ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_REPO
 ENV BUILD_INTENT=rel
-LABEL io.winebot.build_intent="rel" \
+LABEL io.winebot.version="0.9.3" \
+      io.winebot.build_intent="rel" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE_REPO}"
@@ -127,7 +150,8 @@ RUN chown -R winebot:winebot /tests \
     && find /tests -name "*.sh" -exec chmod +x {} + \
     && find /tests -name "*.py" -exec chmod +x {} +
 ENV BUILD_INTENT=test
-LABEL io.winebot.build_intent="test" \
+LABEL io.winebot.version="0.9.3" \
+      io.winebot.build_intent="test" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE_REPO}"
@@ -139,7 +163,8 @@ ARG BUILD_DATE
 ARG SOURCE_REPO
 RUN apt-get update && apt-get install -y --no-install-recommends strace lsof nano && rm -rf /var/lib/apt/lists/*
 ENV BUILD_INTENT=dev
-LABEL io.winebot.build_intent="dev" \
+LABEL io.winebot.version="0.9.3" \
+      io.winebot.build_intent="dev" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE_REPO}"

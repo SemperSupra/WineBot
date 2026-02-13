@@ -44,6 +44,20 @@ fi
 # Wine Prefix
 # (wineserver -k removed to avoid ownership noise)
 sleep 1
+
+# Check if prefix needs population from template
+if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
+    if [ -d "/opt/winebot/prefix-template" ]; then
+        echo "--> Populating WINEPREFIX from template..."
+        cp -rp /opt/winebot/prefix-template/. "$WINEPREFIX/"
+    else
+        echo "--> Initializing new WINEPREFIX (Template missing)..."
+        export WINEDLLOVERRIDES="mscoree,mshtml="
+        wineboot -u >/dev/null 2>&1
+        wineserver -w
+    fi
+fi
+
 echo "--> Ensuring wineserver is running..."
 wineserver -p >/dev/null 2>&1 &
 sleep 2
@@ -64,18 +78,8 @@ run_wine_setup_step() {
     return 1
 }
 
-prefix_init_in_progress="0"
-if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
-    echo "--> Initializing WINEPREFIX in background..."
-    export WINEDLLOVERRIDES="mscoree,mshtml="
-    wineboot -u >/dev/null 2>&1 &
-    prefix_init_in_progress="1"
-fi
-
-# Theme & Settings
-if [ "$prefix_init_in_progress" = "1" ]; then
-    echo "--> Prefix initialization in progress; deferring theme/registry tuning."
-else
+# Theme & Settings (Skip if already populated from template)
+if [ ! -d "/opt/winebot/prefix-template" ]; then
     run_wine_setup_step "FontSmoothing" \
         wine reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f || true
     run_wine_setup_step "FontSmoothingType" \
