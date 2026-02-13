@@ -48,6 +48,22 @@ echo "--> Ensuring wineserver is running..."
 wineserver -p >/dev/null 2>&1 &
 sleep 2
 
+run_wine_setup_step() {
+    local label="$1"
+    shift
+    local attempts="${WINEBOT_WINE_SETUP_RETRIES:-20}"
+    local delay_s="${WINEBOT_WINE_SETUP_RETRY_DELAY_S:-1}"
+    local i
+    for i in $(seq 1 "$attempts"); do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep "$delay_s"
+    done
+    echo "WARN: ${label} failed after ${attempts} attempts; continuing." >&2
+    return 1
+}
+
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     echo "--> Initializing WINEPREFIX in background..."
     export WINEDLLOVERRIDES="mscoree,mshtml="
@@ -56,13 +72,17 @@ if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
 fi
 
 # Theme & Settings
-wine reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1
-wine reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1
-wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f >/dev/null 2>&1
-wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f >/dev/null 2>&1
+run_wine_setup_step "FontSmoothing" \
+    wine reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f || true
+run_wine_setup_step "FontSmoothingType" \
+    wine reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f || true
+run_wine_setup_step "UseXInput2" \
+    wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f || true
+run_wine_setup_step "Managed" \
+    wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f || true
 
 if [ -x "/scripts/install-theme.sh" ]; then
-    /scripts/install-theme.sh
+    /scripts/install-theme.sh || echo "WARN: install-theme.sh failed; continuing." >&2
 fi
 
 # Cleanup
