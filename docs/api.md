@@ -13,11 +13,15 @@ To secure the API, set the `API_TOKEN` environment variable. All requests must t
 If `API_TOKEN` is not set, the API is open (not recommended for shared environments).
 
 ### Path Safety
-Endpoints accepting file paths (`/apps/run`) are restricted to specific directories to prevent traversal attacks. Allowed prefixes:
+Endpoints accepting file paths (`/apps/run`) are restricted to specific directories to prevent traversal attacks. Absolute paths must start with an allowed prefix. "Naked" filenames (no separators) are allowed and assumed to be in the Wine search path.
+
+Allowed prefixes:
 - `/apps`
 - `/wineprefix`
 - `/tmp`
 - `/artifacts`
+- `/opt/winebot`
+- `/usr/bin`
 
 ## Unified CLI
 
@@ -329,7 +333,24 @@ Run a Windows application.
     "detach": true
   }
   ```
-- **Response:** `{"status": "finished", "stdout": "..."}` or `{"status":"detached","pid":...}`
+- **Response (Finished):**
+  ```json
+  {
+    "status": "finished",
+    "stdout": "...",
+    "stderr": "..."
+  }
+  ```
+- **Response (Failed):**
+  ```json
+  {
+    "status": "failed",
+    "exit_code": 1,
+    "stdout": "...",
+    "stderr": "..."
+  }
+  ```
+- **Response (Detached):** `{"status":"detached","pid":...}`
 
 ### Automation
 

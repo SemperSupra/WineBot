@@ -25,15 +25,32 @@ External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`
 
 ## Startup Flow
 
+
+
 1.  **Entrypoint:** Sets up `winebot` user (UID mapping).
-2.  **X11:** Starts `Xvfb` and `openbox`.
-3.  **Services:** Starts optional VNC/noVNC.
-4.  **API:** Starts `uvicorn` (if `ENABLE_API=1`).
-5.  **Wine:** Initializes prefix (`wineboot`) if needed.
-6.  **App:** Launches target executable (if configured).
 
-## Persistence
+2.  **Infrastructure:** Starts `Xvfb`, `openbox`, and `tint2`.
 
--   **`/wineprefix`:** Persistent Wine environment (C: drive).
--   **`/apps`:** Read-only mount for installers/executables.
--   **`/automation`:** Scripts and assets.
+3.  **Wine Initialization:**
+
+    *   If the prefix is empty, it is populated from a **pre-initialized build-time template** (`/opt/winebot/prefix-template`).
+
+    *   This reduces startup time by ~60s and ensures theme/registry consistency.
+
+4.  **Services:** Starts the API server, recording services, and the Desktop Supervisor.
+
+5.  **Application Launch:** If `APP_EXE` is set, the entrypoint executes the application, capturing CLI output or supporting GUI automation.
+
+
+
+## Persistence & Data Model
+
+
+
+-   **`/wineprefix`:** Persistent Wine registry and system-wide settings.
+
+-   **`/artifacts`:** Persistent storage for all session data (logs, videos, screenshots).
+
+-   **User Profiles:** At session start/resume, the Windows user profile (`C:\users\winebot`) is dynamically symlinked to a sub-folder within the persistent `/artifacts` directory. This ensures that application data (AppData, Desktop, Documents) persists across sessions even if the container is recreated.
+
+-   **`/apps`:** Volume for external Windows executables and installers.
