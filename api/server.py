@@ -151,4 +151,10 @@ def dashboard():
     UI_INDEX = os.path.join(UI_DIR, "index.html")
     if not os.path.exists(UI_INDEX):
         raise HTTPException(status_code=404, detail="Dashboard not available")
-    return FileResponse(UI_INDEX, media_type="text/html")
+    
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+    return FileResponse(UI_INDEX, media_type="text/html", headers=headers)
