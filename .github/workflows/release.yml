@@ -92,7 +92,7 @@ jobs:
             SOURCE_REPO=https://github.com/${{ github.repository }}
           load: true
           push: false
-          tags: winebot:test
+          tags: winebot:verify-test-final-test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -143,7 +143,7 @@ jobs:
         env:
           TRIVY_TEMP_DIR: ${{ github.workspace }}/.trivy-tmp
         with:
-          image-ref: winebot:test
+          image-ref: winebot:verify-test-final-test
           scanners: vuln
           format: table
           exit-code: 1

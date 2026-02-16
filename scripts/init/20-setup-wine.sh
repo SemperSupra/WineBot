@@ -45,29 +45,19 @@ fi
 
 # Wine Prefix
 # (wineserver -k removed to avoid ownership noise)
-echo "--> Debug: WINEPREFIX=$WINEPREFIX"
-echo "--> Debug: Contents of $WINEPREFIX (before check):"
-ls -la "$WINEPREFIX" || echo "$WINEPREFIX not found"
 sleep 1
 
 # Check if prefix needs population from template
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
-    echo "--> system.reg NOT found, population needed."
     if [ -d "/opt/winebot/prefix-template" ]; then
-        echo "--> Template directory structure:"
-        find /opt/winebot/prefix-template -maxdepth 2
         echo "--> Populating WINEPREFIX from template..."
         cp -rp /opt/winebot/prefix-template/. "$WINEPREFIX/"
-        echo "--> Prefix contents after population:"
-        ls -la "$WINEPREFIX"
     else
         echo "--> Initializing new WINEPREFIX (Template missing)..."
         export WINEDLLOVERRIDES="mscoree,mshtml="
         wineboot -u >/dev/null 2>&1
         wineserver -w
     fi
-else
-    echo "--> Skip population (INIT_PREFIX=${INIT_PREFIX:-1} or system.reg already exists)."
 fi
 
 echo "--> Ensuring wineserver is running..."

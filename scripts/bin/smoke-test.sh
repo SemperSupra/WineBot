@@ -251,13 +251,7 @@ if [ "$skip_base_checks" != "1" ]; then
 
   log "Validating prefix persistence..."
   marker="/wineprefix/drive_c/winebot_smoke_$(date +%s).txt"
-  if ! compose_exec headless winebot "echo 'winebot smoke' > '$marker'"; then
-    log "Prefix validation failed. Dumping container logs:"
-    "${compose_cmd[@]}" -f "$compose_file" --profile headless logs winebot || true
-    log "Checking prefix-template structure:"
-    compose_exec headless winebot "ls -laR /opt/winebot/prefix-template" || true
-    fail "Could not write to $marker"
-  fi
+  compose_exec headless winebot "echo 'winebot smoke' > '$marker'"
   "${compose_cmd[@]}" -f "$compose_file" --profile headless run --rm --user winebot --entrypoint bash winebot -lc "test -f '$marker'"
   compose_exec headless winebot "rm -f '$marker'"
 
