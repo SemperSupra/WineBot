@@ -122,6 +122,8 @@ jobs:
         timeout-minutes: 10
 
       - name: UI/UX Policy Enforcement
+        env:
+          WINEBOT_IMAGE_VERSION: verify-test-final
         run: |
           docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
             pytest -v /work/tests/e2e/test_ux_quality.py
