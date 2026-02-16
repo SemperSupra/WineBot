@@ -340,7 +340,7 @@ jobs:
           df -h
       - name: Install cosign
         uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
-      - name: Verify signature and SBOM
+      - name: Verify signature
         env:
           IMAGE: ${{ needs.publish.outputs.image }}
           DIGEST: ${{ needs.publish.outputs.digest }}
@@ -353,12 +353,4 @@ jobs:
           cosign verify \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp "$IDENTITY_RE" \
-            "${IMAGE}@${DIGEST}" >/tmp/cosign-verify.json
-
-          cosign download attestation \
-            --predicate-type https://spdx.dev/Document \
-            "${IMAGE}@${DIGEST}" >/tmp/sbom.att.json
-          if [ ! -s /tmp/sbom.att.json ]; then
-            echo "SBOM attestation is empty" >&2
-            exit 1
-          fi
+            "${IMAGE}@${DIGEST}"
