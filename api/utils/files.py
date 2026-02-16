@@ -5,7 +5,7 @@ import time
 import datetime
 import platform
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.utils.process import pid_running
 
@@ -298,7 +298,7 @@ def resolve_session_dir(
         raise Exception("Provide session_id or session_dir")
     if "/" in session_id or os.path.sep in session_id or ".." in session_id:
         raise Exception("Invalid session_id")
-    root = session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    root = session_root or os.getenv("WINEBOT_SESSION_ROOT") or DEFAULT_SESSION_ROOT
     safe_root = validate_path(root)
     return os.path.join(safe_root, session_id)
 
@@ -404,7 +404,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
     if session_dir and os.path.isdir(session_dir):
         ensure_session_subdirs(session_dir)
         return session_dir
-    root = session_root or os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    root = session_root or os.getenv("WINEBOT_SESSION_ROOT") or DEFAULT_SESSION_ROOT
     safe_root = validate_path(root)
     os.makedirs(safe_root, exist_ok=True)
     import uuid
@@ -583,7 +583,7 @@ def cleanup_old_sessions(
         return 0
 
     current_session = read_session_dir()
-    sessions = []
+    sessions: List[Dict[str, Any]] = []
     for name in os.listdir(root):
         if not name.startswith("session-"):
             continue

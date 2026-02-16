@@ -85,7 +85,8 @@ async def lifespan(app: FastAPI):
 
     # Start Discovery
     try:
-        discovery_manager.start()
+        session_id = os.path.basename(session_dir) if session_dir else "none"
+        discovery_manager.start(session_id)
     except Exception as e:
         # We don't want to crash the whole API if discovery fails, unless it's a singleton conflict
         # DiscoveryManager.start() raises SystemExit for singleton conflict

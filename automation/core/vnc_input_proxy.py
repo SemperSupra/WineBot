@@ -37,7 +37,7 @@ class VNCInputProxy:
         self.log_path = os.path.join(session_dir, "logs", "input_events_network.jsonl")
         self.stop_requested = False
         self.buffer = b""
-        self.last_motion_ts = 0
+        self.last_motion_ts: float = 0.0
         self.seq = 0
 
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)

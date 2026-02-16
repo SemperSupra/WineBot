@@ -86,6 +86,7 @@ def input_events(
     """Return recent input trace events."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be >= 1")
+    target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
         if not os.path.isdir(target_dir):
@@ -109,7 +110,7 @@ def input_events(
     if not os.path.exists(path):
         return {"events": []}
 
-    lines = deque(maxlen=limit)
+    lines: deque[str] = deque(maxlen=limit)
     events = []
     try:
         with open(path, "r") as f:

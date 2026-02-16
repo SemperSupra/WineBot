@@ -130,23 +130,41 @@ def input_event_from_xi2(
     else:
         return None
 
-    payload: Dict[str, Any] = {
-        "session_id": session_id,
-        "event_id": f"{session_id}-{seq}",
-        "seq": seq,
-        "source": "x11",
-        "layer": DEFAULT_LAYER,
-        "type": event_type,  # Canonical name
-        "event": event_type,  # Backwards compat
-        "origin": "unknown",
-        "tool": DEFAULT_TOOL,
-        "device": {
-            "id": current.get("device_id"),
-            "name": current.get("device_name"),
-        },
-        "detail": current.get("detail"),
-        "xi2_type": xi2_name,
-    }
+        payload: Dict[str, Any] = {
+
+            "session_id": session_id,
+
+            "event_id": f"{session_id}-{seq}",
+
+            "seq": seq,
+
+            "source": "x11",
+
+            "layer": DEFAULT_LAYER,
+
+            "type": event_type, # Canonical name
+
+            "event": event_type, # Backwards compat
+
+            "origin": "unknown",
+
+            "tool": DEFAULT_TOOL,
+
+            "device": {
+
+                "id": current.get("device_id"),
+
+                "name": current.get("device_name"),
+
+            },
+
+            "detail": current.get("detail"),
+
+            "xi2_type": xi2_name,
+
+        }
+
+    
     if raw_event:
         payload["xi2_raw"] = True
 

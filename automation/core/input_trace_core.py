@@ -7,7 +7,7 @@ import selectors
 import signal
 import time
 import subprocess
-from typing import Optional
+from typing import Optional, Dict, Any
 
 try:
     from api.core.versioning import EVENT_SCHEMA_VERSION
@@ -97,7 +97,7 @@ def parse_stream(stream, session_id: Optional[str], motion_sample_ms: int):
         if not line:
             continue
         event = None
-        payload = {
+        payload: Dict[str, Any] = {
             "source": DEFAULT_SOURCE,
             "layer": DEFAULT_LAYER,
             "origin": "unknown",
@@ -355,7 +355,7 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                     for key, _ in selector.select(timeout=0.2):
                         stream = key.fileobj
                         meta = key.data
-                        line = stream.readline()
+                        line = stream.readline() # type: ignore
                         if not line:
                             try:
                                 selector.unregister(stream)
