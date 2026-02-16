@@ -208,8 +208,12 @@ if [ "$skip_base_checks" != "1" ]; then
   wait_for_windows headless winebot
 
   log "Checking Xvfb and openbox..."
-  compose_exec headless winebot "pgrep -x Xvfb >/dev/null"
-  compose_exec headless winebot "pgrep -x openbox >/dev/null"
+  if ! compose_exec headless winebot "pgrep -x Xvfb >/dev/null"; then
+    fail "Xvfb process not found"
+  fi
+  if ! compose_exec headless winebot "pgrep -x openbox >/dev/null"; then
+    fail "openbox process not found"
+  fi
 
   log "Validating Openbox menu commands..."
   compose_exec headless winebot "/scripts/internal/openbox-menu-test.sh --run-x11 --run-wine"
