@@ -211,7 +211,7 @@ if [ "$skip_base_checks" != "1" ]; then
   if ! compose_exec headless winebot "pgrep -x Xvfb >/dev/null"; then
     fail "Xvfb process not found"
   fi
-  if ! compose_exec headless winebot "pgrep -x openbox >/dev/null"; then
+  if ! compose_exec headless winebot "pgrep -f openbox >/dev/null"; then
     fail "openbox process not found"
   fi
 
