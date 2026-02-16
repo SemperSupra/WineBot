@@ -64,6 +64,12 @@ services:
       <<: *winebot_env
       MODE: headless
     ports: []
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
 
   winebot-interactive:
     <<: *winebot_base

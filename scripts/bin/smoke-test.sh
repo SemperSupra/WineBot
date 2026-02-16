@@ -203,6 +203,23 @@ else
   started_headless="1"
 fi
 
+log "Waiting for headless service health..."
+attempts=60
+while [ $attempts -gt 0 ]; do
+  container_id=$("${compose_cmd[@]}" -f "$compose_file" --profile headless ps -q winebot || true)
+  if [ -n "$container_id" ]; then
+    status=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || echo "starting")
+    if [ "$status" = "healthy" ]; then
+      log "Headless service is healthy."
+      break
+    fi
+    log "Current status: $status"
+  fi
+  attempts=$((attempts - 1))
+  [ $attempts -eq 0 ] && fail "Headless service timed out waiting for health"
+  sleep 2
+done
+
 if [ "$skip_base_checks" != "1" ]; then
   log "Waiting for headless desktop..."
   wait_for_windows headless winebot
