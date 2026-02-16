@@ -50,6 +50,8 @@ sleep 1
 # Check if prefix needs population from template
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     if [ -d "/opt/winebot/prefix-template" ]; then
+        echo "--> Template directory structure:"
+        find /opt/winebot/prefix-template -maxdepth 2
         echo "--> Populating WINEPREFIX from template..."
         cp -rp /opt/winebot/prefix-template/. "$WINEPREFIX/"
         echo "--> Prefix contents after population:"
