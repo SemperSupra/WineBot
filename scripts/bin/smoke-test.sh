@@ -204,7 +204,7 @@ else
 fi
 
 log "Waiting for headless service health..."
-attempts=60
+attempts=120
 while [ $attempts -gt 0 ]; do
   container_id=$("${compose_cmd[@]}" -f "$compose_file" --profile headless ps -q winebot || true)
   if [ -n "$container_id" ]; then
@@ -216,7 +216,11 @@ while [ $attempts -gt 0 ]; do
     log "Current status: $status"
   fi
   attempts=$((attempts - 1))
-  [ $attempts -eq 0 ] && fail "Headless service timed out waiting for health"
+  if [ $attempts -eq 0 ]; then
+    log "Headless service timed out. Dumping container logs:"
+    "${compose_cmd[@]}" -f "$compose_file" --profile headless logs winebot || true
+    fail "Headless service timed out waiting for health"
+  fi
   sleep 2
 done
 
