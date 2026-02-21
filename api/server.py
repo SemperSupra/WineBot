@@ -175,7 +175,7 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 async def verify_token_logic(request: Request, api_key: str = Security(api_key_header)):
-    if request.url.path.startswith("/ui"):
+    if request.url.path.startswith("/ui") or request.url.path.startswith("/health"):
         return api_key
     
     expected_token = config.API_TOKEN
