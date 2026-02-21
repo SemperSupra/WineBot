@@ -2,7 +2,7 @@
 set -euo pipefail
 echo "--- Running Linting (Ruff + Mypy) ---"
 ruff check .
-mypy api automation tests --ignore-missing-imports
+mypy api automation tests scripts/*.py --ignore-missing-imports
 
 echo "--- Running Vulnerability Scan (Trivy) ---"
 if command -v trivy >/dev/null 2>&1; then

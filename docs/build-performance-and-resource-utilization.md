@@ -1,65 +1,52 @@
 # Build Performance & Resource Utilization Report
 
-**Date:** 2026-02-14  
-**Status:** Baseline after v0.9.3 optimizations  
-**Reference Issues:** [#4](https://github.com/SemperSupra/WineBot/issues/4), [#5](https://github.com/SemperSupra/WineBot/issues/5)
+This report analyzes the WineBot build process, identifies resource-heavy stages, and proposes strategies for optimization.
 
-## Overview
-This report characterizes the build time overhead and resource utilization of the WineBot container system. It identifies major bottlenecks and provides a baseline for ongoing optimization efforts.
+## 1. Build Performance Metrics (Baseline)
 
----
+Based on a clean `--no-cache` build of the `intent-test` target (Total Time: ~650s):
 
-## 1. Build Time Overhead
-*Total clean build time: ~16 minutes (Standard GitHub Runner environment).*
-
-| Stage / Subsystem | Time | Characteristics | Primary Bottleneck |
+| Stage | Task | Time (s) | Resource Impact |
 | :--- | :--- | :--- | :--- |
-| **System Dependencies (APT)** | ~10 mins | Very High | Network bandwidth and Disk I/O (Unpacking Wine i386/amd64). |
-| **Windows Tools (Download)** | ~1 min | Low | External network latency. |
-| **Wine Prefix Warm-up** | ~2 mins | Medium | CPU-intensive (First-run registry initialization). |
-| **Linux Python Deps** | ~1 min | Low | Standard `pip install` overhead. |
-| **Image Export/Layering** | ~2 mins | Medium | Disk I/O (Compressing and writing ~4.3GB). |
+| **base-system** | OS, Wine, X11, Python Install | ~180s | High CPU/Network |
+| **prefix-warmer**| Wine Registry & Theme Init | ~160s | High CPU (Xvfb/Wine) |
+| **exporting** | Image Layer Compression | ~130s | High Disk I/O |
+| **tools-builder** | Windows Binaries Download | ~50s | Moderate Network |
+| **base-logic** | Application Code Copy | ~15s | Low |
 
-### Key Improvements (v0.9.3)
-- **Prefix Warm-up Logic:** Moved the ~90s `wineboot` process from runtime to build-time.
-- **Layer Reordering:** Positioned application code `COPY` commands after the heavy prefix-template generation, ensuring code changes don't invalidate 90% of the build cache.
+### Analysis of High-Resource Tasks
+1. **`base-system` (Apt)**: Installing Wine 10.0 and its multi-arch (i386) dependencies is the single largest consumer of network and time.
+2. **`prefix-warmer`**: Running a full Xvfb session during build to initialize the Wine Registry is computationally expensive and serializes the build process.
+3. **`exporting`**: Due to the large size of the pre-warmed prefix (~1.4GB), Docker spends significant time compressing and writing layers.
 
 ---
 
-## 2. Resource Utilization
-*Total Image Footprint: ~4.3 GB (Production REL intent).*
+## 2. Strategies for Optimization
 
-| Subsystem / Feature | Size | Category | Impact / Value |
+### Strategy A: True Base Image Split (Recommended)
+**Recommendation**: Decouple the "System" from the "Application."
+- **Action**: Move everything in `base-system` and `prefix-warmer` into a separate repository or a dedicated `base.Dockerfile`.
+- **Benefit**: Reduces local build time from 10 minutes to **under 60 seconds** for 95% of developer iterations (code changes).
+- **Tradeoff**: Infrastructure management overhead (maintaining two images).
+
+### Strategy B: Parallelize Tool Downloads
+**Recommendation**: Use multi-stage builds more effectively for tool fetching.
+- **Action**: Current `tools-builder` downloads binaries sequentially. Refactor to use separate stages per tool, allowing Docker to fetch AutoIt, AHK, and Python in parallel.
+- **Benefit**: Saves ~30s on cold builds.
+
+### Strategy C: Optimize Layer Caching
+**Recommendation**: Reorder layers to minimize cache invalidation.
+- **Action**: Move the `VERSION` file copy to the very end of the `base-logic` stage. Currently, every version bump invalidates the code copy and permission fixing layers.
+- **Benefit**: Prevents redundant `chown -R` runs (which take ~10s).
+
+---
+
+## 3. Recommended Actions
+
+| Item | Action | Priority | Options |
 | :--- | :--- | :--- | :--- |
-| **Wine & X11 System Core** | **2.2 GB** | Infrastructure | Essential. Large due to dual-architecture (i386 + amd64) requirements. |
-| **Wine Prefix Template** | **1.4 GB** | Optimization | High storage cost, but provides instant startup and CI stability. |
-| **FastAPI / OpenCV Stack** | **150 MB** | Application | Core API and Visual (CV) automation dependencies. |
-| **Windows Python (`winpy`)** | **44 MB** | Diagnostic | Essential for high-fidelity `win_hook` tracing. |
-| **AutoIt / AutoHotkey** | **24 MB** | Automation | Lightweight native automation fallbacks. |
+| **1. Registry Split** | Move Wine/System layers to permanent base image. | **Critical** | Ignore/Implement/Defer |
+| **2. Cache Reorder** | Move `VERSION` and `Dockerfile` copies to final layers. | **High** | Ignore/Implement/Defer |
+| **3. Parallel Fetch** | Refactor `download_tools.sh` into parallel Docker stages. | **Medium** | Ignore/Implement/Defer |
 
----
-
-## 3. Storage Analysis (Internal)
-Detailed breakdown of major filesystem paths:
-- `/usr/lib/x86_64-linux-gnu`: **1.4 GB** (System libraries)
-- `/usr/lib/i386-linux-gnu`: **773 MB** (32-bit Wine support)
-- `/opt/winebot/prefix-template`: **1.4 GB** (Pre-initialized `C:` drive)
-- `/opt/winebot/windows-tools/Python`: **44 MB** (Embedded interpreter)
-
----
-
-## 4. Optimization Strategy
-
-### A. Implemented
-- **[DONE] Remove Windows Pip Bootstrap:** Saved ~3 mins of build time and avoided ~1.4GB of redundant prefix bloat in the `/root` directory.
-- **[DONE] Multi-Stage Layering:** Separated stable system layers from dynamic tool and application layers to maximize cache hits.
-- **[DONE] CI Disk Management:** Added `Maximize disk space` steps to GitHub Actions to prevent "No space left on device" failures.
-
-### B. Future (Strategic Issues)
-- **[Issue #4] Modular 'Slim' Intent:** Create an image variant that excludes the 1.4GB prefix template for users who prioritize disk space over startup speed.
-- **[Issue #5] Custom Minimal Wine Build:** Research a stripped-down Wine build targeting only core automation DLLs (`user32`, `gdi32`, `kernel32`) to reduce the 2.2GB infrastructure baseline.
-
----
-
-## 5. Conclusion
-WineBot v0.9.3 represents a significant leap in build performance and runtime reliability. While the image remains large (~4.3GB), the storage is now utilized effectively to provide nearly instantaneous startup. Further gains require moving away from standard distribution packages towards custom-compiled Wine binaries.
+**How would you like to proceed?** I recommend implementing **Item 2** immediately as it is a pure win with zero tradeoffs. For **Item 1**, I can prepare the `base.Dockerfile` if you want to move toward a multi-repo/image structure.

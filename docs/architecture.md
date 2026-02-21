@@ -19,6 +19,31 @@ WineBot runs Windows GUI applications inside a Linux container using Wine, Xvfb,
     *   **Helper Scripts (`scripts/`, `automation/`):** Shell wrappers for X11 and Wine interactions.
     *   **Entrypoint (`entrypoint.sh`):** Bootstraps user permissions, X11, Wine, and API.
 
+## Control Surfaces
+
+WineBot provides two primary CLI tools for interaction, depending on your role:
+
+### 1. Developer Tooling (`scripts/wb`)
+Used for project maintenance and verification on the **host machine**:
+- **Unified Lifecycle:** `./scripts/wb` wraps Docker Compose profiles (`lint`, `test`, `interactive`) to ensure a consistent environment across development stages.
+- **Bootstrapping:** Automated host dependency checks (Docker, Compose).
+- **Vulnerability Scanning:** Integrated Trivy scans for both the local filesystem and container images.
+- **Build Intents:** Automated image building for different use cases (`dev`, `test`, `slim`, `rel`).
+
+### 2. Operator Interface (`scripts/winebotctl`)
+The primary interface for autonomous agents and remote operators to **control a running instance**:
+- **API-First:** Communicates with a running WineBot instance via HTTP.
+- **Portability:** Lightweight shell script that can be vendored into other environments without the full build system.
+- **Idempotency:** Optional caching for idempotent API calls.
+
+## Configuration & Defaults
+
+WineBot eliminates "magic values" by centralizing all settings in `api/utils/config.py`.
+
+- **Validation**: All environment variables are validated via Pydantic on API startup.
+- **Fail-Fast**: The system refuses to boot if critical configuration (e.g., ports, timeouts) is malformed.
+- **Agent Friendly**: Agents can discover the current configuration schema via the `GET /handshake` endpoint.
+
 ## API & Automation Flow
 
 External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`/`xdotool`/`import` -> Application

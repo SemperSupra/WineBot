@@ -83,6 +83,9 @@ EOF
 wine regedit /S /tmp/fonts.reg
 wine regedit /S /tmp/theme.reg
 
+# Add diagnostic marker
+wine reg add "HKEY_CURRENT_USER\Software\WineBot" /v ThemeApplied /t REG_SZ /d "1" /f
+
 rm /tmp/fonts.reg /tmp/theme.reg
 
 # 3. X11 Cursor & Background Fix

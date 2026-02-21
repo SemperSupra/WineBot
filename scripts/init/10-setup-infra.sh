@@ -42,17 +42,20 @@ rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
 Xvfb "$DISPLAY" -screen 0 "$SCREEN" -ac -noreset +extension RANDR >/dev/null 2>&1 &
 XVFB_PID=$!
 
-echo "--> Waiting for Xvfb on $DISPLAY..."
-for i in $(seq 1 30); do
+echo "--> Waiting for Xvfb on $DISPLAY (with backoff)..."
+WAIT_TIME=0.1
+for i in $(seq 1 15); do
     if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
         echo "--> Xvfb is ready."
         break
     fi
-    if [ $i -eq 30 ]; then
-        echo "ERROR: Xvfb failed to start."
+    if [ $i -eq 15 ]; then
+        echo "ERROR: Xvfb failed to start after multiple attempts."
         exit 1
     fi
-    sleep 0.5
+    sleep "$WAIT_TIME"
+    # Exponential backoff
+    WAIT_TIME=$(python3 -c "print(min(2.0, $WAIT_TIME * 1.5))")
 done
 
 # --- WM Setup ---

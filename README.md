@@ -4,7 +4,45 @@
 
 WineBot is a containerized harness for running Windows GUI applications under Wine in headless or interactive modes. It provides a stable virtual desktop for automation and optional VNC/noVNC access for debugging.
 
+## Control Surfaces
+
+WineBot provides two primary CLI tools for interaction, depending on your role:
+
+| Tool | Purpose | Context |
+| :--- | :--- | :--- |
+| **`scripts/wb`** | **Developer/Lifecycle Tool**. Build, test, and manage the project infrastructure. | **Host Machine**. Uses Docker/Compose to manage the environment. |
+| **`scripts/winebotctl`** | **Operator/Agent Tool**. Control a running WineBot instance via the API. | **Anywhere**. Inside the container, or remotely via the network. |
+
+### 1. Developer Tool (`scripts/wb`)
+Use this for project maintenance and verification:
+- `./scripts/wb bootstrap`: Verify host dependencies.
+- `./scripts/wb lint`: Run containerized linting (Ruff/Mypy).
+- `./scripts/wb test`: Run unit and E2E tests.
+- `./scripts/wb build [intent]`: Build local images (e.g., `slim`, `dev`, `rel`).
+- `./scripts/wb vuln`: Run vulnerability scans.
+
+### 2. Operator Tool (`scripts/winebotctl`)
+Use this to automate applications:
+- `scripts/winebotctl health`: Check API status.
+- `scripts/winebotctl screenshot`: Capture the virtual desktop.
+- `scripts/winebotctl apps run "/path/to/app.exe"`: Launch a Windows app.
+- `scripts/winebotctl input click 100 200`: Perform a mouse click.
+
+## Configuration
+
+WineBot uses a unified, validated configuration system based on environment variables. 
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `API_TOKEN` | (Random) | Security token for API access. |
+| `WINEBOT_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL. |
+| `WINEBOT_COMMAND_TIMEOUT` | `5` | Subprocess execution limit in seconds. |
+| `WINEBOT_SESSION_ROOT` | `/artifacts/sessions` | Path to store session data. |
+| `WINEBOT_INACTIVITY_PAUSE_SECONDS` | `0` (Disabled) | Auto-pause recording when idle. |
+
 ## Quickstart
+
+Headless:
 
 Headless:
 

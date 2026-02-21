@@ -3,7 +3,7 @@ import logging
 import time
 import threading
 import os
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from zeroconf import (
     IPVersion,
     ServiceInfo,
@@ -12,9 +12,11 @@ from zeroconf import (
     ServiceStateChange,
 )
 
+from api.utils.config import config
+
 logger = logging.getLogger("winebot.discovery")
 
-SERVICE_TYPE = "_winebot-session._tcp.local."
+SERVICE_TYPE = config.MDNS_SERVICE_TYPE
 
 
 class DiscoveryManager:
@@ -25,7 +27,7 @@ class DiscoveryManager:
         self.service_info: Optional[ServiceInfo] = None
         self.update_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
-        self.allow_multiple = os.getenv("WINEBOT_DISCOVERY_ALLOW_MULTIPLE", "1") == "1"
+        self.allow_multiple = config.WINEBOT_DISCOVERY_ALLOW_MULTIPLE
 
     def _get_local_ip(self) -> str:
         try:
@@ -40,16 +42,27 @@ class DiscoveryManager:
 
     def _get_txt_records(self) -> Dict[str, str]:
         from api.utils.files import read_session_dir, session_id_from_dir
+        import hmac
+        import hashlib
 
         session_dir = read_session_dir()
         session_id = session_id_from_dir(session_dir) or "none"
+        
+        # Include a hash of the API token if set, so clients can verify credentials
+        token = config.API_TOKEN or ""
+        token_hash = ""
+        if token:
+            token_hash = hmac.new(
+                b"winebot-discovery", token.encode(), hashlib.sha256
+            ).hexdigest()[:8]
 
         return {
-            "version": "0.9.5",
+            "version": "0.9.6",
             "session_id": session_id,
-            "api_port": "8000",
-            "vnc_port": "5900",
-            "novnc_port": "6080",
+            "api_port": str(config.API_PORT),
+            "vnc_port": str(config.VNC_PORT),
+            "novnc_port": str(config.NOVNC_PORT),
+            "token_sig": token_hash,
         }
 
     def _check_singleton(self) -> None:
@@ -98,7 +111,7 @@ class DiscoveryManager:
                 SERVICE_TYPE,
                 f"WineBot-Session-{session_id}.{SERVICE_TYPE}",
                 addresses=[socket.inet_aton(ip)],
-                port=8000,
+                port=config.API_PORT,
                 properties=txt_records,
                 server=f"{socket.gethostname()}.local.",
             )
@@ -117,7 +130,7 @@ class DiscoveryManager:
         while not self.stop_event.is_set():
             # Properties are currently static to avoid Zeroconf 0.131+ immutability issues
             # We just sleep and check the stop event
-            if self.stop_event.wait(30):
+            if self.stop_event.wait(config.MDNS_UPDATE_INTERVAL_SEC):
                 break
 
     def stop(self) -> None:
@@ -128,6 +141,14 @@ class DiscoveryManager:
                 self.zeroconf.unregister_service(self.service_info)
             self.zeroconf.close()
             self.zeroconf = None
+
+    def status(self) -> Dict[str, Any]:
+        """Returns the current discovery status."""
+        return {
+            "enabled": self.zeroconf is not None,
+            "service_name": self.service_info.name if self.service_info else None,
+            "registered": self.service_info is not None and self.zeroconf is not None,
+        }
 
 
 discovery_manager = DiscoveryManager()

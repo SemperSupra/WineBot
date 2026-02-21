@@ -32,6 +32,8 @@ async def run_app(data: AppRunModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
+    await broker.report_agent_activity()
+
     app_path = data.path
     # Allow naked filenames (e.g., cmd.exe, notepad.exe) or resolve non-absolute paths
     if os.path.sep not in app_path and "\\" not in app_path:
@@ -118,6 +120,8 @@ async def run_ahk(data: AHKModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
+    await broker.report_agent_activity()
+
     session_dir = ensure_session_dir()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
@@ -138,6 +142,8 @@ async def run_autoit(data: AutoItModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
+    await broker.report_agent_activity()
+
     session_dir = ensure_session_dir()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
@@ -157,6 +163,8 @@ async def run_python(data: PythonScriptModel):
     """Run a Python script."""
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
+    await broker.report_agent_activity()
 
     session_dir = ensure_session_dir()
     if not session_dir:
@@ -180,6 +188,20 @@ async def take_screenshot(output_dir: Optional[str] = None):
         os.path.join(session_dir, "screenshots") if session_dir else "/tmp"
     )
     os.makedirs(target_dir, exist_ok=True)
+    
+    # Correctness: Enforce screenshot cap per session
+    if session_dir and target_dir.startswith(session_dir):
+        max_shots = int(os.getenv("WINEBOT_MAX_SCREENSHOTS_PER_SESSION", "1000"))
+        try:
+            count = len([f for f in os.listdir(target_dir) if f.endswith(".png")])
+            if count >= max_shots:
+                raise HTTPException(
+                    status_code=429, 
+                    detail=f"Screenshot cap ({max_shots}) reached for this session."
+                )
+        except OSError:
+            pass
+
     filename = f"screenshot_{int(time.time())}.png"
     filepath = os.path.join(target_dir, filename)
 

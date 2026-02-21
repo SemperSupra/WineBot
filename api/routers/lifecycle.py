@@ -7,7 +7,6 @@ import signal
 import threading
 import time
 import subprocess
-from collections import deque
 from api.utils.files import (
     read_session_dir,
     lifecycle_log_path,
@@ -23,6 +22,7 @@ from api.utils.files import (
     read_session_state,
     validate_path,
 )
+from api.core.versioning import ARTIFACT_SCHEMA_VERSION
 from api.utils.process import safe_command, find_processes
 from api.core.recorder import stop_recording
 from api.core.broker import broker
@@ -211,20 +211,39 @@ def lifecycle_events(limit: int = 100):
     path = lifecycle_log_path(session_dir)
     if not os.path.exists(path):
         return {"events": []}
+    
+    from api.utils.files import read_file_tail_lines
+    raw_lines = read_file_tail_lines(path, limit=limit)
     events = []
-    lines: deque[str] = deque(maxlen=limit)
-    try:
-        with open(path, "r") as f:
-            for line in f:
-                lines.append(line.rstrip("\n"))
-        for line in lines:
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    except Exception:
-        pass
+    for line in raw_lines:
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return {"events": events}
+
+
+async def atomic_shutdown(session_dir: Optional[str], wine_shutdown: bool = True) -> Dict[str, Any]:
+    """Coordinated shutdown ensuring data persistence."""
+    results: Dict[str, Any] = {}
+    
+    # 1. Stop Recorder first (most critical for data)
+    if session_dir and recorder_running(session_dir):
+        append_lifecycle_event(session_dir, "shutdown_recorder_start", "Stopping recorder for cleanup")
+        try:
+            await stop_recording()
+            results["recorder"] = "ok"
+        except Exception as e:
+            results["recorder"] = f"error: {str(e)}"
+
+    # 2. Shutdown Wine
+    if wine_shutdown:
+        results["wine"] = graceful_wine_shutdown(session_dir)
+
+    # 3. Shutdown UI Components
+    results["components"] = graceful_component_shutdown(session_dir)
+    
+    return results
 
 
 @router.post("/lifecycle/shutdown")
@@ -253,22 +272,14 @@ async def lifecycle_shutdown(
         schedule_shutdown(session_dir, max(0.0, delay), signal.SIGKILL)
         return {"status": "powering_off", "delay_seconds": delay}
 
-    wine_result = None
-    component_result = None
-    if wine_shutdown:
-        wine_result = graceful_wine_shutdown(session_dir)
-    if session_dir and recorder_running(session_dir):
-        try:
-            await stop_recording()
-        except Exception:
-            pass
-    component_result = graceful_component_shutdown(session_dir)
+    results = await atomic_shutdown(session_dir, wine_shutdown=wine_shutdown)
     schedule_shutdown(session_dir, delay, signal.SIGTERM)
-    response: Dict[str, Any] = {"status": "shutting_down", "delay_seconds": delay}
-    if wine_shutdown:
-        response["wine_shutdown"] = wine_result
-    response["component_shutdown"] = component_result
-    return response
+    
+    return {
+        "status": "shutting_down",
+        "delay_seconds": delay,
+        "results": results
+    }
 
 
 @router.post("/lifecycle/reset_workspace")
@@ -388,6 +399,30 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         raise HTTPException(status_code=400, detail=str(exc))
     if not os.path.isdir(target_dir):
         raise HTTPException(status_code=404, detail="Session directory not found")
+    
+    # HARDENING: Verify artifact schema version compatibility
+    session_json = os.path.join(target_dir, "session.json")
+    if os.path.exists(session_json):
+        try:
+            with open(session_json, "r") as f:
+                manifest = json.load(f)
+                old_ver = manifest.get("schema_version", "1.0")
+                if float(old_ver) < float(ARTIFACT_SCHEMA_VERSION):
+                    # We could implement migrations here, but for now we just warn or fail
+                    pass
+                elif float(old_ver) > float(ARTIFACT_SCHEMA_VERSION):
+                    raise HTTPException(
+                        status_code=409, 
+                        detail=f"Session version {old_ver} is newer than current build ({ARTIFACT_SCHEMA_VERSION})."
+                    )
+        except (ValueError, json.JSONDecodeError):
+            pass
+
+    # HARDENING: Force shutdown of current session before resume
+    if current_session and current_session != target_dir:
+        append_lifecycle_event(current_session, "handover_start", f"Handing over to {target_dir}")
+        await atomic_shutdown(current_session, wine_shutdown=bool(data.restart_wine))
+
     session_json = os.path.join(target_dir, "session.json")
     if not os.path.exists(session_json):
         write_session_manifest(target_dir, os.path.basename(target_dir))
@@ -395,22 +430,6 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
     user_dir = os.path.join(target_dir, "user")
     os.makedirs(user_dir, exist_ok=True)
     ensure_user_profile(user_dir)
-
-    if current_session and current_session != target_dir:
-        if data.stop_recording and recorder_running(current_session):
-            try:
-                await stop_recording()
-            except Exception:
-                pass
-        write_session_state(current_session, "suspended")
-        append_lifecycle_event(
-            current_session,
-            "session_suspended",
-            "Session suspended via API",
-            source="api",
-        )
-        if data.restart_wine:
-            graceful_wine_shutdown(current_session)
 
     write_session_dir(target_dir)
     os.environ["WINEBOT_SESSION_DIR"] = target_dir

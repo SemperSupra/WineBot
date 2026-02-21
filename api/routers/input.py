@@ -9,7 +9,6 @@ import uuid
 import json
 import signal
 import threading
-from collections import deque
 from api.core.models import (
     ClickModel,
     InputTraceStartModel,
@@ -110,29 +109,25 @@ def input_events(
     if not os.path.exists(path):
         return {"events": []}
 
-    lines: deque[str] = deque(maxlen=limit)
+    from api.utils.files import read_file_tail_lines
+    raw_lines = read_file_tail_lines(path, limit=limit)
     events = []
-    try:
-        with open(path, "r") as f:
-            for line in f:
-                lines.append(line.rstrip("\n"))
-        for line in lines:
+    for line in raw_lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if since_epoch_ms is not None:
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
+                if int(event.get("timestamp_epoch_ms", 0)) < since_epoch_ms:
+                    continue
+            except Exception:
                 continue
-            if since_epoch_ms is not None:
-                try:
-                    if int(event.get("timestamp_epoch_ms", 0)) < since_epoch_ms:
-                        continue
-                except Exception:
-                    continue
-            if origin is not None:
-                if event.get("origin") != origin:
-                    continue
-            events.append(event)
-    except Exception:
-        pass
+        if origin is not None:
+            if event.get("origin") != origin:
+                continue
+        events.append(event)
+    
     return {"events": events, "log_path": path}
 
 
@@ -141,6 +136,8 @@ async def click_at(data: ClickModel):
     """Click at coordinates (x, y)."""
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
+    await broker.report_agent_activity()
 
     # Resolve target window if needed
     target_win_id = data.window_id

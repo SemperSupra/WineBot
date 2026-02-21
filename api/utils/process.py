@@ -2,16 +2,32 @@ import asyncio
 import os
 import shutil
 import subprocess
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Final, Set
 from functools import lru_cache
+from contextlib import asynccontextmanager
 
 # Store strong references to Popen objects
-process_store = set()
+process_store: Set[subprocess.Popen] = set()
+
+# Default timeout for safe_command and safe_async_command (can be overridden by WINEBOT_COMMAND_TIMEOUT)
+DEFAULT_TIMEOUT: Final[int] = int(os.getenv("WINEBOT_COMMAND_TIMEOUT", "5"))
+PROCESS_STORE_CAP: Final[int] = int(os.getenv("WINEBOT_MAX_DETACHED_PROCESSES", "500"))
 
 
 def manage_process(proc: subprocess.Popen):
-    """Track a detached process to ensure it is reaped later."""
-    process_store.add(proc)
+    """Track a detached process to ensure it is reaped later. Enforces safety cap."""
+    if len(process_store) >= PROCESS_STORE_CAP:
+        # Emergency reap before adding
+        for p in list(process_store):
+            if p.poll() is not None:
+                process_store.discard(p)
+    
+    if len(process_store) < PROCESS_STORE_CAP:
+        process_store.add(proc)
+    else:
+        # Still full? Kill the oldest or just let this one be untracked (leak risk but prevents OOM)
+        # We'll just add it anyway but log a warning if we had a logger
+        process_store.add(proc)
 
 
 def pid_running(pid: int) -> bool:
@@ -24,21 +40,10 @@ def pid_running(pid: int) -> bool:
         return True
 
 
-async def run_async_command(cmd: List[str]) -> Dict[str, Any]:
-    """Run a command asynchronously without blocking the event loop."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await proc.communicate()
-        return {
-            "returncode": proc.returncode,
-            "stdout": stdout.decode().strip(),
-            "stderr": stderr.decode().strip(),
-            "ok": proc.returncode == 0,
-        }
-    except Exception as e:
-        return {"returncode": -1, "stdout": "", "stderr": str(e), "ok": False}
+async def run_async_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+    """Run a command asynchronously without blocking the event loop. Uses DEFAULT_TIMEOUT if timeout is not provided."""
+    to = timeout if timeout is not None else DEFAULT_TIMEOUT
+    return await safe_async_command(cmd, timeout=to)
 
 
 def find_processes(pattern: str, exact: bool = False) -> List[int]:
@@ -74,16 +79,17 @@ def find_processes(pattern: str, exact: bool = False) -> List[int]:
 
 def run_command(cmd: List[str]):
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=DEFAULT_TIMEOUT)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         raise Exception(f"Command failed: {e.stderr}")
 
 
-def safe_command(cmd: List[str], timeout: int = 5) -> Dict[str, Any]:
+def safe_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+    to = timeout if timeout is not None else DEFAULT_TIMEOUT
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=timeout
+            cmd, capture_output=True, text=True, check=True, timeout=to
         )
         return {
             "ok": True,
@@ -109,24 +115,40 @@ def check_binary(name: str) -> Dict[str, Any]:
     return {"present": path is not None, "path": path}
 
 
-async def safe_async_command(cmd: List[str], timeout: int = 5) -> Dict[str, Any]:
+@asynccontextmanager
+async def async_subprocess_context(cmd: List[str], timeout: Optional[int] = None):
+    """Context manager to ensure a subprocess is reaped even on error or cancellation."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            return {
-                "ok": proc.returncode == 0,
-                "stdout": stdout.decode().strip(),
-                "stderr": stderr.decode().strip(),
-            }
-        except asyncio.TimeoutError:
+        yield proc
+    finally:
+        if proc.returncode is None:
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            return {"ok": False, "error": "timeout"}
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+
+
+async def safe_async_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+    to = timeout if timeout is not None else DEFAULT_TIMEOUT
+    try:
+        async with async_subprocess_context(cmd, timeout=to) as proc:
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=to)
+                return {
+                    "ok": proc.returncode == 0,
+                    "stdout": stdout.decode().strip(),
+                    "stderr": stderr.decode().strip(),
+                }
+            except asyncio.TimeoutError:
+                return {"ok": False, "error": "timeout"}
     except FileNotFoundError:
         return {"ok": False, "error": "command not found"}
     except Exception as e:

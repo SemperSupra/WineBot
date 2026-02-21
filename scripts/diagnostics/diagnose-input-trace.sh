@@ -538,7 +538,7 @@ ensure_notepad() {
       sleep 1
     fi
   fi
-  if ! wmctrl -l | grep -qi "Notepad"; then
+  if ! xdotool search --name "Notepad" >/dev/null 2>&1; then
     log "Launching Wine Notepad..."
     if [ "$WINEDEBUG_TRACE" = "1" ]; then
       WINEDEBUG_LOG_PATH="${LOG_DIR}/wine_debug_${diag_ts}.log"
@@ -1106,7 +1106,7 @@ if [ "$SKIP_X11" -eq 0 ] || [ "$SKIP_WINDOWS" -eq 0 ]; then
   else
     log "WARNING: Notepad window not found; app-level validation skipped."
     log "Window list:"
-    wmctrl -l || true
+    xdotool search --name ".*" || true
   fi
 fi
 

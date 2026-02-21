@@ -36,6 +36,7 @@ Commands:
   input trace start|stop|status|events [opts]
   config set|get|list|apply [opts]
   diag bundle [opts]
+  tail [source] [--follow] [--lines N]
   run ahk|autoit|python|winedbg [opts]
   inspect window [opts]
 
@@ -1052,6 +1053,48 @@ PY
         die "Unknown diag command: $sub"
         ;;
     esac
+    ;;
+
+  tail)
+    source="${1:-api}"
+    shift || true
+    follow="false"
+    lines="50"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --follow|-f)
+          follow="true"
+          shift
+          ;;
+        --lines|-n)
+          lines="$2"
+          shift 2
+          ;;
+        *)
+          die "Unknown tail option: $1"
+          ;;
+      esac
+    done
+    
+    if [ "$follow" = "true" ]; then
+      url="${BASE_URL}/logs/tail?source=${source}&follow=true"
+      headers=()
+      if [ -n "$API_TOKEN" ]; then
+        headers+=(-H "X-API-Key: $API_TOKEN")
+      fi
+      # Streaming tail
+      curl -sS "${headers[@]}" -N "$url"
+    else
+      resp="$(api_request GET "/logs/tail?source=${source}&lines=${lines}")"
+      status="$(response_status "$resp")"
+      body="$(response_body "$resp")"
+      if [ "$status" -ge 400 ]; then
+        echo "$body" >&2
+        exit 1
+      fi
+      # Print lines from JSON
+      printf '%s\n' "$body" | python3 -c "import sys, json; data=json.load(sys.stdin); print('\n'.join(data.get('lines', [])))"
+    fi
     ;;
 
   run)

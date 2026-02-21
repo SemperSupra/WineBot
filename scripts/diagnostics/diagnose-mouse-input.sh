@@ -78,7 +78,7 @@ log() {
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting mouse input diagnosis"
 
 ensure_notepad() {
-  if ! wmctrl -l | grep -qi "Notepad"; then
+  if ! xdotool search --name "Notepad" >/dev/null 2>&1; then
     log "Launching Wine Notepad..."
     nohup wine notepad >/dev/null 2>&1 </dev/null &
     sleep 2

@@ -3,6 +3,8 @@ import os
 import logging
 from typing import Dict, Any, Optional
 
+from api.utils.config import config
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,11 +33,11 @@ class FFMpegRecorder:
             "-c:v",
             "libx264",
             "-preset",
-            "ultrafast",
+            config.RECORDER_PRESET,
             "-crf",
-            "23",
+            str(config.RECORDER_CRF),
             "-pix_fmt",
-            "yuv420p",
+            config.RECORDER_PIX_FMT,
         ]
 
         if metadata:

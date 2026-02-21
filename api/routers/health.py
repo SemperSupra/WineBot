@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from typing import Optional
 import os
 import time
 import platform
@@ -7,8 +8,13 @@ from api.utils.process import (
     safe_command,
     safe_async_command,
     find_processes,
+    pid_running,
 )
-from api.utils.files import statvfs_info, read_session_dir
+from api.utils.files import (
+    statvfs_info,
+    read_session_dir,
+    recorder_pid,
+)
 from api.core.recorder import recording_status
 
 
@@ -29,6 +35,14 @@ def meminfo_summary() -> dict:
     except Exception:
         pass
     return data
+
+
+def _process_running(name: str, pid: Optional[int]) -> bool:
+    """Check if process is running by name and optional PID file."""
+    if pid is not None:
+        if pid_running(pid):
+            return True
+    return len(find_processes(name)) > 0
 
 
 @router.get("")
@@ -116,18 +130,18 @@ async def health_environment():
     wine_driver = await safe_async_command(["wine", "cmd", "/c", "echo Driver Check"])
 
     # Process checks
-    wm_pids = find_processes("openbox", exact=True)
-    xvfb_pids = find_processes("Xvfb", exact=True)
-    explorer_pids = find_processes("explorer.exe")
+    wm_ok = _process_running("openbox", None)
+    xvfb_ok = _process_running("Xvfb", None)
+    explorer_ok = _process_running("explorer.exe", None)
 
     # Driver capability details
     driver_ok = wine_driver.get("ok", False)
     nodrv_detected = "nodrv_CreateWindow" in wine_driver.get("stderr", "")
 
     status = "ok"
-    if not x11.get("ok") or not driver_ok or len(xvfb_pids) == 0:
+    if not x11.get("ok") or not driver_ok or not xvfb_ok:
         status = "error"
-    elif len(wm_pids) == 0 or len(explorer_pids) == 0:
+    elif not wm_ok or not explorer_ok:
         status = "degraded"
 
     return {
@@ -135,13 +149,13 @@ async def health_environment():
         "x11": {
             "ok": x11.get("ok"),
             "display": os.getenv("DISPLAY"),
-            "xvfb_running": len(xvfb_pids) > 0,
-            "wm_running": len(wm_pids) > 0,
+            "xvfb_running": xvfb_ok,
+            "wm_running": wm_ok,
         },
         "wine": {
             "driver_ok": driver_ok,
             "nodrv_detected": nodrv_detected,
-            "explorer_running": len(explorer_pids) > 0,
+            "explorer_running": explorer_ok,
             "stderr": wine_driver.get("stderr") if not driver_ok else None,
         },
     }
@@ -150,11 +164,13 @@ async def health_environment():
 @router.get("/system")
 def health_system():
     """System-level health details."""
+    from api.core.discovery import discovery_manager
     info = {
         "hostname": platform.node(),
         "pid": os.getpid(),
         "uptime_seconds": int(time.time() - START_TIME),
         "cpu_count": os.cpu_count(),
+        "discovery": discovery_manager.status(),
     }
     try:
         info["loadavg"] = os.getloadavg()
@@ -168,14 +184,14 @@ def health_system():
 async def health_x11():
     """X11 health details."""
     x11 = await safe_async_command(["xdpyinfo"])
-    wm_pids = find_processes("openbox", exact=True)
+    wm_ok = _process_running("openbox", None)
     active = await safe_async_command(["/automation/bin/x11.sh", "active-window"])
     return {
         "display": os.getenv("DISPLAY"),
         "screen": os.getenv("SCREEN"),
         "connected": x11.get("ok", False),
         "xdpyinfo_error": x11.get("error") or x11.get("stderr"),
-        "window_manager": {"name": "openbox", "running": len(wm_pids) > 0},
+        "window_manager": {"name": "openbox", "running": wm_ok},
         "active_window": active.get("stdout") if active.get("ok") else None,
         "active_window_error": (
             None if active.get("ok") else (active.get("error") or active.get("stderr"))
@@ -269,14 +285,18 @@ def health_storage():
 async def health_recording():
     """Recorder status and current session."""
     session_dir = read_session_dir()
-    recorder_pids = find_processes("automation.recorder start")
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
+    
+    r_pid = recorder_pid(session_dir) if session_dir else None
+    recorder_ok = _process_running("automation.recorder start", r_pid)
+    
     status = recording_status(session_dir, enabled)
     return {
         "enabled": enabled,
         "session_dir": session_dir,
         "session_dir_exists": (os.path.isdir(session_dir) if session_dir else False),
-        "recorder_running": len(recorder_pids) > 0,
-        "recorder_pids": [str(p) for p in recorder_pids],
+        "recorder_running": recorder_ok,
+        "recorder_pids": [str(r_pid)] if r_pid and pid_running(r_pid) else [],
         "state": status["state"],
     }
+

@@ -16,6 +16,11 @@ class InputBroker:
             agent_status=AgentStatus.IDLE,
         )
         self.last_user_activity = 0.0
+        self.last_agent_activity = 0.0
+
+    @property
+    def last_activity(self) -> float:
+        return max(self.last_user_activity, self.last_agent_activity)
 
     async def update_session(self, session_id: str, interactive: bool):
         async with self._lock:
@@ -60,6 +65,9 @@ class InputBroker:
         if self.state.control_mode == ControlMode.AGENT:
             async with self._lock:
                 self.revoke_agent("user_input_override")
+
+    async def report_agent_activity(self):
+        self.last_agent_activity = time.time()
 
     async def set_user_intent(self, intent: UserIntent):
         async with self._lock:

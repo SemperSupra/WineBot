@@ -1,4 +1,5 @@
 # WineBot Policy Summary
+**Current Version:** 1.1.0 (Released 2026-02-21)
 
 This file summarizes the main policies currently used by WineBot and where each is defined or enforced.
 
@@ -74,6 +75,11 @@ This file summarizes the main policies currently used by WineBot and where each 
 - Reference:
   - `policy/containerized-tooling-policy.md`
 
+### 10. Agent Autonomy & Accountability Policy
+- Defines boundaries for autonomous actions vs. HITL requirements.
+- Reference:
+  - `policy/agent-accountability-policy.md`
+
 ### 6. Security Hardening Policy Notes
 - Security hardening guidance and backlog:
   - `policy/security_hardening.md`
@@ -95,9 +101,15 @@ This file summarizes the main policies currently used by WineBot and where each 
 - Reference:
   - `policy/visual-style-and-ux-policy.md`
 
+### 11. Discoverability & Internet Exposure Policy
+- Limits service discovery to local mDNS and explicitly forbids public internet discovery for security.
+- Reference:
+  - `policy/discoverability-policy.md`
+
 ## Policy Prompts and Draft Artifacts
 
 The following files are policy-related artifacts/prompts and are not runtime enforcement mechanisms by themselves:
+- `policy/prompts/core-mandates.md` (Agent-optimized snippet)
 - `policy/prompts/implementation/agent-prompt-mkdocs-gh-pages.md`
 - `policy/prompts/implementation/invite_only_policy_agent_prompt_whitelist.md`
 - `policy/prompts/implementation/winebot-build-intent-policy-agent-prompt.md`

@@ -54,6 +54,15 @@ if [[ "$PHASE" == "all" || "$PHASE" == "health" ]]; then
         exit 1
     fi
     log "Health check saved to $LOG_DIR/env_health.json"
+
+    # 1.1 Wine Registry Integrity
+    log "--- Auditing Wine Registry ---"
+    if /scripts/diagnostics/diagnose-wine-registry.sh "$LOG_DIR"; then
+        log "Registry Audit: PASSED"
+    else
+        log "Registry Audit: FAILED"
+        exit 1
+    fi
 fi
 
 # 2. Start Full Tracing & Recording (Setup for following tests)

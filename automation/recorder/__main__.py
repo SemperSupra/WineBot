@@ -168,11 +168,15 @@ def load_input_trace_events(session_dir: str) -> list:
 
     session_id = os.path.basename(session_dir)
     max_events = int(os.getenv("WINEBOT_RECORD_INPUT_MAX_EVENTS", "50000"))
+    max_load_mb = int(os.getenv("WINEBOT_MAX_TRACE_LOAD_MB", "100"))
+    
     event_buffer: Any
     if max_events > 0:
         event_buffer = deque(maxlen=max_events)
     else:
         event_buffer = [] # type: ignore
+
+    total_loaded_approx_bytes = 0
 
     for layer, path in input_log_paths(session_dir):
         if not os.path.exists(path):
@@ -182,6 +186,13 @@ def load_input_trace_events(session_dir: str) -> list:
                 for line in f:
                     if not line.strip():
                         continue
+                    
+                    # Memory Correctness: Stop loading if buffer is getting too large
+                    total_loaded_approx_bytes += len(line)
+                    if total_loaded_approx_bytes > (max_load_mb * 1024 * 1024):
+                        logger.warning(f"Trace buffer limit reached ({max_load_mb}MB). Skipping remaining events.")
+                        break
+
                     try:
                         data = json.loads(line)
                     except json.JSONDecodeError:

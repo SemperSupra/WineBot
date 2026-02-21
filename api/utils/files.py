@@ -2,16 +2,18 @@ import os
 import fcntl
 import json
 import time
+import asyncio
 import datetime
 import platform
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Final
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.utils.process import pid_running
+from api.utils.config import config
 
-SESSION_FILE = "/tmp/winebot_current_session"
-DEFAULT_SESSION_ROOT = "/artifacts/sessions"
-ALLOWED_PREFIXES = [
+SESSION_FILE: Final[str] = "/tmp/winebot_current_session"
+DEFAULT_SESSION_ROOT: Final[str] = "/artifacts/sessions"
+ALLOWED_PREFIXES: Final[List[str]] = [
     "/apps",
     "/wineprefix",
     "/tmp",
@@ -298,7 +300,7 @@ def resolve_session_dir(
         raise Exception("Provide session_id or session_dir")
     if "/" in session_id or os.path.sep in session_id or ".." in session_id:
         raise Exception("Invalid session_id")
-    root = session_root or os.getenv("WINEBOT_SESSION_ROOT") or DEFAULT_SESSION_ROOT
+    root = session_root or config.WINEBOT_SESSION_ROOT
     safe_root = validate_path(root)
     return os.path.join(safe_root, session_id)
 
@@ -365,8 +367,11 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
             "fps": 30,
             "git_sha": None,
         }
-        with open(os.path.join(session_dir, "session.json"), "w") as f:
+        manifest_path = os.path.join(session_dir, "session.json")
+        tmp_path = f"{manifest_path}.tmp"
+        with open(tmp_path, "w") as f:
             json.dump(manifest, f, indent=2)
+        os.rename(tmp_path, manifest_path)
     except Exception:
         pass
 
@@ -404,7 +409,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
     if session_dir and os.path.isdir(session_dir):
         ensure_session_subdirs(session_dir)
         return session_dir
-    root = session_root or os.getenv("WINEBOT_SESSION_ROOT") or DEFAULT_SESSION_ROOT
+    root = session_root or config.WINEBOT_SESSION_ROOT
     safe_root = validate_path(root)
     os.makedirs(safe_root, exist_ok=True)
     import uuid
@@ -484,6 +489,10 @@ def read_session_state(session_dir: str) -> Optional[str]:
 
 def append_trace_event(path: str, payload: Dict[str, Any]) -> None:
     try:
+        # Prevent unbounded log growth per session
+        if os.path.exists(path) and os.path.getsize(path) > (config.WINEBOT_MAX_LOG_SIZE_MB * 1024 * 1024):
+            return
+
         payload_with_version = dict(payload)
         payload_with_version.setdefault("schema_version", EVENT_SCHEMA_VERSION)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -513,6 +522,40 @@ def append_input_event(session_dir: Optional[str], event: Dict[str, Any]) -> Non
     payload.setdefault("timestamp_epoch_ms", int(time.time() * 1000))
     payload.setdefault("session_id", session_id_from_dir(session_dir))
     append_trace_event(input_trace_log_path(session_dir), payload)
+
+
+def read_file_tail_lines(path: str, limit: int = 200, chunk_size: int = 4096) -> List[str]:
+    """Efficiently read the last N lines of a file by seeking backwards."""
+    if not os.path.exists(path):
+        return []
+    
+    lines: List[str] = []
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        file_size = f.tell()
+        buffer = b""
+        pointer = file_size
+        
+        while len(lines) <= limit and pointer > 0:
+            step = min(pointer, chunk_size)
+            pointer -= step
+            f.seek(pointer)
+            chunk = f.read(step)
+            buffer = chunk + buffer
+            
+            # Count lines in current buffer
+            current_lines = buffer.split(b"\n")
+            if len(current_lines) > limit + 1:
+                # We found enough lines
+                lines = [line.decode("utf-8", errors="replace") for line in current_lines[-(limit+1):]]
+                break
+            
+            if pointer == 0:
+                # Reached start of file
+                lines = [line.decode("utf-8", errors="replace") for line in current_lines]
+                break
+                
+    return [line for line in lines if line.strip()][-limit:]
 
 
 def read_file_tail(path: str, max_bytes: int = 4096) -> str:
@@ -572,13 +615,26 @@ def write_recorder_state(session_dir: str, state: str) -> None:
         pass
 
 
+async def follow_file(path: str, sleep_sec: float = 0.5):
+    """Asynchronous generator that yields new lines appended to a file."""
+    with open(path, "r", errors="replace") as f:
+        # Go to the end of the file
+        f.seek(0, os.SEEK_END)
+        while True:
+            line = f.readline()
+            if not line:
+                await asyncio.sleep(sleep_sec)
+                continue
+            yield line.rstrip("\n")
+
+
 def cleanup_old_sessions(
     max_sessions: Optional[int] = None, ttl_days: Optional[int] = None
 ) -> int:
     """Delete old sessions based on count and/or age."""
     import shutil
 
-    root = os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT)
+    root = config.WINEBOT_SESSION_ROOT
     if not os.path.isdir(root):
         return 0
 
