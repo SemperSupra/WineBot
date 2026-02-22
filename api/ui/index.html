@@ -1309,6 +1309,20 @@
       recordingEnabled: null
     };
 
+    // Auto-consume token from query parameters (for E2E tests and easy sharing)
+    function consumeUrlToken() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      if (token) {
+        localStorage.setItem(API_TOKEN_KEY, token);
+        // Clean URL to avoid leaking token in history
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        showToast("API Token applied from URL", "info");
+      }
+    }
+    consumeUrlToken();
+
     function getToken() {
       return localStorage.getItem(API_TOKEN_KEY) || "";
     }
