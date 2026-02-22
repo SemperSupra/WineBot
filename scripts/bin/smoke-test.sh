@@ -287,14 +287,22 @@ if [ "$include_tests" = "1" ] || [ "$full" = "1" ]; then
     compose_up interactive winebot-interactive
     wait_for_windows interactive winebot-interactive
   fi
-  "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm test-runner
+  # Auto-discover token if generated
+  TOKEN_ARG=()
+  if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then
+      export API_TOKEN=$(cat /tmp/winebot_api_token | tr -d '[:space:]')
+  fi
+  if [ -n "${API_TOKEN:-}" ]; then
+      TOKEN_ARG=(-e "API_TOKEN=$API_TOKEN")
+  fi
+  "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm "${TOKEN_ARG[@]}" test-runner
 fi
 
 if [ "$full" = "1" ] || [ -n "$phase" ]; then
   target_phase="${phase:-all}"
   log "Running internal diagnostics (Phase: $target_phase)..."
   # Auto-discover token if generated
-  token_logic='if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then export API_TOKEN=$(cat /tmp/winebot_api_token); fi'
+  token_logic='if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then export API_TOKEN=$(cat /tmp/winebot_api_token | tr -d "[:space:]"); fi'
   if ! compose_exec headless winebot "${token_logic} && /scripts/diagnostics/diagnose-master.sh $target_phase"; then
       log "Internal diagnostics failed. Showing container logs:"
       "${compose_cmd[@]}" -f "$compose_file" --profile headless logs winebot
