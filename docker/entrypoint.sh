@@ -22,7 +22,7 @@ if [ -f /tmp/entrypoint.user.pid ]; then
 else
     existing_pid=""
 fi
-if [ -n "$existing_pid" ] && ps -p "$existing_pid" > /dev/null 2>&1; then
+if [ -n "$existing_pid" ] && [ "$existing_pid" != "$$" ] && ps -p "$existing_pid" > /dev/null 2>&1; then
     echo "--> Entrypoint already running for user $(id -un) (PID ${existing_pid})."
     if [ $# -gt 0 ]; then
         exec "$@"
@@ -50,7 +50,7 @@ if [ -z "${WINEBOT_LOG_LEVEL:-}" ]; then
     case "$BUILD_INTENT" in
         dev) export WINEBOT_LOG_LEVEL="DEBUG" ;;
         test) export WINEBOT_LOG_LEVEL="INFO" ;;
-        *) export WINEBOT_LOG_LEVEL="WARN" ;;
+        *) export WINEBOT_LOG_LEVEL="WARNING" ;;
     esac
 fi
 

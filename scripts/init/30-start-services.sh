@@ -54,9 +54,18 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
         echo "--> [SECURITY] No API_TOKEN provided. Generated random token: ${API_TOKEN}"
         echo "--> [SECURITY] Use this token in 'X-API-Key' header for all requests."
         
-        # Persist for internal tool discovery (use /tmp as /run is root-only)
+    fi
+    # Persist for internal tool discovery (use /tmp as /run is root-only)
+    if [ -n "${API_TOKEN:-}" ]; then
         echo -n "$API_TOKEN" > /tmp/winebot_api_token
         chmod 600 /tmp/winebot_api_token
+        if [ -d /winebot-shared ]; then
+            if echo -n "$API_TOKEN" > /winebot-shared/winebot_api_token; then
+                chmod 600 /winebot-shared/winebot_api_token || true
+            else
+                echo "--> [WARN] Could not write /winebot-shared/winebot_api_token; continuing with /tmp token only." >&2
+            fi
+        fi
     fi
     export DISPLAY="${DISPLAY}"
     export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
@@ -109,4 +118,3 @@ if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
 else
     echo "--> Desktop Supervisor disabled (WINEBOT_SUPERVISE_EXPLORER=0)."
 fi
-

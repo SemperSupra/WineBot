@@ -13,7 +13,7 @@ if [ "$(id -u)" = "0" ]; then
     fi
 
     # Ensure critical directories are owned by the user
-    mkdir -p "$WINEPREFIX" "/home/winebot/.cache" "/artifacts"
+    mkdir -p "$WINEPREFIX" "/home/winebot/.cache" "/artifacts" "/winebot-shared"
     
     # Always re-assert ownership and permissions if running as root
     echo "--> Preparing environment for winebot user (UID: $USER_ID)..."
@@ -21,7 +21,7 @@ if [ "$(id -u)" = "0" ]; then
     # Critical: Clean up any stale root-owned wineserver sockets
     rm -rf /tmp/.wine-$(id -u winebot) 2>/dev/null || true
 
-    chown -R winebot:winebot "$WINEPREFIX" "/home/winebot" "/artifacts" || echo "Warning: chown failed"
+    chown -R winebot:winebot "$WINEPREFIX" "/home/winebot" "/artifacts" "/winebot-shared" || echo "Warning: chown failed"
     chmod 1777 /tmp
     chmod 777 "$WINEPREFIX"
 
