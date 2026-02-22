@@ -175,7 +175,7 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 async def verify_token_logic(request: Request, api_key: str = Security(api_key_header)):
-    if request.url.path.startswith("/ui") or request.url.path.startswith("/health"):
+    if request.url.path == "/" or request.url.path.startswith("/ui") or request.url.path.startswith("/health"):
         return api_key
     
     expected_token = config.API_TOKEN
@@ -223,6 +223,12 @@ def handshake():
             "efficient_tail_read"
         ]
     }
+
+
+@app.get("/")
+def root_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/ui/")
 
 
 @app.get("/ui/")
