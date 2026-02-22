@@ -226,11 +226,6 @@ def handshake():
 
 
 @app.get("/")
-def root_redirect():
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/ui/")
-
-
 @app.get("/ui/")
 @app.get("/ui")
 def dashboard():
