@@ -225,12 +225,20 @@ def handshake():
     }
 
 
+@app.get("/ui/")
 @app.get("/ui")
-def dashboard_redirect():
-    from fastapi.responses import RedirectResponse
+def dashboard():
+    UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
+    UI_INDEX = os.path.join(UI_DIR, "index.html")
+    if not os.path.exists(UI_INDEX):
+        raise HTTPException(status_code=404, detail="Dashboard not available")
 
-    return RedirectResponse(url="/ui/")
-
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+    return FileResponse(UI_INDEX, media_type="text/html", headers=headers)
 
 
 @app.get("/logs/tail")
