@@ -54,10 +54,9 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
         echo "--> [SECURITY] No API_TOKEN provided. Generated random token: ${API_TOKEN}"
         echo "--> [SECURITY] Use this token in 'X-API-Key' header for all requests."
         
-        # Persist for internal tool discovery
-        mkdir -p /run/winebot
-        echo "$API_TOKEN" > /run/winebot/api_token
-        chmod 600 /run/winebot/api_token
+        # Persist for internal tool discovery (use /tmp as /run is root-only)
+        echo "$API_TOKEN" > /tmp/winebot_api_token
+        chmod 600 /tmp/winebot_api_token
     fi
     export DISPLAY="${DISPLAY}"
     export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"

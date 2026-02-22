@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${WINEBOT_API_URL:-${WINEBOT_BASE_URL:-${API_URL:-http://localhost:8000}}}"
 API_TOKEN="${WINEBOT_API_TOKEN:-${API_TOKEN:-}}"
-if [ -z "$API_TOKEN" ] && [ -f /run/winebot/api_token ]; then
-    API_TOKEN=$(cat /run/winebot/api_token)
+if [ -z "$API_TOKEN" ] && [ -f /tmp/winebot_api_token ]; then
+    API_TOKEN=$(cat /tmp/winebot_api_token)
 fi
 IDEMPOTENT_DEFAULT="${WINEBOT_IDEMPOTENT:-1}"
 CACHE_FILE="${WINEBOT_IDEMPOTENT_CACHE:-/tmp/winebotctl-idempotent.json}"
