@@ -20,12 +20,18 @@ def auth_page(page: Page):
     if token:
         url += f"?token={token}"
     
-    log_msg = f"Navigating to {url.replace(token, 'REDACTED') if token else url}"
-    print(f"--> [DEBUG] {log_msg}")
+    # Trace the constructed URL (redacting token)
+    safe_url = url
+    if token:
+        safe_url = url.replace(token, "REDACTED")
+    print(f"--> [DEBUG] get_token() returned length: {len(token) if token else 0}")
+    print(f"--> [DEBUG] auth_page: Navigating to {safe_url}")
     
     page.goto(url)
     # Wait for the explicit 'ready' marker added to index.html
+    print("--> [DEBUG] auth_page: Waiting for #app-ready-marker...")
     page.wait_for_selector("#app-ready-marker", timeout=30000)
+    print("--> [DEBUG] auth_page: Marker found.")
     # Give it one more second for DOM stabilization
     time.sleep(1)
 
