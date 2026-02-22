@@ -49,30 +49,34 @@ sleep 1
 
 # Check if prefix needs population from template
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
-    if [ -d "/opt/winebot/prefix-template" ]; then
+    if [ -d "/opt/winebot/prefix-template" ] && [ -f "/opt/winebot/prefix-template/system.reg" ]; then
         echo "--> Populating WINEPREFIX from template..."
-        cp -rp /opt/winebot/prefix-template/. "$WINEPREFIX/"
+        # Use -a to preserve all attributes and recurse properly
+        cp -a /opt/winebot/prefix-template/. "$WINEPREFIX/"
     else
-        echo "--> Initializing new WINEPREFIX (Template missing)..."
+        echo "--> Initializing new WINEPREFIX (Template missing or invalid)..."
         export WINEDLLOVERRIDES="mscoree,mshtml="
         wineboot -u >/dev/null 2>&1
         wineserver -w
     fi
 fi
 
-# Apply Theme & Settings (Always, to ensure consistency)
+echo "--> Ensuring wineserver is running..."
+wineserver -p >/dev/null 2>&1 &
+wineserver -w
+echo "--> wineserver is ready."
+sleep 2
+
+# Apply Theme & Settings (Always verify to ensure correctness)
 echo "--> Applying WineBot optimizations..."
-wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f >/dev/null 2>&1
-wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f >/dev/null 2>&1
+wine reg add "HKEY_CURRENT_USER\\Software\\Wine\\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f >/dev/null 2>&1
+wine reg add "HKEY_CURRENT_USER\\Software\\Wine\\X11 Driver" /v Managed /t REG_SZ /d "Y" /f >/dev/null 2>&1
 if [ -x "/scripts/setup/install-theme.sh" ]; then
     /scripts/setup/install-theme.sh >/dev/null 2>&1
 fi
 wineserver -k
 wineserver -w
 
-echo "--> Ensuring wineserver is running..."
-wineserver -p >/dev/null 2>&1 &
-wineserver -w
 echo "--> wineserver is ready."
 sleep 2
 

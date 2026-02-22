@@ -50,6 +50,7 @@ RUN chmod +x /scripts/setup/install-theme.sh \
     && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f \
     && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f \
     && wineserver -k \
+    && sleep 5 \
     && kill $XVFB_PID || true \
     && rm -rf /tmp/.X95-lock /tmp/.X11-unix/X95
 

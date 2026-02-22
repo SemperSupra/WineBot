@@ -96,8 +96,7 @@ EXPOSE 8000
 
 # --- Stage 2.7: Base Ready (Standard foundation with prefix) ---
 FROM base-logic AS base-ready
-# Copy the template from the base image itself (it's pre-warmed there)
-COPY --from=base-system --chown=winebot:winebot /opt/winebot/prefix-template /opt/winebot/prefix-template
+# Prefix template is already present in /opt/winebot/prefix-template from the BASE_IMAGE
 
 # --- Stage 3: Base Interactive ---
 FROM base-ready AS base-interactive
