@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # diagnose-wine-registry.sh: Verify integrity of core WineBot settings
 
@@ -17,17 +17,25 @@ check_key() {
     local value="$2"
     local expected="$3"
     
-    log "Checking ${key}\\\\${value}..."
-    # We use a temp file to avoid pipe issues with non-zero exit codes from grep
-    local actual="MISSING"
-    if wine reg query "$key" /v "$value" > /tmp/reg_out 2>&1; then
-        actual=$(grep "$value" /tmp/reg_out | awk '{print $NF}' | tr -d '\r' || echo "MISSING")
-    fi
+    log "Checking Key: $key | Value: $value..."
     
-    if [[ "$actual" == *"$expected"* ]]; then
+    # Run query and capture output
+    if ! wine reg query "$key" /v "$value" > /tmp/reg_out 2>&1; then
+        log "  [ERROR] reg query failed for $value"
+        log "  [DEBUG] Output: $(cat /tmp/reg_out | tr '\n' ' ')"
+        ERRORS=$((ERRORS + 1))
+        return
+    fi
+
+    # Extract value - handle regression where output format might vary
+    # Example: "    ThemeApplied    REG_SZ    1"
+    actual=$(grep "$value" /tmp/reg_out | awk '{print $NF}' | tr -d '\r' | xargs || echo "EMPTY")
+    
+    if [ "$actual" = "$expected" ]; then
         log "  [OK] Found expected value: $expected"
     else
-        log "  [ERROR] Mismatch! Expected: $expected, Actual: $actual"
+        log "  [ERROR] Mismatch! Expected: '$expected', Actual: '$actual'"
+        log "  [DEBUG] Full line: $(grep "$value" /tmp/reg_out | tr '\n' ' ')"
         ERRORS=$((ERRORS + 1))
     fi
 }
