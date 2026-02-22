@@ -15,12 +15,16 @@ def get_token():
 
 def auth_page(page: Page):
     token = get_token()
+    # Go to a safe page to set localStorage
+    page.goto(f"{API_URL}/health")
     if token:
-        # Inject token into localStorage before page load
-        # We must go to the domain first to set localStorage
-        page.goto(f"{API_URL}/health")
         page.evaluate(f"localStorage.setItem('api_token', '{token}')")
+    
+    # Now go to UI and wait for the app to initialize
     page.goto(f"{API_URL}/ui/")
+    page.wait_for_load_state("networkidle")
+    # Wait for the health title to appear as a proxy for app initialization
+    page.wait_for_selector("#health-summary-title", timeout=30000)
 
 def test_toast_notifications(page: Page):
     """Tier 1: Verify that UI actions trigger visible toast notifications."""
