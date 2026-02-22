@@ -15,7 +15,7 @@ log() {
 
 # Auto-discover token if generated
 if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then
-    export API_TOKEN=$(cat /tmp/winebot_api_token)
+    export API_TOKEN=$(cat /tmp/winebot_api_token | tr -d '[:space:]')
 fi
 
 PHASE="${1:-all}"
@@ -23,8 +23,12 @@ PHASE="${1:-all}"
 wait_for_api_ready() {
     local timeout="${1:-120}"
     log "Waiting for API to be ready (up to ${timeout}s)..."
+    local headers=()
+    if [ -n "${API_TOKEN:-}" ]; then
+        headers+=(-H "X-API-Key: $API_TOKEN")
+    fi
     for i in $(seq 1 "$timeout"); do
-        if curl -s http://localhost:8000/health > /dev/null; then
+        if curl -s "${headers[@]}" http://localhost:8000/health > /dev/null; then
             log "API is ready."
             return 0
         fi
@@ -49,12 +53,21 @@ wait_for_api_ready() {
     done
 }
 
+# Helper for authenticated API requests
+api_curl() {
+    local headers=()
+    if [ -n "${API_TOKEN:-}" ]; then
+        headers+=(-H "X-API-Key: $API_TOKEN")
+    fi
+    curl -s "${headers[@]}" "$@"
+}
+
 # 1. Environment & API Health
 if [[ "$PHASE" == "all" || "$PHASE" == "health" ]]; then
     log "=== PHASE 1: Environment & API Health ==="
     wait_for_api_ready 120 || exit 1
 
-    if ! curl -s --fail http://localhost:8000/health/environment | python3 -m json.tool > "$LOG_DIR/env_health.json"; then
+    if ! api_curl --fail http://localhost:8000/health/environment | python3 -m json.tool > "$LOG_DIR/env_health.json"; then
         log "ERROR: Health check failed. API might be down or environment broken."
         exit 1
     fi
@@ -75,12 +88,12 @@ if [[ "$PHASE" != "health" ]]; then
     wait_for_api_ready 120 || exit 1
     log "=== SETUP: Initializing Tracing & Recording ==="
     # Grant control to agent for the duration of diagnostics
-    curl -s -X POST http://localhost:8000/sessions/unknown/control/grant -H "Content-Type: application/json" -d '{"lease_seconds": 3600}' > /dev/null
+    api_curl -X POST http://localhost:8000/sessions/unknown/control/grant -H "Content-Type: application/json" -d '{"lease_seconds": 3600}' > /dev/null
     
-    curl -s -X POST http://localhost:8000/input/trace/start > /dev/null
-    curl -s -X POST http://localhost:8000/input/trace/windows/start > /dev/null
+    api_curl -X POST http://localhost:8000/input/trace/start > /dev/null
+    api_curl -X POST http://localhost:8000/input/trace/windows/start > /dev/null
     if [ "${WINEBOT_RECORD:-0}" = "1" ]; then
-        curl -s -X POST http://localhost:8000/recording/start > /dev/null
+        api_curl -X POST http://localhost:8000/recording/start > /dev/null
         log "Recording active."
     fi
     log "Waiting for tracers to initialize..."
@@ -139,8 +152,8 @@ if [[ "$PHASE" == "all" || "$PHASE" == "trace" ]]; then
     log "=== PHASE 5: Trace Verification ==="
     log "Running Coordinate Alignment Check..."
     log "Trace Status:"
-    curl -s http://localhost:8000/input/trace/status | python3 -m json.tool || true
-    curl -s http://localhost:8000/input/trace/windows/status | python3 -m json.tool || true
+    api_curl http://localhost:8000/input/trace/status | python3 -m json.tool || true
+    api_curl http://localhost:8000/input/trace/windows/status | python3 -m json.tool || true
     
     # Click 4 corners + center
     TEST_POINTS=("100,100" "1180,100" "100,620" "1180,620" "640,360")
@@ -148,7 +161,7 @@ if [[ "$PHASE" == "all" || "$PHASE" == "trace" ]]; then
         X=${pt%,*}
         Y=${pt#*,}
         log "Testing click at $X,$Y..."
-        curl -s -X POST http://localhost:8000/input/mouse/click -H "Content-Type: application/json" -d "{\"x\": $X, \"y\": $Y}" > /dev/null
+        api_curl -X POST http://localhost:8000/input/mouse/click -H "Content-Type: application/json" -d "{\"x\": $X, \"y\": $Y}" > /dev/null
         sleep 1
     done
 
@@ -158,7 +171,7 @@ if [[ "$PHASE" == "all" || "$PHASE" == "trace" ]]; then
     check_trace() {
         local layer="$1"
         local count
-        count="$(curl -s "http://localhost:8000/input/events?source=${layer}&since_epoch_ms=${T0}&limit=50" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('events', [])))" 2>/dev/null || echo 0)"
+        count="$(api_curl "http://localhost:8000/input/events?source=${layer}&since_epoch_ms=${T0}&limit=50" | python3 -c "import sys, json; print(len(json.load(sys.stdin).get('events', [])))" 2>/dev/null || echo 0)"
             if [ "$count" -gt 0 ]; then
                 log "Trace layer '$layer': OK ($count events)"
             else

@@ -55,7 +55,7 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
         echo "--> [SECURITY] Use this token in 'X-API-Key' header for all requests."
         
         # Persist for internal tool discovery (use /tmp as /run is root-only)
-        echo "$API_TOKEN" > /tmp/winebot_api_token
+        echo -n "$API_TOKEN" > /tmp/winebot_api_token
         chmod 600 /tmp/winebot_api_token
     fi
     export DISPLAY="${DISPLAY}"
