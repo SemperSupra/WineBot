@@ -15,15 +15,24 @@ def get_token():
 
 def auth_page(page: Page):
     token = get_token()
-    # Use URL parameter for authentication (dashboard will persist it)
+    # Go directly to dashboard with token
     url = f"{API_URL}/ui/"
     if token:
         url += f"?token={token}"
     
+    log_msg = f"Navigating to {url.replace(token, 'REDACTED') if token else url}"
+    print(f"--> [DEBUG] {log_msg}")
+    
     page.goto(url)
-    page.wait_for_load_state("networkidle")
-    # Wait for the health title to appear as a proxy for app initialization
-    page.wait_for_selector("#health-summary-title", timeout=30000)
+    # Wait for the app to be 'mounted' - health summary title is a good proxy
+    try:
+        page.wait_for_selector("#health-summary-title", timeout=15000)
+    except Exception:
+        # Fallback: maybe it's already there or the token logic caused a redirect
+        # Check if we are still at the right base
+        if not page.url.startswith(f"{API_URL}/ui"):
+             page.goto(f"{API_URL}/ui/")
+        page.wait_for_selector("#health-summary-title", timeout=15000)
 
 def test_toast_notifications(page: Page):
     """Tier 1: Verify that UI actions trigger visible toast notifications."""
