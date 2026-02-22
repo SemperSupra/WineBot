@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, Optional, List
+from typing import Optional
 from pydantic import BaseModel, Field, ValidationError
 
 class WineBotConfig(BaseModel):
@@ -39,6 +39,21 @@ class WineBotConfig(BaseModel):
     RECORDER_CRF: int = 23
     RECORDER_PIX_FMT: str = "yuv420p"
 
+def _get_int(key: str, default: int) -> int:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+def _get_bool(key: str, default: bool) -> bool:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    return val.lower() in ("1", "true", "yes")
+
 def validate_config() -> WineBotConfig:
     """Validate environment variables against the schema."""
     try:
@@ -46,22 +61,22 @@ def validate_config() -> WineBotConfig:
         data = {
             "API_TOKEN": os.getenv("API_TOKEN"),
             "WINEBOT_LOG_LEVEL": os.getenv("WINEBOT_LOG_LEVEL", "INFO"),
-            "WINEBOT_COMMAND_TIMEOUT": int(os.getenv("WINEBOT_COMMAND_TIMEOUT", "5")),
-            "API_PORT": int(os.getenv("API_PORT", "8000")),
-            "WINEBOT_DISCOVERY_ALLOW_MULTIPLE": os.getenv("WINEBOT_DISCOVERY_ALLOW_MULTIPLE", "1") == "1",
+            "WINEBOT_COMMAND_TIMEOUT": _get_int("WINEBOT_COMMAND_TIMEOUT", 5),
+            "API_PORT": _get_int("API_PORT", 8000),
+            "WINEBOT_DISCOVERY_ALLOW_MULTIPLE": _get_bool("WINEBOT_DISCOVERY_ALLOW_MULTIPLE", True),
             "WINEBOT_SESSION_ROOT": os.getenv("WINEBOT_SESSION_ROOT", "/artifacts/sessions"),
-            "WINEBOT_MAX_SESSIONS": int(os.getenv("WINEBOT_MAX_SESSIONS")) if os.getenv("WINEBOT_MAX_SESSIONS") else None,
-            "WINEBOT_SESSION_TTL_DAYS": int(os.getenv("WINEBOT_SESSION_TTL_DAYS")) if os.getenv("WINEBOT_SESSION_TTL_DAYS") else None,
-            "WINEBOT_MAX_LOG_SIZE_MB": int(os.getenv("WINEBOT_MAX_LOG_SIZE_MB", "500")),
-            "WINEBOT_MAX_SCREENSHOTS_PER_SESSION": int(os.getenv("WINEBOT_MAX_SCREENSHOTS_PER_SESSION", "1000")),
-            "WINEBOT_MAX_TRACE_LOAD_MB": int(os.getenv("WINEBOT_MAX_TRACE_LOAD_MB", "100")),
-            "PROCESS_STORE_CAP": int(os.getenv("WINEBOT_MAX_DETACHED_PROCESSES", "500")),
-            "WINEBOT_INACTIVITY_PAUSE_SECONDS": int(os.getenv("WINEBOT_INACTIVITY_PAUSE_SECONDS", "0")),
-            "WINEBOT_MONITOR_HEARTBEAT_SECONDS": int(os.getenv("WINEBOT_MONITOR_HEARTBEAT_SECONDS", "5")),
+            "WINEBOT_MAX_SESSIONS": _get_int("WINEBOT_MAX_SESSIONS", 0) or None,
+            "WINEBOT_SESSION_TTL_DAYS": _get_int("WINEBOT_SESSION_TTL_DAYS", 0) or None,
+            "WINEBOT_MAX_LOG_SIZE_MB": _get_int("WINEBOT_MAX_LOG_SIZE_MB", 500),
+            "WINEBOT_MAX_SCREENSHOTS_PER_SESSION": _get_int("WINEBOT_MAX_SCREENSHOTS_PER_SESSION", 1000),
+            "WINEBOT_MAX_TRACE_LOAD_MB": _get_int("WINEBOT_MAX_TRACE_LOAD_MB", 100),
+            "PROCESS_STORE_CAP": _get_int("WINEBOT_MAX_DETACHED_PROCESSES", 500),
+            "WINEBOT_INACTIVITY_PAUSE_SECONDS": _get_int("WINEBOT_INACTIVITY_PAUSE_SECONDS", 0),
+            "WINEBOT_MONITOR_HEARTBEAT_SECONDS": _get_int("WINEBOT_MONITOR_HEARTBEAT_SECONDS", 5),
             "DISPLAY": os.getenv("DISPLAY", ":99"),
             "SCREEN_RESOLUTION": os.getenv("SCREEN", "1280x720x24"),
         }
-        return WineBotConfig(**data)
+        return WineBotConfig(**(data))  # type: ignore[arg-type]
     except (ValidationError, ValueError) as e:
         print(f"--> [FATAL] Configuration validation failed: {e}")
         import sys

@@ -13,6 +13,11 @@ log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
+# Auto-discover token if generated
+if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then
+    export API_TOKEN=$(cat /tmp/winebot_api_token)
+fi
+
 PHASE="${1:-all}"
 
 wait_for_api_ready() {

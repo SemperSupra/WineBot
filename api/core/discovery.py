@@ -2,7 +2,6 @@ import socket
 import logging
 import time
 import threading
-import os
 from typing import Optional, Dict, Any
 from zeroconf import (
     IPVersion,
