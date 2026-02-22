@@ -24,15 +24,10 @@ def auth_page(page: Page):
     print(f"--> [DEBUG] {log_msg}")
     
     page.goto(url)
-    # Wait for the app to be 'mounted' - health summary title is a good proxy
-    try:
-        page.wait_for_selector("#health-summary-title", timeout=15000)
-    except Exception:
-        # Fallback: maybe it's already there or the token logic caused a redirect
-        # Check if we are still at the right base
-        if not page.url.startswith(f"{API_URL}/ui"):
-             page.goto(f"{API_URL}/ui/")
-        page.wait_for_selector("#health-summary-title", timeout=15000)
+    # Wait for the explicit 'ready' marker added to index.html
+    page.wait_for_selector("#app-ready-marker", timeout=30000)
+    # Give it one more second for DOM stabilization
+    time.sleep(1)
 
 def test_toast_notifications(page: Page):
     """Tier 1: Verify that UI actions trigger visible toast notifications."""

@@ -2638,6 +2638,12 @@
 
     updateVersion();
     runPoll();
+
+    // Add a marker for E2E tests to know the SPA is bootstrapped
+    const marker = document.createElement("div");
+    marker.id = "app-ready-marker";
+    marker.style.display = "none";
+    document.body.appendChild(marker);
   </script>
 </body>
 </html>
