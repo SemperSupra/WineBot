@@ -109,6 +109,7 @@ services:
     volumes:
       - ..:/work
       - ../artifacts:/output
+      - /tmp:/tmp
     command: >
       bash -c "sleep 15 && /work/scripts/ci/test.sh && pytest -v -s /work/tests/e2e"
 

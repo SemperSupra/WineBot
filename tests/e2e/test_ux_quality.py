@@ -1,13 +1,30 @@
+import os
 import requests
 import time
 from playwright.sync_api import Page, expect
 
 API_URL = "http://winebot-interactive:8000"
 
+def get_token():
+    # Attempt to read token from shared volume if present
+    token_path = "/tmp/winebot_api_token"
+    if os.path.exists(token_path):
+        with open(token_path, "r") as f:
+            return f.read().strip()
+    return os.getenv("API_TOKEN", "")
+
+def auth_page(page: Page):
+    token = get_token()
+    if token:
+        # Inject token into localStorage before page load
+        # We must go to the domain first to set localStorage
+        page.goto(f"{API_URL}/health")
+        page.evaluate(f"localStorage.setItem('api_token', '{token}')")
+    page.goto(f"{API_URL}/ui/")
 
 def test_toast_notifications(page: Page):
     """Tier 1: Verify that UI actions trigger visible toast notifications."""
-    page.goto(f"{API_URL}/ui/")
+    auth_page(page)
 
     # Enable Dev Mode
     page.click(".mode-toggle", force=True)
@@ -26,7 +43,9 @@ def test_toast_notifications(page: Page):
 
 def test_health_summary_sync(page: Page):
     """Tier 1: Verify that the UI synchronizes with backend process failures."""
-    page.goto(f"{API_URL}/ui/")
+    auth_page(page)
+    token = get_token()
+    headers = {"X-API-Key": token} if token else {}
 
     # Verify initial state is healthy
     summary_title = page.locator("#health-summary-title")
@@ -36,6 +55,7 @@ def test_health_summary_sync(page: Page):
     requests.post(
         f"{API_URL}/apps/run",
         json={"path": "pkill", "args": "-f openbox", "detach": False},
+        headers=headers
     )
 
     # Wait for the next polling cycle (5s) + some buffer
@@ -43,7 +63,7 @@ def test_health_summary_sync(page: Page):
     expect(page.locator("#health-summary-detail")).to_contain_text("openbox")
 
     # Restore state for subsequent tests
-    requests.post(f"{API_URL}/apps/run", json={"path": "openbox", "detach": True})
+    requests.post(f"{API_URL}/apps/run", json={"path": "openbox", "detach": True}, headers=headers)
     time.sleep(5) # Wait for openbox to start
     expect(summary_title).to_have_text("System Operational", timeout=15000)
 
@@ -51,7 +71,7 @@ def test_health_summary_sync(page: Page):
 def test_responsive_mobile_drawer(page: Page):
     """Tier 1: Verify that the control panel transitions to a drawer on mobile."""
     page.set_viewport_size({"width": 375, "height": 667})
-    page.goto(f"{API_URL}/ui/")
+    auth_page(page)
 
     panel = page.locator("#control-panel")
     menu_btn = page.locator("#mobile-menu-toggle")
@@ -73,7 +93,7 @@ def test_responsive_mobile_drawer(page: Page):
 def test_visual_baseline(page: Page):
     """Tier 2: Capture visual snapshots for regression testing."""
     page.set_viewport_size({"width": 1280, "height": 800})
-    page.goto(f"{API_URL}/ui/")
+    auth_page(page)
 
     # Enable Dev Mode for a full visual audit
     page.click(".mode-toggle", force=True)
