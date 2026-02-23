@@ -1,24 +1,13 @@
-import os
-import requests
 import time
 from playwright.sync_api import Page, expect
+from _auth import get_token, ui_url, ensure_agent_control
+from _harness import api_post, wait_badge_text, wait_poll_interval
 
-API_URL = "http://winebot-interactive:8000"
-
-def get_token():
-    # Attempt to read token from shared volume if present
-    token_path = "/tmp/winebot_api_token"
-    if os.path.exists(token_path):
-        with open(token_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("API_TOKEN", "")
 
 def auth_page(page: Page):
     token = get_token()
     # Go directly to dashboard with token
-    url = f"{API_URL}/ui/"
-    if token:
-        url += f"?token={token}"
+    url = ui_url()
     
     # Trace the constructed URL (redacting token)
     safe_url = url
@@ -28,9 +17,10 @@ def auth_page(page: Page):
     print(f"--> [DEBUG] auth_page: Navigating to {safe_url}")
     
     page.goto(url)
-    # Wait for the explicit 'ready' marker added to index.html
+    # Wait for the explicit 'ready' marker added to index.html.
+    # It is intentionally hidden (display:none), so we wait for attachment.
     print("--> [DEBUG] auth_page: Waiting for #app-ready-marker...")
-    page.wait_for_selector("#app-ready-marker", timeout=30000)
+    page.wait_for_selector("#app-ready-marker", state="attached", timeout=30000)
     print("--> [DEBUG] auth_page: Marker found.")
     # Give it one more second for DOM stabilization
     time.sleep(1)
@@ -57,27 +47,24 @@ def test_toast_notifications(page: Page):
 def test_health_summary_sync(page: Page):
     """Tier 1: Verify that the UI synchronizes with backend process failures."""
     auth_page(page)
-    token = get_token()
-    headers = {"X-API-Key": token} if token else {}
 
     # Verify initial state is healthy
     summary_title = page.locator("#health-summary-title")
     expect(summary_title).to_have_text("System Operational", timeout=15000)
 
     # Simulate a critical failure by stopping Openbox
-    requests.post(
-        f"{API_URL}/apps/run",
-        json={"path": "pkill", "args": "-f openbox", "detach": False},
-        headers=headers
-    )
+    ensure_agent_control()
+    api_post("/apps/run", {"path": "pkill", "args": "-f openbox", "detach": False})
 
     # Wait for the next polling cycle (5s) + some buffer
+    wait_poll_interval()
     expect(summary_title).to_have_text("System Issues Detected", timeout=20000)
     expect(page.locator("#health-summary-detail")).to_contain_text("openbox")
 
     # Restore state for subsequent tests
-    requests.post(f"{API_URL}/apps/run", json={"path": "openbox", "detach": True}, headers=headers)
-    time.sleep(5) # Wait for openbox to start
+    ensure_agent_control()
+    api_post("/apps/run", {"path": "openbox", "detach": True})
+    wait_badge_text(page, "#badge-openbox", "running", timeout_ms=20000)
     expect(summary_title).to_have_text("System Operational", timeout=15000)
 
 

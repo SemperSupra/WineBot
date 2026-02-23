@@ -1,0 +1,104 @@
+import pytest
+
+from api.core.config_guard import validate_runtime_configuration
+
+
+@pytest.mark.parametrize(
+    "profile,params,expected_ok",
+    [
+        (
+            "human-desktop",
+            dict(
+                runtime_mode="interactive",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="persistent",
+                instance_control_mode="human-only",
+                session_control_mode="human-only",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            True,
+        ),
+        (
+            "assisted-desktop",
+            dict(
+                runtime_mode="interactive",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="persistent",
+                instance_control_mode="hybrid",
+                session_control_mode="hybrid",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            True,
+        ),
+        (
+            "unattended-runner",
+            dict(
+                runtime_mode="headless",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="persistent",
+                instance_control_mode="agent-only",
+                session_control_mode="agent-only",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            True,
+        ),
+        (
+            "ci-oneshot",
+            dict(
+                runtime_mode="headless",
+                instance_lifecycle_mode="oneshot",
+                session_lifecycle_mode="oneshot",
+                instance_control_mode="agent-only",
+                session_control_mode="agent-only",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            True,
+        ),
+        (
+            "support-session",
+            dict(
+                runtime_mode="interactive",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="oneshot",
+                instance_control_mode="hybrid",
+                session_control_mode="hybrid",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            True,
+        ),
+        (
+            "blocked-headless-human-only",
+            dict(
+                runtime_mode="headless",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="persistent",
+                instance_control_mode="human-only",
+                session_control_mode="human-only",
+                build_intent="rel",
+                allow_headless_hybrid=False,
+            ),
+            False,
+        ),
+        (
+            "blocked-rel-runner-interactive",
+            dict(
+                runtime_mode="interactive",
+                instance_lifecycle_mode="persistent",
+                session_lifecycle_mode="persistent",
+                instance_control_mode="agent-only",
+                session_control_mode="agent-only",
+                build_intent="rel-runner",
+                allow_headless_hybrid=False,
+            ),
+            False,
+        ),
+    ],
+)
+def test_profile_matrix(profile, params, expected_ok):
+    errors = validate_runtime_configuration(**params)
+    assert (len(errors) == 0) is expected_ok, f"{profile}: {errors}"

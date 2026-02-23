@@ -38,7 +38,21 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL. |
 | `WINEBOT_COMMAND_TIMEOUT` | `5` | Subprocess execution limit in seconds. |
 | `WINEBOT_SESSION_ROOT` | `/artifacts/sessions` | Path to store session data. |
-| `WINEBOT_INACTIVITY_PAUSE_SECONDS` | `0` (Disabled) | Auto-pause recording when idle. |
+| `WINEBOT_INACTIVITY_PAUSE_SECONDS` | `180` | Auto-pause recording when idle (seconds). |
+| `WINEBOT_INACTIVITY_PAUSE_SECONDS_HUMAN` | (Unset) | Optional human-specific inactivity threshold override. |
+| `WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT` | (Unset) | Optional agent-specific inactivity threshold override. |
+| `WINEBOT_INACTIVITY_RESUME_ACTIVITY_SECONDS` | `10` | Activity recency window for auto-resume. |
+| `WINEBOT_INACTIVITY_MIN_PAUSE_SECONDS` | `15` | Minimum paused dwell time before auto-resume. |
+| `WINEBOT_INACTIVITY_RESUME_COOLDOWN_SECONDS` | `10` | Cooldown after auto-pause before auto-resume is allowed. |
+| `WINEBOT_PERF_METRICS` | `1` | Enable runtime performance metric logging. |
+| `WINEBOT_PERF_METRICS_SAMPLE_SECONDS` | `30` | Monitor sample period for perf metric snapshots. |
+| `WINEBOT_TELEMETRY` | `1` | Master telemetry toggle. |
+| `WINEBOT_TELEMETRY_LEVEL` | `standard` | Telemetry detail mode (`minimal`, `standard`, `debug`). |
+| `WINEBOT_TELEMETRY_FEATURES` | (Unset) | Optional allowlist of features (`recording,input,control,automation,lifecycle,health,runtime`). |
+| `WINEBOT_TELEMETRY_CAPABILITIES` | (Unset) | Optional allowlist of capabilities (comma-separated). |
+| `WINEBOT_TELEMETRY_FEATURE_SETS` | (Unset) | Optional allowlist of feature sets. |
+| `WINEBOT_TELEMETRY_SAMPLE_RATE` | `1.0` | Probability of event emission (0.0-1.0). |
+| `WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN` | `600` | Global telemetry emission cap per minute. |
 
 ## Quickstart
 
@@ -53,6 +67,30 @@ Interactive (VNC + noVNC):
 `docker compose -f compose/docker-compose.yml --profile interactive up --build`
 
 If you only have `docker-compose` v1 installed, replace `docker compose` with `docker-compose`.
+
+Named defaults (recommended):
+
+`./scripts/wb profile list`
+
+`./scripts/wb profile up assisted-desktop --build`
+
+`./scripts/wb profile up unattended-runner --build`
+
+See [docs/default-profiles.md](docs/default-profiles.md) for profile definitions.
+
+Feature/capability commit mapping:
+
+See [docs/feature-capability-commit-map.md](docs/feature-capability-commit-map.md).
+Auto-generate a draft from recent commit subjects:
+`./scripts/wb feature-map 200`
+
+Test capability coverage matrix:
+
+See [docs/test-capability-matrix.md](docs/test-capability-matrix.md).
+
+Generate release/CI trust evidence bundle:
+
+`scripts/ci/generate-trust-pack.sh artifacts/trust-pack`
 
 ## Build Intents
 
@@ -205,6 +243,18 @@ Examples:
 
 `scripts/winebotctl api POST /sessions/suspend --json '{"shutdown_wine":true}'`
 
+Profile and config helpers:
+
+`scripts/winebotctl config profile list`
+
+`scripts/winebotctl config profile set human-desktop`
+
+`scripts/winebotctl config validate`
+
+`scripts/winebotctl config apply`
+
+`scripts/winebotctl perf summary`
+
 ## Take a screenshot (headless)
 
 `docker compose -f compose/docker-compose.yml --profile headless exec --user winebot winebot ./automation/screenshot.sh`
@@ -315,6 +365,8 @@ Use the `Base Image` workflow to publish versioned base images:
 - `policy/visual-style-and-ux-policy.md`
 - `docs/debugging.md`
 - `docs/build-intents.md`
+- `docs/feature-capability-commit-map.md`
+- `docs/feature-capability-commit-map.auto.md` (generated draft)
 - `docs/installing-apps.md`
 - `docs/testing.md`
 - `docs/troubleshooting.md`

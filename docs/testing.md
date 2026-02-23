@@ -2,6 +2,18 @@
 
 WineBot includes a smoke test to validate the display stack, Wine prefix, core API endpoints, and optional VNC/noVNC services.
 
+## Capability Coverage Policy
+
+Coverage is defined in:
+
+`docs/test-capability-matrix.md`
+
+CI verifies the matrix with:
+
+`python3 scripts/ci/verify-capability-matrix.py`
+
+Every new feature/capability set must add or reference automated tests/diagnostics in that matrix.
+
 ## Quick smoke test (headless)
 
 `scripts/smoke-test.sh`
@@ -89,6 +101,14 @@ Use the soak checker to watch for unbounded trace/recording growth and memory dr
 
 `scripts/diagnose-trace-soak.sh`
 
+Tiered soak presets:
+
+`scripts/diagnostics/soak-resource-bounds.sh pr`
+
+`scripts/diagnostics/soak-resource-bounds.sh nightly`
+
+`scripts/diagnostics/soak-resource-bounds.sh weekly`
+
 Useful environment knobs:
 
 - `DURATION_SECONDS` (default `600`)
@@ -120,3 +140,29 @@ Use `scripts/recording-smoke-test.sh` to validate full recording lifecycle behav
   - subtitle cues monotonic
   - annotation marker presence in events + VTT + ASS
   - marker timing alignment between event log and subtitles
+
+## Fault Injection and Recovery
+
+Run deterministic recovery checks:
+
+`scripts/diagnostics/diagnose-fault-injection.sh`
+
+This validates operator-visible recovery after injected Openbox faults.
+
+## Telemetry Contract Validation
+
+Telemetry contract and rate-limit tests:
+
+`pytest -q tests/test_telemetry_contract.py tests/test_command_substrate_telemetry.py tests/test_telemetry.py`
+
+## UX and Accessibility
+
+In addition to existing UI/UX suites, keyboard navigation baseline is validated with:
+
+`pytest -q tests/e2e/test_ux_keyboard_accessibility.py`
+
+## Release Trust Pack
+
+Generate a machine-readable evidence bundle:
+
+`scripts/ci/generate-trust-pack.sh artifacts/trust-pack`

@@ -8,10 +8,13 @@ import platform
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
+from api.core.session_context import set_current_session_dir
 from api.utils.process import pid_running
 from api.utils.config import config
 
 SESSION_FILE: Final[str] = "/tmp/winebot_current_session"
+INSTANCE_STATE_FILE: Final[str] = "/tmp/winebot_instance_state.json"
+INSTANCE_CONTROL_MODE_FILE: Final[str] = "/wineprefix/winebot.instance_control_mode"
 DEFAULT_SESSION_ROOT: Final[str] = "/artifacts/sessions"
 ALLOWED_PREFIXES: Final[List[str]] = [
     "/apps",
@@ -82,6 +85,10 @@ def session_id_from_dir(session_dir: Optional[str]) -> Optional[str]:
 
 def lifecycle_log_path(session_dir: str) -> str:
     return os.path.join(session_dir, "logs", "lifecycle.jsonl")
+
+
+def performance_metrics_log_path(session_dir: str) -> str:
+    return os.path.join(session_dir, "logs", "perf_metrics.jsonl")
 
 
 def append_lifecycle_event(
@@ -352,6 +359,7 @@ def ensure_user_profile(user_dir: str) -> None:
 def write_session_dir(path: str) -> None:
     with open(SESSION_FILE, "w") as f:
         f.write(path)
+    set_current_session_dir(path)
 
 
 def write_session_manifest(session_dir: str, session_id: str) -> None:
@@ -402,13 +410,178 @@ def write_session_state(session_dir: str, state: str) -> None:
         pass
 
 
+def get_instance_mode() -> str:
+    mode = (os.getenv("WINEBOT_INSTANCE_MODE") or "persistent").strip().lower()
+    if mode not in {"persistent", "oneshot"}:
+        return "persistent"
+    return mode
+
+
+def get_instance_control_mode() -> str:
+    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
+    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    mode = ""
+    try:
+        if os.path.exists(INSTANCE_CONTROL_MODE_FILE):
+            with open(INSTANCE_CONTROL_MODE_FILE, "r") as f:
+                mode = f.read().strip().lower()
+    except Exception:
+        mode = ""
+    if not mode:
+        mode = (os.getenv("WINEBOT_INSTANCE_CONTROL_MODE") or default_mode).strip().lower()
+    if mode not in {"human-only", "agent-only", "hybrid"}:
+        return default_mode
+    return mode
+
+
+def write_instance_control_mode(mode: str) -> str:
+    normalized = (mode or "").strip().lower()
+    if normalized not in {"human-only", "agent-only", "hybrid"}:
+        normalized = "hybrid"
+    try:
+        os.makedirs(os.path.dirname(INSTANCE_CONTROL_MODE_FILE), exist_ok=True)
+        with open(INSTANCE_CONTROL_MODE_FILE, "w") as f:
+            f.write(normalized)
+    except Exception:
+        pass
+    return normalized
+
+
+def get_session_mode_default() -> str:
+    mode = (os.getenv("WINEBOT_SESSION_MODE") or "persistent").strip().lower()
+    if mode not in {"persistent", "oneshot"}:
+        return "persistent"
+    return mode
+
+
+def get_session_control_mode_default() -> str:
+    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
+    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    mode = (os.getenv("WINEBOT_SESSION_CONTROL_MODE") or default_mode).strip().lower()
+    if mode not in {"human-only", "agent-only", "hybrid"}:
+        return default_mode
+    return mode
+
+
+def read_instance_state() -> Dict[str, Any]:
+    default_state = {
+        "mode": get_instance_mode(),
+        "state": "unknown",
+        "control_mode": get_instance_control_mode(),
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    try:
+        with open(INSTANCE_STATE_FILE, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return default_state
+        mode = str(data.get("mode", get_instance_mode())).lower()
+        if mode not in {"persistent", "oneshot"}:
+            mode = get_instance_mode()
+        state = str(data.get("state", "unknown"))
+        return {
+            "mode": mode,
+            "state": state,
+            "control_mode": str(data.get("control_mode", get_instance_control_mode())),
+            "timestamp_utc": str(
+                data.get(
+                    "timestamp_utc",
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                )
+            ),
+            "reason": str(data.get("reason", "")),
+        }
+    except Exception:
+        return default_state
+
+
+def write_instance_state(state: str, reason: str = "") -> Dict[str, Any]:
+    payload = {
+        "mode": get_instance_mode(),
+        "control_mode": get_instance_control_mode(),
+        "state": state,
+        "reason": reason,
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_epoch_ms": int(time.time() * 1000),
+    }
+    try:
+        with open(INSTANCE_STATE_FILE, "w") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+    return payload
+
+
+def _session_mode_path(session_dir: str) -> str:
+    return os.path.join(session_dir, "session.mode")
+
+
+def _session_control_mode_path(session_dir: str) -> str:
+    return os.path.join(session_dir, "session.control_mode")
+
+
+def write_session_mode(session_dir: str, mode: str) -> None:
+    normalized = (mode or "").strip().lower()
+    if normalized not in {"persistent", "oneshot"}:
+        normalized = "persistent"
+    try:
+        with open(_session_mode_path(session_dir), "w") as f:
+            f.write(normalized)
+    except Exception:
+        pass
+
+
+def read_session_mode(session_dir: str) -> str:
+    try:
+        with open(_session_mode_path(session_dir), "r") as f:
+            mode = f.read().strip().lower()
+        if mode in {"persistent", "oneshot"}:
+            return mode
+    except Exception:
+        pass
+    return get_session_mode_default()
+
+
+def write_session_control_mode(session_dir: str, mode: str) -> None:
+    normalized = (mode or "").strip().lower()
+    if normalized not in {"human-only", "agent-only", "hybrid"}:
+        normalized = "hybrid"
+    try:
+        with open(_session_control_mode_path(session_dir), "w") as f:
+            f.write(normalized)
+    except Exception:
+        pass
+
+
+def read_session_control_mode(session_dir: str) -> str:
+    try:
+        with open(_session_control_mode_path(session_dir), "r") as f:
+            mode = f.read().strip().lower()
+        if mode in {"human-only", "agent-only", "hybrid"}:
+            return mode
+    except Exception:
+        pass
+    return get_session_control_mode_default()
+
+
 def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
     session_dir = read_session_dir()
     if not isinstance(session_dir, str) or not session_dir:
         session_dir = None
     if session_dir and os.path.isdir(session_dir):
         ensure_session_subdirs(session_dir)
-        return session_dir
+        # Initialize missing mode marker for older sessions.
+        if not os.path.exists(_session_mode_path(session_dir)):
+            write_session_mode(session_dir, get_session_mode_default())
+        if not os.path.exists(_session_control_mode_path(session_dir)):
+            write_session_control_mode(session_dir, get_session_control_mode_default())
+        # In one-shot mode, completed sessions are terminal and should not be reused.
+        if read_session_mode(session_dir) == "oneshot" and read_session_state(session_dir) == "completed":
+            session_dir = None
+        else:
+            return session_dir
+    if session_dir is None:
+        pass
     root = session_root or config.WINEBOT_SESSION_ROOT
     safe_root = validate_path(root)
     os.makedirs(safe_root, exist_ok=True)
@@ -423,6 +596,9 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
         # Initialize structure in temp dir
         ensure_session_subdirs(temp_dir)
         write_session_manifest(temp_dir, session_id)
+        write_session_mode(temp_dir, get_session_mode_default())
+        write_session_control_mode(temp_dir, get_session_control_mode_default())
+        write_session_state(temp_dir, "active")
 
         # Atomic commit
         os.rename(temp_dir, session_dir)
@@ -509,6 +685,30 @@ def append_trace_event(path: str, payload: Dict[str, Any]) -> None:
                 pass
     except Exception:
         pass
+
+
+def append_performance_metric(
+    session_dir: Optional[str],
+    metric: str,
+    value_ms: float,
+    source: str = "api",
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not session_dir:
+        return
+    payload: Dict[str, Any] = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_epoch_ms": int(time.time() * 1000),
+        "event": "performance_metric",
+        "metric": metric,
+        "value_ms": round(float(value_ms), 3),
+        "source": source,
+        "session_id": session_id_from_dir(session_dir),
+    }
+    if extra:
+        payload["extra"] = extra
+    append_trace_event(performance_metrics_log_path(session_dir), payload)
 
 
 def append_input_event(session_dir: Optional[str], event: Dict[str, Any]) -> None:

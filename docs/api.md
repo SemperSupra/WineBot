@@ -79,6 +79,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 | POST | `/recording/pause` | Pause recording session |
 | POST | `/recording/resume` | Resume recording session |
 | POST | `/recording/stop` | Stop recording session |
+| GET | `/recording/perf/summary` | Summarize recording performance metrics |
 | POST | `/run/ahk` | Run AutoHotkey script |
 | POST | `/run/autoit` | Run AutoIt script |
 | POST | `/run/python` | Run Windows Python |
@@ -216,6 +217,14 @@ Resume the active recording session.
 #### `POST /recording/stop`
 Stop the active recording session.
 - **Response:** `{"status":"stopped","session_dir":"..."}`
+
+#### `GET /recording/perf/summary`
+Summarize metrics from `logs/perf_metrics.jsonl` for a session.
+- **Parameters (optional):**
+  - `session_id`
+  - `session_dir`
+  - `session_root` (used with `session_id`)
+- **Response:** includes `metrics` keyed by metric name with percentile stats (`count`, `min_ms`, `mean_ms`, `p50_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `max_ms`).
 
 ### Control
 

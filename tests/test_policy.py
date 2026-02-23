@@ -1,6 +1,7 @@
 import pytest
 import os
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 from api.server import app
 from api.core.broker import broker
 from api.core.models import ControlMode, UserIntent, AgentStatus
@@ -36,14 +37,22 @@ async def test_policy_grant_control(auth_headers):
     await broker.update_session("test-session", interactive=True)
 
     # User grants control
-    response = client.post(
-        "/sessions/test-session/control/grant",
-        json={"lease_seconds": 10},
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["control_mode"] == ControlMode.AGENT
+    with patch("api.routers.control.read_session_dir", return_value="/artifacts/sessions/test-session"):
+        response = client.post(
+            "/sessions/test-session/control/challenge",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        challenge = response.json()["token"]
+
+        response = client.post(
+            "/sessions/test-session/control/grant",
+            json={"lease_seconds": 10, "user_ack": True, "challenge_token": challenge},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["control_mode"] == ControlMode.AGENT
 
     # Agent should now be allowed (mocking the check logic since we can't easily mock async internal calls in TestClient without more setup)
     # But we can verify state
@@ -54,7 +63,8 @@ async def test_policy_grant_control(auth_headers):
 async def test_policy_user_override(auth_headers):
     """Test that user input revokes agent control."""
     await broker.update_session("test-session", interactive=True)
-    await broker.grant_agent(30)
+    challenge = await broker.issue_grant_challenge()
+    await broker.grant_agent(30, user_ack=True, challenge_token=challenge["token"])
 
     assert broker.get_state().control_mode == ControlMode.AGENT
 
@@ -74,13 +84,15 @@ async def test_policy_user_override(auth_headers):
 async def test_policy_stop_now(auth_headers):
     """Test STOP_NOW intent."""
     await broker.update_session("test-session", interactive=True)
-    await broker.grant_agent(30)
+    challenge = await broker.issue_grant_challenge()
+    await broker.grant_agent(30, user_ack=True, challenge_token=challenge["token"])
 
-    response = client.post(
-        "/sessions/test-session/user_intent",
-        json={"intent": "STOP_NOW"},
-        headers=auth_headers,
-    )
+    with patch("api.routers.control.read_session_dir", return_value="/artifacts/sessions/test-session"):
+        response = client.post(
+            "/sessions/test-session/user_intent",
+            json={"intent": "STOP_NOW"},
+            headers=auth_headers,
+        )
     assert response.status_code == 200
 
     state = broker.get_state()

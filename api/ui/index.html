@@ -581,6 +581,30 @@
       color: var(--danger);
     }
 
+    #agent-control-banner {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2200;
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 107, 107, 0.8);
+      background: rgba(255, 107, 107, 0.18);
+      color: #ffe7e7;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.25), 0 8px 22px rgba(0, 0, 0, 0.35);
+      animation: agentControlPulse 1.2s ease-in-out infinite;
+      display: none;
+    }
+
+    @keyframes agentControlPulse {
+      0%, 100% { opacity: 0.92; }
+      50% { opacity: 1; }
+    }
+
     .hint {
       margin-top: 6px;
       font-size: 0.75rem;
@@ -796,6 +820,7 @@
   </style>
 </head>
 <body>
+  <div id="agent-control-banner" role="status" aria-live="polite"></div>
   <div id="toast-container"></div>
   <button class="mobile-menu-btn" style="display:none;" id="mobile-menu-toggle"></button>
   <div id="dashboard">
@@ -1079,6 +1104,7 @@
     const badgeWindows = document.getElementById("badge-windows");
     const badgeRecording = document.getElementById("badge-recording");
     const badgeStorage = document.getElementById("badge-storage");
+    const agentControlBanner = document.getElementById("agent-control-banner");
 
     const tokenInput = document.getElementById("api-token");
     const saveTokenBtn = document.getElementById("save-token");
@@ -1811,6 +1837,20 @@
         }
     }
 
+    function updateControlBanner(controlState) {
+      if (!agentControlBanner) return;
+      if (!controlState || controlState.control_mode !== "AGENT") {
+        agentControlBanner.style.display = "none";
+        agentControlBanner.textContent = "";
+        return;
+      }
+      const effective = controlState.effective_control_mode || "hybrid";
+      const instanceMode = controlState.instance_control_mode || "hybrid";
+      const sessionMode = controlState.session_control_mode || "hybrid";
+      agentControlBanner.textContent = `Agent In Control · effective=${effective} · instance=${instanceMode} · session=${sessionMode}`;
+      agentControlBanner.style.display = "block";
+    }
+
     async function updateDashboard() {
       if (!versionLoaded) updateVersion();
       try {
@@ -1863,6 +1903,7 @@
         } else {
              updateCrosshair(0, 0, false);
         }
+        updateControlBanner(controlState);
 
         const windowsData = windowsRes ? await safeJson(windowsRes) : null;
         const recordingData = recordingRes ? await safeJson(recordingRes) : null;

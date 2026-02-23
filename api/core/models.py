@@ -15,6 +15,12 @@ class ControlMode(str, Enum):
     AGENT = "AGENT"
 
 
+class ControlPolicyMode(str, Enum):
+    HUMAN_ONLY = "human-only"
+    AGENT_ONLY = "agent-only"
+    HYBRID = "hybrid"
+
+
 class UserIntent(str, Enum):
     WAIT = "WAIT"
     SAFE_INTERRUPT = "SAFE_INTERRUPT"
@@ -36,14 +42,23 @@ class ControlState(BaseModel):
     lease_expiry: Optional[float] = None
     user_intent: UserIntent
     agent_status: AgentStatus
+    instance_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID
+    session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID
+    effective_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID
 
 
 class GrantControlModel(BaseModel):
     lease_seconds: int
+    user_ack: bool = False
+    challenge_token: Optional[str] = None
 
 
 class UserIntentModel(BaseModel):
     intent: UserIntent
+
+
+class ControlPolicyModeModel(BaseModel):
+    mode: ControlPolicyMode
 
 
 class ClickModel(BaseModel):

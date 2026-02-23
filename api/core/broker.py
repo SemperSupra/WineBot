@@ -1,8 +1,16 @@
 import asyncio
 import time
+import secrets
 from fastapi import HTTPException
 
-from api.core.models import ControlMode, UserIntent, AgentStatus, ControlState
+from api.core.models import (
+    ControlMode,
+    UserIntent,
+    AgentStatus,
+    ControlState,
+    ControlPolicyMode,
+)
+from api.utils.files import get_instance_control_mode
 
 
 class InputBroker:
@@ -14,18 +22,82 @@ class InputBroker:
             control_mode=ControlMode.USER,
             user_intent=UserIntent.WAIT,
             agent_status=AgentStatus.IDLE,
+            instance_control_mode=ControlPolicyMode(get_instance_control_mode()),
+            session_control_mode=ControlPolicyMode.HYBRID,
+            effective_control_mode=ControlPolicyMode.HYBRID,
         )
         self.last_user_activity = 0.0
         self.last_agent_activity = 0.0
+        self._grant_challenge_token = None
+        self._grant_challenge_expiry = 0.0
 
     @property
     def last_activity(self) -> float:
         return max(self.last_user_activity, self.last_agent_activity)
 
-    async def update_session(self, session_id: str, interactive: bool):
+    def _compute_effective_mode(self) -> ControlPolicyMode:
+        # Human priority is absolute if either scope requests it.
+        if (
+            self.state.instance_control_mode == ControlPolicyMode.HUMAN_ONLY
+            or self.state.session_control_mode == ControlPolicyMode.HUMAN_ONLY
+        ):
+            return ControlPolicyMode.HUMAN_ONLY
+        # Agent-only applies when no human-only restriction exists.
+        if (
+            self.state.instance_control_mode == ControlPolicyMode.AGENT_ONLY
+            or self.state.session_control_mode == ControlPolicyMode.AGENT_ONLY
+        ):
+            return ControlPolicyMode.AGENT_ONLY
+        return ControlPolicyMode.HYBRID
+
+    async def set_instance_control_mode(self, mode: ControlPolicyMode):
+        async with self._lock:
+            self.state.instance_control_mode = mode
+            self.state.effective_control_mode = self._compute_effective_mode()
+            if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
+                self.state.control_mode = ControlMode.AGENT
+            else:
+                self.state.control_mode = ControlMode.USER
+                self.state.lease_expiry = None
+
+    async def issue_grant_challenge(self, ttl_seconds: int = 30) -> dict:
+        async with self._lock:
+            token = secrets.token_urlsafe(18)
+            now = time.time()
+            self._grant_challenge_token = token
+            self._grant_challenge_expiry = now + max(5, ttl_seconds)
+            return {"token": token, "expires_epoch": self._grant_challenge_expiry}
+
+    async def set_session_control_mode(self, mode: ControlPolicyMode):
+        async with self._lock:
+            self.state.session_control_mode = mode
+            self.state.effective_control_mode = self._compute_effective_mode()
+            if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
+                self.state.control_mode = ControlMode.AGENT
+            else:
+                self.state.control_mode = ControlMode.USER
+                self.state.lease_expiry = None
+
+    async def update_session(
+        self,
+        session_id: str,
+        interactive: bool,
+        session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
+    ):
         async with self._lock:
             self.state.session_id = session_id
             self.state.interactive = interactive
+            self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())
+            self.state.session_control_mode = session_control_mode
+            self.state.effective_control_mode = self._compute_effective_mode()
+            if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
+                self.state.control_mode = ControlMode.AGENT
+                self.state.lease_expiry = None
+                return
+            if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
+                self.state.control_mode = ControlMode.USER
+                self.state.lease_expiry = None
+                return
             # If not interactive, default to AGENT allowed, else USER
             if not interactive:
                 self.state.control_mode = ControlMode.AGENT
@@ -35,8 +107,36 @@ class InputBroker:
                     self.revoke_agent("session_became_interactive")
                 self.state.control_mode = ControlMode.USER
 
-    async def grant_agent(self, lease_seconds: int):
+    async def grant_agent(
+        self,
+        lease_seconds: int,
+        user_ack: bool = False,
+        challenge_token: str = "",
+    ):
         async with self._lock:
+            if not user_ack:
+                raise HTTPException(
+                    status_code=403,
+                    detail="User acknowledgement is required to grant agent control",
+                )
+            now = time.time()
+            if (
+                not self._grant_challenge_token
+                or now > self._grant_challenge_expiry
+                or challenge_token != self._grant_challenge_token
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="A valid one-time challenge token is required to grant control",
+                )
+            # One-time token semantics.
+            self._grant_challenge_token = None
+            self._grant_challenge_expiry = 0.0
+            if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Control mode is human-only; agent control is disabled",
+                )
             if not self.state.interactive:
                 return  # Always implicit in non-interactive
             self.state.control_mode = ControlMode.AGENT
@@ -77,6 +177,10 @@ class InputBroker:
 
     async def check_access(self) -> bool:
         """Returns True if agent is allowed to execute."""
+        if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
+            return False
+        if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
+            return self.state.control_mode == ControlMode.AGENT
         if not self.state.interactive:
             return True
 

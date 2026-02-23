@@ -8,6 +8,7 @@ export DISPLAY="${DISPLAY:-:99}"
 LOG_DIR="/artifacts/diagnostics_suite"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/suite.log") 2>&1
+SUMMARY_JSON="$LOG_DIR/summary.json"
 
 log() {
   echo "[$(date +'%H:%M:%S')] $*"
@@ -105,6 +106,9 @@ test_cv_click() {
 }
 
 test_notepad() {
+  local failed=0
+  local mouse_result="pass"
+  local keyboard_result="pass"
   log "=== Testing Notepad ==="
   annotate "Notepad: Mouse & Keyboard"
   
@@ -112,7 +116,7 @@ test_notepad() {
   local win_id
   if ! win_id=$(wait_for_window "Notepad"); then
     log "ERROR: Notepad not found"
-    return
+    return 1
   fi
   xdotool windowactivate "$win_id"
   sleep 1
@@ -123,7 +127,8 @@ test_notepad() {
       log "Notepad Mouse: PASS"
   else
       log "Notepad Mouse: FAIL"
-      # Don't exit, try keyboard
+      mouse_result="fail"
+      failed=1
   fi
   xdotool key --window "$win_id" Escape
   sleep 0.5
@@ -141,13 +146,21 @@ test_notepad() {
       log "Notepad Keyboard: PASS"
   else
       log "Notepad Keyboard: FAIL"
+      keyboard_result="fail"
+      failed=1
   fi
   
   xdotool windowclose "$win_id"
   sleep 1
+  NOTEPAD_MOUSE_RESULT="$mouse_result"
+  NOTEPAD_KEYBOARD_RESULT="$keyboard_result"
+  return "$failed"
 }
 
 test_regedit() {
+  local failed=0
+  local mouse_result="pass"
+  local keyboard_result="pass"
   log "=== Testing Regedit ==="
   annotate "Regedit: Mouse & Keyboard"
   
@@ -155,7 +168,7 @@ test_regedit() {
   local win_id
   if ! win_id=$(wait_for_window "Registry Editor"); then
     log "ERROR: Regedit not found"
-    return
+    return 1
   fi
   xdotool windowactivate "$win_id"
   sleep 1
@@ -166,6 +179,8 @@ test_regedit() {
       log "Regedit Mouse: PASS"
   else
       log "Regedit Mouse: FAIL"
+      mouse_result="fail"
+      failed=1
   fi
   xdotool key --window "$win_id" Escape
   sleep 0.5
@@ -183,13 +198,21 @@ test_regedit() {
       log "Regedit Keyboard: PASS"
   else
       log "Regedit Keyboard: FAIL"
+      keyboard_result="fail"
+      failed=1
   fi
   
   xdotool windowclose "$win_id"
   sleep 1
+  REGEDIT_MOUSE_RESULT="$mouse_result"
+  REGEDIT_KEYBOARD_RESULT="$keyboard_result"
+  return "$failed"
 }
 
 test_winefile() {
+  local failed=0
+  local mouse_result="pass"
+  local keyboard_result="pass"
   log "=== Testing Winefile ==="
   annotate "Winefile: Mouse & Keyboard"
   
@@ -197,7 +220,7 @@ test_winefile() {
   local win_id
   if ! win_id=$(wait_for_window "Wine File Manager"); then
     log "ERROR: Winefile not found"
-    return
+    return 1
   fi
   xdotool windowactivate "$win_id"
   sleep 1
@@ -210,6 +233,8 @@ test_winefile() {
       log "Winefile Mouse: PASS"
   else
       log "Winefile Mouse: FAIL"
+      mouse_result="fail"
+      failed=1
   fi
   xdotool key --window "$win_id" Escape
   sleep 0.5
@@ -235,19 +260,56 @@ test_winefile() {
       log "Winefile Keyboard: PASS"
   else
       log "Winefile Keyboard: FAIL"
+      keyboard_result="fail"
+      failed=1
   fi
   
   xdotool windowclose "$win_id"
   sleep 1
+  WINEFILE_MOUSE_RESULT="$mouse_result"
+  WINEFILE_KEYBOARD_RESULT="$keyboard_result"
+  return "$failed"
 }
 
 # Run Suite
 cleanup
 if [ "${TRACE_BISECT:-1}" = "1" ] && [ -x "/scripts/diagnostics/diagnose-input-trace.sh" ]; then
   log "=== Trace Bisect ==="
-  /scripts/diagnostics/diagnose-input-trace.sh || log "Trace bisect failed"
+  if /scripts/diagnostics/diagnose-input-trace.sh; then
+    TRACE_BISECT_RESULT="pass"
+  else
+    log "Trace bisect failed"
+    TRACE_BISECT_RESULT="fail"
+  fi
+else
+  TRACE_BISECT_RESULT="skipped"
 fi
-test_notepad
-test_regedit
-test_winefile
-log "Suite completed."
+
+NOTEPAD_MOUSE_RESULT="fail"
+NOTEPAD_KEYBOARD_RESULT="fail"
+REGEDIT_MOUSE_RESULT="fail"
+REGEDIT_KEYBOARD_RESULT="fail"
+WINEFILE_MOUSE_RESULT="fail"
+WINEFILE_KEYBOARD_RESULT="fail"
+
+FAIL_COUNT=0
+if ! test_notepad; then FAIL_COUNT=$((FAIL_COUNT + 1)); fi
+if ! test_regedit; then FAIL_COUNT=$((FAIL_COUNT + 1)); fi
+if ! test_winefile; then FAIL_COUNT=$((FAIL_COUNT + 1)); fi
+if [ "$TRACE_BISECT_RESULT" = "fail" ]; then FAIL_COUNT=$((FAIL_COUNT + 1)); fi
+
+cat > "$SUMMARY_JSON" <<EOF
+{
+  "trace_bisect": "$TRACE_BISECT_RESULT",
+  "notepad": {"mouse": "$NOTEPAD_MOUSE_RESULT", "keyboard": "$NOTEPAD_KEYBOARD_RESULT"},
+  "regedit": {"mouse": "$REGEDIT_MOUSE_RESULT", "keyboard": "$REGEDIT_KEYBOARD_RESULT"},
+  "winefile": {"mouse": "$WINEFILE_MOUSE_RESULT", "keyboard": "$WINEFILE_KEYBOARD_RESULT"},
+  "fail_count": $FAIL_COUNT
+}
+EOF
+
+log "Suite summary written to $SUMMARY_JSON"
+log "Suite completed with fail_count=$FAIL_COUNT"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  exit 1
+fi

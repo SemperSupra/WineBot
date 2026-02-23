@@ -4,6 +4,7 @@ set -euo pipefail
 # diagnose-master.sh
 # Unified Master Diagnostic & Test Suite for WineBot.
 # Supports granular phase selection for CI visibility.
+# Phases: health, smoke, cv, trace, recording, recovery, all
 
 LOG_DIR="/artifacts/diagnostics_master"
 mkdir -p "$LOG_DIR"
@@ -88,7 +89,13 @@ if [[ "$PHASE" != "health" ]]; then
     wait_for_api_ready 120 || exit 1
     log "=== SETUP: Initializing Tracing & Recording ==="
     # Grant control to agent for the duration of diagnostics
-    api_curl -X POST http://localhost:8000/sessions/unknown/control/grant -H "Content-Type: application/json" -d '{"lease_seconds": 3600}' > /dev/null
+    current_session_id="$(api_curl http://localhost:8000/lifecycle/status | python3 -c "import sys,json; print((json.load(sys.stdin).get('session_id') or '').strip())")"
+    if [ -n "$current_session_id" ]; then
+      challenge_token="$(api_curl -X POST "http://localhost:8000/sessions/${current_session_id}/control/challenge" | python3 -c "import sys,json; print((json.load(sys.stdin).get('token') or '').strip())")"
+      if [ -n "$challenge_token" ]; then
+        api_curl -X POST "http://localhost:8000/sessions/${current_session_id}/control/grant" -H "Content-Type: application/json" -d "{\"lease_seconds\": 3600, \"user_ack\": true, \"challenge_token\": \"${challenge_token}\"}" > /dev/null || true
+      fi
+    fi
     
     api_curl -X POST http://localhost:8000/input/trace/start > /dev/null
     api_curl -X POST http://localhost:8000/input/trace/windows/start > /dev/null
@@ -212,6 +219,26 @@ if [[ "$PHASE" == "all" || "$PHASE" == "recording" ]]; then
             exit 1
         fi
     fi
+fi
+
+# 7. Recovery Validation
+if [[ "$PHASE" == "all" || "$PHASE" == "recovery" ]]; then
+    log "=== PHASE 7: Recovery Validation ==="
+    if ! api_curl -X POST http://localhost:8000/apps/run -H "Content-Type: application/json" -d '{"path":"pkill","args":"-f openbox","detach":false}' >/dev/null; then
+        log "Recovery phase warning: unable to stop openbox via API."
+    fi
+    sleep 2
+    if ! api_curl -X POST http://localhost:8000/openbox/restart >/dev/null; then
+        log "Recovery phase: openbox restart endpoint returned non-OK."
+        exit 1
+    fi
+    sleep 3
+    openbox_ok="$(api_curl http://localhost:8000/lifecycle/status | python3 -c "import sys,json; print('1' if json.load(sys.stdin).get('processes',{}).get('openbox',{}).get('ok') else '0')")"
+    if [ "$openbox_ok" != "1" ]; then
+        log "Recovery phase FAILED: openbox did not recover."
+        exit 1
+    fi
+    log "Recovery phase PASSED: openbox recovered after fault injection."
 fi
 
 log "=== DIAGNOSTICS COMPLETE (Phase: $PHASE) ==="

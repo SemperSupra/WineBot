@@ -62,11 +62,20 @@ done
 # Configure Openbox (copy configs)
 OPENBOX_CONFIG_DIR="${HOME}/.config/openbox"
 mkdir -p "$OPENBOX_CONFIG_DIR"
-if [ -f "/etc/xdg/openbox/rc.xml" ] && [ ! -f "${OPENBOX_CONFIG_DIR}/rc.xml" ]; then
-    cp "/etc/xdg/openbox/rc.xml" "${OPENBOX_CONFIG_DIR}/rc.xml"
-fi
-if [ -f "/etc/xdg/openbox/menu.xml" ] && [ ! -f "${OPENBOX_CONFIG_DIR}/menu.xml" ]; then
-    cp "/etc/xdg/openbox/menu.xml" "${OPENBOX_CONFIG_DIR}/menu.xml"
+if [ "${WINEBOT_SYNC_OPENBOX_CONFIG:-1}" = "1" ]; then
+    if [ -f "/etc/xdg/openbox/rc.xml" ]; then
+        cp "/etc/xdg/openbox/rc.xml" "${OPENBOX_CONFIG_DIR}/rc.xml"
+    fi
+    if [ -f "/etc/xdg/openbox/menu.xml" ]; then
+        cp "/etc/xdg/openbox/menu.xml" "${OPENBOX_CONFIG_DIR}/menu.xml"
+    fi
+else
+    if [ -f "/etc/xdg/openbox/rc.xml" ] && [ ! -f "${OPENBOX_CONFIG_DIR}/rc.xml" ]; then
+        cp "/etc/xdg/openbox/rc.xml" "${OPENBOX_CONFIG_DIR}/rc.xml"
+    fi
+    if [ -f "/etc/xdg/openbox/menu.xml" ] && [ ! -f "${OPENBOX_CONFIG_DIR}/menu.xml" ]; then
+        cp "/etc/xdg/openbox/menu.xml" "${OPENBOX_CONFIG_DIR}/menu.xml"
+    fi
 fi
 
 openbox --replace >/dev/null 2>&1 &

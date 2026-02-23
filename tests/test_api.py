@@ -124,9 +124,17 @@ def test_run_app(mock_validate, mock_run, auth_headers):
     mock_run.return_value = {"ok": True, "stdout": "Success", "stderr": ""}
     mock_validate.return_value = "/apps/test.exe"
     with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
-        response = client.post(
-            "/apps/run", json={"path": "/apps/test.exe"}, headers=auth_headers
-        )
+        with patch(
+            "api.routers.automation.broker.check_access",
+            new=AsyncMock(return_value=True),
+        ):
+            with patch(
+                "api.routers.automation.broker.report_agent_activity",
+                new=AsyncMock(),
+            ):
+                response = client.post(
+                    "/apps/run", json={"path": "/apps/test.exe"}, headers=auth_headers
+                )
         # Router returns 200 with status: finished
         assert response.status_code == 200
         assert response.json()["status"] == "finished"
@@ -138,9 +146,17 @@ def test_run_app_invalid_path(mock_validate, auth_headers):
     mock_validate.side_effect = Exception("Path not allowed")
 
     with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
-        response = client.post(
-            "/apps/run", json={"path": "/etc/passwd"}, headers=auth_headers
-        )
+        with patch(
+            "api.routers.automation.broker.check_access",
+            new=AsyncMock(return_value=True),
+        ):
+            with patch(
+                "api.routers.automation.broker.report_agent_activity",
+                new=AsyncMock(),
+            ):
+                response = client.post(
+                    "/apps/run", json={"path": "/etc/passwd"}, headers=auth_headers
+                )
 
         assert response.status_code == 400
 

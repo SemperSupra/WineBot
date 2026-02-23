@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify capability matrix references
+        run: python3 scripts/ci/verify-capability-matrix.py
       - name: Build lint runner
         run: docker compose -f compose/docker-compose.yml build lint-runner
       
@@ -26,6 +28,11 @@ jobs:
 
       - name: Containerized Unit Tests
         run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm test-runner scripts/ci/test.sh
+
+      - name: Deterministic E2E subset
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+            pytest -q /work/tests/e2e/test_dashboard_e2e.py /work/tests/e2e/test_ux_keyboard_accessibility.py
 
   integration:
     name: Integration (Smoke Test)
@@ -69,3 +76,13 @@ jobs:
       - name: Validate REL forbidden patterns
         run: |
           scripts/ci/check-rel-forbidden.sh
+
+      - name: Generate trust pack artifact
+        run: |
+          scripts/ci/generate-trust-pack.sh artifacts/trust-pack
+
+      - name: Upload trust pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: trust-pack-ci
+          path: artifacts/trust-pack

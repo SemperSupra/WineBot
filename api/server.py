@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Request, HTTPException, Security, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from contextlib import asynccontextmanager
 import os
 import asyncio
+import hmac
 from typing import Optional
 
 try:
@@ -17,9 +18,11 @@ except ImportError:
 from api.routers import health, lifecycle, input, recording, control, automation
 from api.utils.files import (
     read_session_dir,
+    read_session_control_mode,
     append_lifecycle_event,
     cleanup_old_sessions,
     link_wine_user_dir,
+    write_instance_state,
 )
 from api.utils.process import process_store
 from api.core.discovery import discovery_manager
@@ -31,6 +34,10 @@ from api.core.versioning import (
 from api.utils.config import config
 from api.utils.logging import logger
 from api.core.monitor import inactivity_monitor_task
+from api.core.broker import broker
+from api.core.models import ControlPolicyMode
+from api.core.config_guard import validate_current_environment
+from api.core.session_context import set_current_session_dir, reset_current_session_dir
 
 
 NOVNC_CORE_DIR = "/usr/share/novnc/core"
@@ -75,6 +82,12 @@ async def resource_monitor_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validation_errors = validate_current_environment()
+    if validation_errors:
+        joined = "; ".join(validation_errors)
+        raise RuntimeError(f"Configuration admission rejected: {joined}")
+
+    write_instance_state("running", reason="api_lifespan_start")
     session_dir = read_session_dir()
     append_lifecycle_event(
         session_dir, "api_started", "API server started", source="api"
@@ -85,6 +98,17 @@ async def lifespan(app: FastAPI):
         user_dir = os.path.join(session_dir, "user")
         os.makedirs(user_dir, exist_ok=True)
         link_wine_user_dir(user_dir)
+        interactive = os.getenv("MODE", "headless") == "interactive"
+        session_control_mode = ControlPolicyMode(read_session_control_mode(session_dir))
+        validation_errors = validate_current_environment(session_control_mode.value)
+        if validation_errors:
+            joined = "; ".join(validation_errors)
+            raise RuntimeError(f"Configuration admission rejected: {joined}")
+        await broker.update_session(
+            os.path.basename(session_dir),
+            interactive,
+            session_control_mode=session_control_mode,
+        )
 
     # Start Discovery
     try:
@@ -100,6 +124,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        write_instance_state("stopping", reason="api_lifespan_stop")
         monitor.cancel()
         inactivity_monitor.cancel()
         discovery_manager.stop()
@@ -118,6 +143,7 @@ app = FastAPI(
 
 @app.middleware("http")
 async def add_security_and_version_headers(request: Request, call_next):
+    session_token = set_current_session_dir(read_session_dir())
     # Phase 1: Version Negotiation
     min_version = request.headers.get("X-WineBot-Min-Version")
     if min_version:
@@ -135,7 +161,10 @@ async def add_security_and_version_headers(request: Request, call_next):
         except ValueError:
             pass
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_current_session_dir(session_token)
     # Version Headers
     response.headers["X-WineBot-API-Version"] = API_VERSION
     response.headers["X-WineBot-Build-Version"] = VERSION
@@ -176,12 +205,13 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def verify_token_logic(request: Request, api_key: str = Security(api_key_header)):
     path = request.url.path
-    if path == "/" or path.startswith("/ui") or path.startswith("/health"):
+    if path == "/" or path.startswith("/ui"):
         return api_key
-    
-    expected_token = config.API_TOKEN
+
+    expected_token = (os.getenv("API_TOKEN") or config.API_TOKEN or "").strip()
     if expected_token:
-        if not api_key or api_key != expected_token:
+        provided_token = (api_key or "").strip()
+        if not provided_token or not hmac.compare_digest(provided_token, expected_token):
             raise HTTPException(status_code=403, detail="Invalid or missing API Token")
     return api_key
 
@@ -194,6 +224,7 @@ app.include_router(lifecycle.router)
 app.include_router(input.router)
 app.include_router(recording.router)
 app.include_router(control.router)
+app.include_router(control.instance_router)
 app.include_router(automation.router)
 
 

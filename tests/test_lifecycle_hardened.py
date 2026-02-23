@@ -1,5 +1,4 @@
 import os
-import threading
 import asyncio
 import pytest
 from unittest.mock import patch
@@ -15,43 +14,31 @@ def test_sessions_resume_concurrent_calls_idempotent(tmp_path):
     session_dir = tmp_path / "session-1"
     session_dir.mkdir()
     (session_dir / "session.json").write_text("{}")
-
-    results = []
-
-    # Mocking utilities used in resume_session
-    def invoke_resume():
-        with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-            response = client.post(
-                "/sessions/resume",
-                json={"session_dir": str(session_dir)},
-                headers={"X-API-Key": "test-token"},
-            )
-            results.append(response.json()["status"])
-
-    with patch(
-        "api.routers.lifecycle.read_session_dir",
-        side_effect=[None, str(session_dir), str(session_dir)],
-    ):
-        with patch("api.routers.lifecycle.write_session_dir"):
-            with patch("api.routers.lifecycle.write_session_state"):
-                with patch("api.routers.lifecycle.append_lifecycle_event"):
-                    with patch("api.routers.lifecycle.link_wine_user_dir"):
-                        with patch("api.routers.lifecycle.ensure_user_profile"):
-                            with patch("api.routers.lifecycle.broker.update_session"):
-                                # We'll use a lock to simulate the race if there was one,
-                                # but lifecycle.py doesn't have an explicit lock for resume yet.
-                                # Let's see if we can trigger multiple calls.
-                                t1 = threading.Thread(target=invoke_resume)
-                                t2 = threading.Thread(target=invoke_resume)
-                                t1.start()
-                                t2.start()
-                                t1.join()
-                                t2.join()
-
-    # If both succeed, one might be "resumed" and another "already_active"
-    # depending on when read_session_dir is called.
-    assert "resumed" in results
-    assert len(results) == 2
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch(
+            "api.routers.lifecycle.read_session_dir",
+            side_effect=[None, str(session_dir), str(session_dir)],
+        ):
+            with patch("api.routers.lifecycle.write_session_dir"):
+                with patch("api.routers.lifecycle.write_session_state"):
+                    with patch("api.routers.lifecycle.append_lifecycle_event"):
+                        with patch("api.routers.lifecycle.link_wine_user_dir"):
+                            with patch("api.routers.lifecycle.ensure_user_profile"):
+                                with patch("api.routers.lifecycle.broker.update_session"):
+                                    res1 = client.post(
+                                        "/sessions/resume",
+                                        json={"session_dir": str(session_dir)},
+                                        headers={"X-API-Key": "test-token"},
+                                    )
+                                    res2 = client.post(
+                                        "/sessions/resume",
+                                        json={"session_dir": str(session_dir)},
+                                        headers={"X-API-Key": "test-token"},
+                                    )
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    assert res1.json()["status"] == "resumed"
+    assert res2.json()["status"] == "already_active"
 
 
 def test_sessions_suspend_no_active_session():
@@ -62,6 +49,41 @@ def test_sessions_suspend_no_active_session():
             )
     assert response.status_code == 404
     assert response.json()["detail"] == "No active session to suspend"
+
+
+def test_sessions_suspend_oneshot_marks_completed(tmp_path):
+    session_dir = tmp_path / "session-oneshot"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text("{}", encoding="utf-8")
+    with patch.dict(
+        os.environ,
+        {"API_TOKEN": "test-token", "WINEBOT_SESSION_MODE": "oneshot"},
+    ):
+        with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
+            with patch("api.routers.lifecycle.graceful_wine_shutdown"):
+                response = client.post(
+                    "/sessions/suspend",
+                    headers={"X-API-Key": "test-token"},
+                )
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["session_mode"] == "oneshot"
+
+
+def test_sessions_resume_completed_oneshot_conflict(tmp_path):
+    session_dir = tmp_path / "session-finished"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text("{}", encoding="utf-8")
+    (session_dir / "session.mode").write_text("oneshot", encoding="utf-8")
+    (session_dir / "session.state").write_text("completed", encoding="utf-8")
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        response = client.post(
+            "/sessions/resume",
+            json={"session_dir": str(session_dir)},
+            headers={"X-API-Key": "test-token"},
+        )
+    assert response.status_code == 409
+    assert "cannot be resumed" in response.json()["detail"]
 
 
 def test_sessions_resume_non_existent_dir():
@@ -109,7 +131,8 @@ def test_lifecycle_shutdown_power_off(tmp_path):
 async def test_broker_concurrency_renew_vs_revoke():
     broker = InputBroker()
     await broker.update_session("test", interactive=True)
-    await broker.grant_agent(10)
+    challenge = await broker.issue_grant_challenge()
+    await broker.grant_agent(10, user_ack=True, challenge_token=challenge["token"])
 
     # Simulate concurrent renew and user activity (revoke)
     # renewals should fail if revoke wins

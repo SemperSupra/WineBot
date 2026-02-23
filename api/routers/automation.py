@@ -9,7 +9,6 @@ from api.utils.files import (
     validate_path,
     to_wine_path,
     read_session_dir,
-    ensure_session_dir,
 )
 from api.utils.process import safe_command, manage_process
 from api.core.models import (
@@ -21,14 +20,26 @@ from api.core.models import (
     PythonScriptModel,
 )
 from api.core.broker import broker
+from api.core.telemetry import emit_operation_timing
 
 
 router = APIRouter(tags=["automation"])
 
 
+def _require_active_session() -> str:
+    session_dir = read_session_dir()
+    if not session_dir or not os.path.isdir(session_dir):
+        raise HTTPException(
+            status_code=409,
+            detail="No active session. Resume or create a session before running automation.",
+        )
+    return session_dir
+
+
 @router.post("/apps/run")
 async def run_app(data: AppRunModel):
     """Run a Windows application."""
+    op_started = time.perf_counter()
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
@@ -75,16 +86,53 @@ async def run_app(data: AppRunModel):
     if data.detach:
         proc = subprocess.Popen(cmd, start_new_session=True)
         manage_process(proc)
+        session_dir = read_session_dir()
+        emit_operation_timing(
+            session_dir,
+            feature="automation",
+            capability="app_run",
+            feature_set="control_input_automation",
+            operation="run_app_detach",
+            duration_ms=(time.perf_counter() - op_started) * 1000.0,
+            result="ok",
+            source="api",
+            metric_name="automation.run_app.latency",
+            tags={"detach": True},
+        )
         return {"status": "detached", "pid": proc.pid}
 
     result = safe_command(cmd, timeout=30)
+    session_dir = read_session_dir()
     if not result["ok"]:
+        emit_operation_timing(
+            session_dir,
+            feature="automation",
+            capability="app_run",
+            feature_set="control_input_automation",
+            operation="run_app",
+            duration_ms=(time.perf_counter() - op_started) * 1000.0,
+            result="error",
+            source="api",
+            metric_name="automation.run_app.latency",
+        )
         return {
             "status": "failed",
             "exit_code": result.get("exit_code"),
             "stdout": result.get("stdout", ""),
             "stderr": result.get("stderr", "") or result.get("error", "App failed"),
         }
+    emit_operation_timing(
+        session_dir,
+        feature="automation",
+        capability="app_run",
+        feature_set="control_input_automation",
+        operation="run_app",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="automation.run_app.latency",
+        tags={"detach": False},
+    )
     return {
         "status": "finished",
         "stdout": result["stdout"],
@@ -117,14 +165,13 @@ async def focus_window(data: FocusModel):
 @router.post("/run/ahk")
 async def run_ahk(data: AHKModel):
     """Run an AHK script."""
+    op_started = time.perf_counter()
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     await broker.report_agent_activity()
 
-    session_dir = ensure_session_dir()
-    if not session_dir:
-        raise HTTPException(status_code=500, detail="No active session")
+    session_dir = _require_active_session()
     script_id = uuid.uuid4().hex[:8]
     script_path = os.path.join(session_dir, "scripts", f"run_{script_id}.ahk")
     os.makedirs(os.path.dirname(script_path), exist_ok=True)
@@ -133,20 +180,30 @@ async def run_ahk(data: AHKModel):
 
     cmd = ["ahk", to_wine_path(script_path)]
     result = safe_command(cmd, timeout=30)
+    emit_operation_timing(
+        session_dir,
+        feature="automation",
+        capability="run_ahk",
+        feature_set="control_input_automation",
+        operation="run_ahk",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if bool(result.get("ok", True)) else "error",
+        source="api",
+        metric_name="automation.run_ahk.latency",
+    )
     return {"status": "ok", "stdout": result.get("stdout")}
 
 
 @router.post("/run/autoit")
 async def run_autoit(data: AutoItModel):
     """Run an AutoIt script."""
+    op_started = time.perf_counter()
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     await broker.report_agent_activity()
 
-    session_dir = ensure_session_dir()
-    if not session_dir:
-        raise HTTPException(status_code=500, detail="No active session")
+    session_dir = _require_active_session()
     script_id = uuid.uuid4().hex[:8]
     script_path = os.path.join(session_dir, "scripts", f"run_{script_id}.au3")
     os.makedirs(os.path.dirname(script_path), exist_ok=True)
@@ -155,20 +212,30 @@ async def run_autoit(data: AutoItModel):
 
     cmd = ["autoit", to_wine_path(script_path)]
     result = safe_command(cmd, timeout=30)
+    emit_operation_timing(
+        session_dir,
+        feature="automation",
+        capability="run_autoit",
+        feature_set="control_input_automation",
+        operation="run_autoit",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if bool(result.get("ok", True)) else "error",
+        source="api",
+        metric_name="automation.run_autoit.latency",
+    )
     return {"status": "ok", "stdout": result.get("stdout")}
 
 
 @router.post("/run/python")
 async def run_python(data: PythonScriptModel):
     """Run a Python script."""
+    op_started = time.perf_counter()
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     await broker.report_agent_activity()
 
-    session_dir = ensure_session_dir()
-    if not session_dir:
-        raise HTTPException(status_code=500, detail="No active session")
+    session_dir = _require_active_session()
     script_id = uuid.uuid4().hex[:8]
     script_path = os.path.join(session_dir, "scripts", f"run_{script_id}.py")
     os.makedirs(os.path.dirname(script_path), exist_ok=True)
@@ -177,6 +244,17 @@ async def run_python(data: PythonScriptModel):
 
     cmd = ["python3", script_path]
     result = safe_command(cmd, timeout=30)
+    emit_operation_timing(
+        session_dir,
+        feature="automation",
+        capability="run_python",
+        feature_set="control_input_automation",
+        operation="run_python",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if bool(result.get("ok", True)) else "error",
+        source="api",
+        metric_name="automation.run_python.latency",
+    )
     return {"status": "ok", "stdout": result.get("stdout")}
 
 

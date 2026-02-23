@@ -63,7 +63,9 @@ fi
 
 echo "--> Ensuring wineserver is running..."
 wineserver -p >/dev/null 2>&1 &
-wineserver -w
+if ! timeout 30s wineserver -w; then
+    echo "--> [WARN] wineserver wait timed out during startup; continuing." >&2
+fi
 echo "--> wineserver is ready."
 sleep 2
 
@@ -75,7 +77,9 @@ if [ -x "/scripts/setup/install-theme.sh" ]; then
     /scripts/setup/install-theme.sh >/dev/null 2>&1
 fi
 wineserver -k
-wineserver -w
+if ! timeout 30s wineserver -w; then
+    echo "--> [WARN] wineserver wait timed out after optimization; continuing." >&2
+fi
 
 echo "--> wineserver is ready."
 sleep 2
