@@ -22,6 +22,7 @@ from api.core.models import (
 )
 from api.core.broker import broker
 from api.core.telemetry import emit_operation_timing
+from api.utils.config import config
 from api.utils.files import (
     append_input_event,
     append_trace_event,
@@ -96,6 +97,11 @@ def input_events(
     """Return recent input trace events."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be >= 1")
+    if limit > config.WINEBOT_MAX_EVENTS_QUERY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be <= {config.WINEBOT_MAX_EVENTS_QUERY}",
+        )
     target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)

@@ -42,6 +42,9 @@ from api.core.session_context import set_current_session_dir, reset_current_sess
 
 NOVNC_CORE_DIR = "/usr/share/novnc/core"
 NOVNC_VENDOR_DIR = "/usr/share/novnc/vendor"
+_follow_stream_semaphore = asyncio.Semaphore(
+    max(1, int(config.WINEBOT_MAX_LOG_FOLLOW_STREAMS))
+)
 
 
 def _load_version():
@@ -281,6 +284,13 @@ async def tail_logs(
 ):
     """Tail specific log sources (api, recorder, ahk, x11)."""
     from api.utils.files import resolve_session_dir, read_session_dir
+    if lines < 1:
+        raise HTTPException(status_code=400, detail="lines must be >= 1")
+    if lines > config.WINEBOT_MAX_LOG_TAIL_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"lines must be <= {config.WINEBOT_MAX_LOG_TAIL_LINES}",
+        )
     
     # Logic to map source to file path
     target_dir = resolve_session_dir(session_id, None, None) if session_id else read_session_dir()
@@ -304,9 +314,33 @@ async def tail_logs(
         content = read_file_tail_lines(path, limit=lines)
         return {"source": source, "lines": content}
 
+    try:
+        await asyncio.wait_for(_follow_stream_semaphore.acquire(), timeout=0.05)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many active log follow streams. "
+                f"Try again later (max={config.WINEBOT_MAX_LOG_FOLLOW_STREAMS})."
+            ),
+        )
+
     async def log_generator():
         from api.utils.files import follow_file
-        async for line in follow_file(path):
-            yield f"{line}\n"
+
+        idle_timeout = max(1, int(config.WINEBOT_LOG_FOLLOW_IDLE_TIMEOUT_SECONDS))
+        stream = follow_file(path)
+        try:
+            while True:
+                try:
+                    line = await asyncio.wait_for(stream.__anext__(), timeout=idle_timeout)
+                except asyncio.TimeoutError:
+                    break
+                except StopAsyncIteration:
+                    break
+                yield f"{line}\n"
+        finally:
+            await stream.aclose()
+            _follow_stream_semaphore.release()
 
     return StreamingResponse(log_generator(), media_type="text/plain")

@@ -36,6 +36,15 @@ To avoid aggressive pause/resume churn, tune hysteresis:
 
 WineBot uses backward-seeking (`f.seek`) for all log event retrieval (`/input/events`, `/lifecycle/events`). This ensures that even if a session generates gigabytes of trace data, the API response time for the last 100 events remains constant and does not consume excessive memory.
 
+Resource guardrails for API retrieval and streaming are configurable:
+- `WINEBOT_MAX_EVENTS_QUERY` (default `2000`)
+- `WINEBOT_MAX_SESSIONS_QUERY` (default `1000`)
+- `WINEBOT_MAX_LOG_TAIL_LINES` (default `2000`)
+- `WINEBOT_MAX_LOG_FOLLOW_STREAMS` (default `8`)
+- `WINEBOT_LOG_FOLLOW_IDLE_TIMEOUT_SECONDS` (default `300`)
+
+When limits are exceeded, endpoints return explicit validation (`400`) or capacity (`429`) responses instead of allocating unbounded memory/streams.
+
 ## 4. Performance Metrics
 
 Runtime profiling events are written to `logs/perf_metrics.jsonl` in each session directory. This includes monitor sampling and recording operation latencies (API and auto pause/resume), enabling post-run analysis of feature overhead.
