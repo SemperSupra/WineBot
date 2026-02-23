@@ -9,6 +9,7 @@ if [ -z "$API_TOKEN" ] && [ -f /tmp/winebot_api_token ]; then
 fi
 IDEMPOTENT_DEFAULT="${WINEBOT_IDEMPOTENT:-1}"
 CACHE_FILE="${WINEBOT_IDEMPOTENT_CACHE:-/tmp/winebotctl-idempotent.json}"
+IDEMPOTENT_CACHE_MAX_ENTRIES="${WINEBOT_IDEMPOTENT_CACHE_MAX_ENTRIES:-500}"
 
 usage() {
   cat <<'EOF'
@@ -24,6 +25,7 @@ Global options:
   --idempotent          Enable idempotent mode (default: on)
   --no-idempotent       Disable idempotent mode
   --cache-file PATH     Idempotent cache file (default: /tmp/winebotctl-idempotent.json)
+  --cache-max N         Max idempotent cache entries (default: 500)
   -h, --help            Show help
 
 Commands:
@@ -110,6 +112,10 @@ while [ $# -gt 0 ]; do
       CACHE_FILE="$2"
       shift 2
       ;;
+    --cache-max)
+      IDEMPOTENT_CACHE_MAX_ENTRIES="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -143,7 +149,10 @@ try:
         data = json.load(f)
 except Exception:
     raise SystemExit(1)
-item = data.get(key)
+entries = data.get("__entries__", data)
+if not isinstance(entries, dict):
+    raise SystemExit(1)
+item = entries.get(key)
 if not item:
     raise SystemExit(1)
 status = item.get("status", "")
@@ -154,7 +163,7 @@ PY
 }
 
 cache_put() {
-  CACHE_KEY="$1" CACHE_STATUS="$2" CACHE_BODY="$3" CACHE_PATH="$CACHE_FILE" python3 - <<'PY'
+  CACHE_KEY="$1" CACHE_STATUS="$2" CACHE_BODY="$3" CACHE_PATH="$CACHE_FILE" CACHE_MAX="$IDEMPOTENT_CACHE_MAX_ENTRIES" python3 - <<'PY'
 import json
 import os
 
@@ -162,6 +171,11 @@ path = os.environ["CACHE_PATH"]
 key = os.environ["CACHE_KEY"]
 status = int(os.environ.get("CACHE_STATUS", "0") or 0)
 body = os.environ.get("CACHE_BODY", "")
+cache_max_raw = os.environ.get("CACHE_MAX", "500")
+try:
+    cache_max = max(1, int(cache_max_raw))
+except Exception:
+    cache_max = 500
 data = {}
 if os.path.exists(path):
     try:
@@ -169,7 +183,20 @@ if os.path.exists(path):
             data = json.load(f)
     except Exception:
         data = {}
-data[key] = {"status": status, "body": body}
+order = data.get("__order__", [])
+if not isinstance(order, list):
+    order = []
+entries = data.get("__entries__", {})
+if not isinstance(entries, dict):
+    entries = {}
+if key in entries:
+    order = [k for k in order if k != key]
+entries[key] = {"status": status, "body": body}
+order.append(key)
+while len(order) > cache_max:
+    evict = order.pop(0)
+    entries.pop(evict, None)
+data = {"__order__": order, "__entries__": entries}
 with open(path, "w") as f:
     json.dump(data, f)
 PY

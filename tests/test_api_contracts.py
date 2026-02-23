@@ -1,4 +1,5 @@
 import os
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -303,3 +304,45 @@ def test_control_mode_admission_blocks_headless_human_only():
                 headers=_auth(),
             )
     assert res.status_code == 409
+
+
+def test_input_events_limit_rejects_above_cap():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.input.config.WINEBOT_MAX_EVENTS_QUERY", 10):
+            response = client.get("/input/events?limit=11", headers=_auth())
+    assert response.status_code == 400
+    assert "limit must be <=" in response.json()["detail"]
+
+
+def test_lifecycle_events_limit_rejects_above_cap():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.lifecycle.config.WINEBOT_MAX_EVENTS_QUERY", 8):
+            response = client.get("/lifecycle/events?limit=9", headers=_auth())
+    assert response.status_code == 400
+    assert "limit must be <=" in response.json()["detail"]
+
+
+def test_sessions_list_limit_rejects_above_cap():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.lifecycle.config.WINEBOT_MAX_SESSIONS_QUERY", 5):
+            response = client.get("/sessions?limit=6", headers=_auth())
+    assert response.status_code == 400
+    assert "limit must be <=" in response.json()["detail"]
+
+
+def test_logs_tail_lines_limit_rejects_above_cap():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.server.config.WINEBOT_MAX_LOG_TAIL_LINES", 20):
+            response = client.get("/logs/tail?lines=21", headers=_auth())
+    assert response.status_code == 400
+    assert "lines must be <=" in response.json()["detail"]
+
+
+def test_logs_tail_follow_stream_limit_rejects_when_exhausted():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.utils.files.read_session_dir", return_value="/tmp/s1"):
+            with patch("api.server.os.path.exists", return_value=True):
+                with patch("api.server._follow_stream_semaphore", asyncio.Semaphore(0)):
+                    response = client.get("/logs/tail?follow=true", headers=_auth())
+    assert response.status_code == 429
+    assert "Too many active log follow streams" in response.json()["detail"]

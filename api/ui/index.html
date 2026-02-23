@@ -1329,6 +1329,14 @@
     let countdownTimer = null;
     let lastBackoffReason = null;
     const loggedEvents = new Set();
+    const loggedEventOrder = [];
+    const parsePositiveInt = (raw, fallback) => {
+      const parsed = Number.parseInt(raw || "", 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+    const MAX_LOGGED_EVENTS = parsePositiveInt(localStorage.getItem("winebot_max_logged_events"), 500);
+    const MAX_API_CACHE_ENTRIES = parsePositiveInt(localStorage.getItem("winebot_api_cache_max_entries"), 200);
+    const MAX_API_CACHE_BODY_CHARS = parsePositiveInt(localStorage.getItem("winebot_api_cache_max_body_chars"), 20000);
     const statusSnapshot = {
       sessionId: null,
       recordingState: null,
@@ -1563,6 +1571,13 @@
           return;
         }
         loggedEvents.add(key);
+        loggedEventOrder.push(key);
+        while (loggedEventOrder.length > MAX_LOGGED_EVENTS) {
+          const evict = loggedEventOrder.shift();
+          if (evict) {
+            loggedEvents.delete(evict);
+          }
+        }
         const kind = event.kind || "event";
         const message = event.message || "";
         const level = /fail|error|failed/i.test(kind) ? "error" : /warn|stop_failed/i.test(kind) ? "warn" : "info";
@@ -2104,6 +2119,23 @@
       }
     }
 
+    function pruneApiConsoleCache(cache) {
+      const entries = Object.entries(cache || {});
+      if (entries.length <= MAX_API_CACHE_ENTRIES) {
+        return cache || {};
+      }
+      entries.sort((a, b) => {
+        const ta = Number((a[1] && a[1].ts) || 0);
+        const tb = Number((b[1] && b[1].ts) || 0);
+        return ta - tb;
+      });
+      const next = {};
+      for (const [key, value] of entries.slice(-MAX_API_CACHE_ENTRIES)) {
+        next[key] = value;
+      }
+      return next;
+    }
+
     function apiConsoleKey(method, path, body) {
       return `${method}::${path}::${body || ""}`;
     }
@@ -2158,12 +2190,19 @@
         } else {
           payloadText = `Binary response (${contentType || "unknown"})`;
         }
-        const payload = { status: response.status, ok: response.ok, body: payloadText };
+        const payload = {
+          status: response.status,
+          ok: response.ok,
+          body: payloadText.length > MAX_API_CACHE_BODY_CHARS
+            ? `${payloadText.slice(0, MAX_API_CACHE_BODY_CHARS)}\n...[truncated]`
+            : payloadText,
+          ts: Date.now()
+        };
         renderApiResponse(payload, false);
         if (apiIdempotentToggle.checked && response.ok && !force) {
-          const cache = getApiConsoleCache();
+          const cache = pruneApiConsoleCache(getApiConsoleCache());
           cache[key] = payload;
-          setApiConsoleCache(cache);
+          setApiConsoleCache(pruneApiConsoleCache(cache));
         }
       } catch (err) {
         apiResponse.classList.remove("ok");
@@ -2393,6 +2432,7 @@
       logClearBtn.addEventListener("click", () => {
         logEntries.innerHTML = "";
         loggedEvents.clear();
+        loggedEventOrder.length = 0;
         logMessage("info", "Log cleared.");
       });
       const logKey = "winebot_log_collapsed";

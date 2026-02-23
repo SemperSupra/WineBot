@@ -28,6 +28,7 @@ from api.utils.files import (
     read_instance_state,
 )
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION
+from api.utils.config import config
 from api.utils.process import safe_command, find_processes
 from api.core.recorder import stop_recording
 from api.core.broker import broker
@@ -267,6 +268,11 @@ def lifecycle_events(limit: int = 100):
     """Return recent lifecycle events."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be >= 1")
+    if limit > config.WINEBOT_MAX_EVENTS_QUERY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be <= {config.WINEBOT_MAX_EVENTS_QUERY}",
+        )
     session_dir = read_session_dir()
     if not session_dir:
         return {"events": []}
@@ -408,6 +414,11 @@ def list_sessions(root: Optional[str] = None, limit: int = 100):
     """List available sessions on disk."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be >= 1")
+    if limit > config.WINEBOT_MAX_SESSIONS_QUERY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be <= {config.WINEBOT_MAX_SESSIONS_QUERY}",
+        )
     root_dir = root or os.getenv("WINEBOT_SESSION_ROOT") or "/artifacts/sessions"
     try:
         root_dir = validate_path(root_dir)
