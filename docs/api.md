@@ -69,6 +69,13 @@ WineBot publishes explicit API and artifact/event schema versions.
 | GET | `/sessions` | List session directories |
 | POST | `/sessions/suspend` | Suspend a session (keep container alive) |
 | POST | `/sessions/resume` | Resume a session directory |
+| GET | `/sessions/{session_id}/control` | Current control state for active session |
+| POST | `/sessions/{session_id}/control/challenge` | Issue one-time grant challenge token |
+| POST | `/sessions/{session_id}/control/grant` | Grant agent control (requires challenge) |
+| POST | `/sessions/{session_id}/control/renew` | Renew agent control lease for active session |
+| POST | `/sessions/{session_id}/control/mode` | Set session control mode |
+| GET | `/control/mode` | Instance/session/effective control modes |
+| POST | `/control/mode` | Set instance control mode |
 | GET | `/ui` | noVNC + API dashboard UI |
 | GET | `/windows` | List visible windows |
 | POST | `/windows/focus` | Focus a window |
@@ -129,7 +136,10 @@ Gracefully stop the recorder and UI components, shut down Wine, and terminate th
   - `delay` (optional): Seconds to wait before terminating (default: 0.5).
   - `wine_shutdown` (optional): Whether to run `wineboot --shutdown` and `wineserver -k` before exiting (default: true).
   - `power_off` (optional): Immediately terminate the container (unsafe; skips graceful shutdown).
-- **Response:** `{"status":"shutting_down","delay_seconds":0.5,"wine_shutdown":{...},"component_shutdown":{...}}`
+- **Response (graceful):** `{"status":"shutting_down","delay_seconds":0.5,"results":{"recorder":"ok","wine":{...},"components":{...}}}`
+- **Response (power_off):** `{"status":"powering_off","delay_seconds":0.5}`
+- **Idempotency:** Repeated requests during an in-progress shutdown return
+  `{"status":"already_shutting_down","mode":"graceful|power_off"}`.
 
 #### `POST /openbox/reconfigure`
 Reload the Openbox configuration.
@@ -153,6 +163,9 @@ Suspend a session without terminating the container.
   - `session_root` (optional): Session root when using `session_id`.
   - `shutdown_wine` (optional): Stop Wine services (default: true).
   - `stop_recording` (optional): Stop active recording (default: true).
+- **Transactional behavior:** If pre-suspend steps fail (e.g., stop recording or Wine shutdown),
+  suspend is aborted with `500` and session state is not mutated.
+- **Response:** `{"status":"suspended|completed","session_dir":"...","session_id":"...","session_mode":"persistent|oneshot","wine_shutdown":{...}}`
 
 #### `POST /sessions/resume`
 Resume an existing session directory.
@@ -161,6 +174,11 @@ Resume an existing session directory.
   - `session_root` (optional): Session root when using `session_id`.
   - `restart_wine` (optional): Restart Wine services (default: true).
   - `stop_recording` (optional): Stop active recording before switching (default: true).
+
+#### `POST /sessions/{session_id}/control/renew`
+Renew an existing agent-control lease.
+- Requires `session_id` to be the currently active session.
+- Returns `409` if the target session is not active.
 
 ### Dashboard
 

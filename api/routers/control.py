@@ -64,6 +64,7 @@ async def grant_control(session_id: str, data: GrantControlModel):
 async def renew_control(session_id: str, data: GrantControlModel):
     """Agent requests lease renewal."""
     op_started = time.perf_counter()
+    _require_active_session_id(session_id)
     await broker.renew_agent(data.lease_seconds)
     active_dir = read_session_dir()
     emit_operation_timing(
@@ -121,6 +122,12 @@ async def set_session_control_mode(
     session_id: str, data: ControlPolicyModeModel, allow_inactive: bool = False
 ):
     active_dir = read_session_dir()
+    target_dir = resolve_session_dir(session_id, None, None)
+    if not allow_inactive and active_dir != target_dir:
+        raise HTTPException(
+            status_code=409,
+            detail="Target session is not active. Set allow_inactive=true to override.",
+        )
     if (not allow_inactive) and active_dir is not None:
         runtime_mode = os.getenv("MODE", "headless")
         state = broker.get_state()
@@ -139,13 +146,7 @@ async def set_session_control_mode(
         if validation_errors:
             raise HTTPException(status_code=409, detail="; ".join(validation_errors))
 
-    target_dir = resolve_session_dir(session_id, None, None)
     write_session_control_mode(target_dir, data.mode.value)
-    if not allow_inactive and active_dir != target_dir:
-        raise HTTPException(
-            status_code=409,
-            detail="Target session is not active. Set allow_inactive=true to override.",
-        )
     if active_dir == target_dir:
         await broker.set_session_control_mode(data.mode)
     return {"session_id": session_id, "mode": data.mode.value}

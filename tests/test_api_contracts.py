@@ -257,6 +257,35 @@ def test_control_mode_endpoints_contract(tmp_path):
     assert get_session_res.status_code == 200
 
 
+def test_control_mode_set_active_check_happens_before_write(tmp_path):
+    session_dir = tmp_path / "session-1"
+    session_dir.mkdir()
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}):
+        with patch(
+            "api.routers.control.resolve_session_dir", return_value=str(session_dir)
+        ):
+            with patch("api.routers.control.read_session_dir", return_value="/tmp/not-active"):
+                with patch("api.routers.control.write_session_control_mode") as write_mode:
+                    response = client.post(
+                        "/sessions/session-1/control/mode",
+                        json={"mode": "human-only"},
+                        headers=_auth(),
+                    )
+    assert response.status_code == 409
+    write_mode.assert_not_called()
+
+
+def test_control_renew_requires_active_session():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.control.read_session_dir", return_value="/tmp/other"):
+            response = client.post(
+                "/sessions/abc/control/renew",
+                json={"lease_seconds": 30},
+                headers=_auth(),
+            )
+    assert response.status_code == 409
+
+
 def test_control_mode_admission_blocks_headless_human_only():
     class _State:
         instance_control_mode = ControlPolicyMode.AGENT_ONLY
