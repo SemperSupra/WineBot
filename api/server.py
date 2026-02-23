@@ -24,7 +24,7 @@ from api.utils.files import (
     link_wine_user_dir,
     write_instance_state,
 )
-from api.utils.process import process_store
+from api.utils.process import reap_finished_tracked_processes
 from api.core.discovery import discovery_manager
 from api.core.versioning import (
     API_VERSION,
@@ -60,10 +60,8 @@ async def resource_monitor_task():
     cleanup_counter = 0
     logger.info("Resource monitor task started.")
     while True:
-        # Reap zombie processes
-        for proc in list(process_store):
-            if proc.poll() is not None:
-                process_store.discard(proc)
+        # Reap completed detached children under lock.
+        reap_finished_tracked_processes()
 
         # Periodic session cleanup (every 60 seconds)
         cleanup_counter += 5

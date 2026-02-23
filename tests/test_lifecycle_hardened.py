@@ -127,6 +127,38 @@ def test_lifecycle_shutdown_power_off(tmp_path):
                         )
 
 
+def test_lifecycle_shutdown_idempotent_guard(tmp_path):
+    session_dir = tmp_path / "active-session"
+    session_dir.mkdir()
+
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch(
+            "api.routers.lifecycle.read_session_dir", return_value=str(session_dir)
+        ):
+            with patch("api.routers.lifecycle.append_lifecycle_event"):
+                with patch("api.routers.lifecycle.atomic_shutdown", return_value={"ok": True}):
+                    with patch("api.routers.lifecycle.schedule_shutdown"):
+                        import api.routers.lifecycle as lifecycle_router
+
+                        lifecycle_router._shutdown_in_progress = False
+                        lifecycle_router._shutdown_mode = ""
+                        lifecycle_router._shutdown_started_at = 0.0
+
+                        res1 = client.post(
+                            "/lifecycle/shutdown",
+                            headers={"X-API-Key": "test-token"},
+                        )
+                        res2 = client.post(
+                            "/lifecycle/shutdown",
+                            headers={"X-API-Key": "test-token"},
+                        )
+
+    assert res1.status_code == 200
+    assert res1.json()["status"] == "shutting_down"
+    assert res2.status_code == 200
+    assert res2.json()["status"] == "already_shutting_down"
+
+
 @pytest.mark.anyio
 async def test_broker_concurrency_renew_vs_revoke():
     broker = InputBroker()

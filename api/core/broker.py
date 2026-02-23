@@ -1,6 +1,6 @@
-import asyncio
 import time
 import secrets
+import threading
 from fastapi import HTTPException
 
 from api.core.models import (
@@ -15,7 +15,7 @@ from api.utils.files import get_instance_control_mode
 
 class InputBroker:
     def __init__(self):
-        self._lock = asyncio.Lock()
+        self._lock = threading.RLock()
         self.state = ControlState(
             session_id="unknown",
             interactive=False,
@@ -51,7 +51,7 @@ class InputBroker:
         return ControlPolicyMode.HYBRID
 
     async def set_instance_control_mode(self, mode: ControlPolicyMode):
-        async with self._lock:
+        with self._lock:
             self.state.instance_control_mode = mode
             self.state.effective_control_mode = self._compute_effective_mode()
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
@@ -61,7 +61,7 @@ class InputBroker:
                 self.state.lease_expiry = None
 
     async def issue_grant_challenge(self, ttl_seconds: int = 30) -> dict:
-        async with self._lock:
+        with self._lock:
             token = secrets.token_urlsafe(18)
             now = time.time()
             self._grant_challenge_token = token
@@ -69,7 +69,7 @@ class InputBroker:
             return {"token": token, "expires_epoch": self._grant_challenge_expiry}
 
     async def set_session_control_mode(self, mode: ControlPolicyMode):
-        async with self._lock:
+        with self._lock:
             self.state.session_control_mode = mode
             self.state.effective_control_mode = self._compute_effective_mode()
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
@@ -84,7 +84,7 @@ class InputBroker:
         interactive: bool,
         session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
     ):
-        async with self._lock:
+        with self._lock:
             self.state.session_id = session_id
             self.state.interactive = interactive
             self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())
@@ -113,7 +113,7 @@ class InputBroker:
         user_ack: bool = False,
         challenge_token: str = "",
     ):
-        async with self._lock:
+        with self._lock:
             if not user_ack:
                 raise HTTPException(
                     status_code=403,
@@ -144,7 +144,7 @@ class InputBroker:
             self.state.user_intent = UserIntent.WAIT
 
     async def renew_agent(self, lease_seconds: int):
-        async with self._lock:
+        with self._lock:
             if self.state.control_mode != ControlMode.AGENT:
                 raise HTTPException(
                     status_code=403, detail="Agent does not hold control"
@@ -161,30 +161,30 @@ class InputBroker:
         print(f"Broker: Agent revoked ({reason})")
 
     async def report_user_activity(self):
-        self.last_user_activity = time.time()
-        if self.state.control_mode == ControlMode.AGENT:
-            async with self._lock:
+        with self._lock:
+            self.last_user_activity = time.time()
+            if self.state.control_mode == ControlMode.AGENT:
                 self.revoke_agent("user_input_override")
 
     async def report_agent_activity(self):
-        self.last_agent_activity = time.time()
+        with self._lock:
+            self.last_agent_activity = time.time()
 
     async def set_user_intent(self, intent: UserIntent):
-        async with self._lock:
+        with self._lock:
             self.state.user_intent = intent
             if intent == UserIntent.STOP_NOW:
                 self.revoke_agent("user_stop_now")
 
     async def check_access(self) -> bool:
         """Returns True if agent is allowed to execute."""
-        if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
-            return False
-        if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
-            return self.state.control_mode == ControlMode.AGENT
-        if not self.state.interactive:
-            return True
-
-        async with self._lock:
+        with self._lock:
+            if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
+                return False
+            if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
+                return self.state.control_mode == ControlMode.AGENT
+            if not self.state.interactive:
+                return True
             if self.state.control_mode != ControlMode.AGENT:
                 return False
             if self.state.lease_expiry and time.time() > self.state.lease_expiry:
@@ -196,7 +196,9 @@ class InputBroker:
             return True
 
     def get_state(self) -> ControlState:
-        return self.state
+        # Return a detached snapshot so callers cannot mutate shared broker state.
+        with self._lock:
+            return self.state.model_copy(deep=True)
 
 
 # Global singleton

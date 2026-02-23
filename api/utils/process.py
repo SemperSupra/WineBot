@@ -24,17 +24,38 @@ _cmd_telemetry_lock = threading.Lock()
 _cmd_telemetry_timestamps: deque[float] = deque()
 
 
-def manage_process(proc: subprocess.Popen):
+class ProcessCapacityError(RuntimeError):
+    """Raised when detached-process tracking capacity is exhausted."""
+
+
+def _reap_finished_tracked_processes_locked() -> int:
+    removed = 0
+    for p in list(process_store):
+        if p.poll() is not None:
+            process_store.discard(p)
+            removed += 1
+    return removed
+
+
+def reap_finished_tracked_processes() -> int:
+    with process_store_lock:
+        return _reap_finished_tracked_processes_locked()
+
+
+def manage_process(proc: subprocess.Popen) -> None:
     """Track a detached process to ensure it is reaped later. Enforces safety cap."""
     with process_store_lock:
         if len(process_store) >= PROCESS_STORE_CAP:
-            # Emergency reap before adding.
-            for p in list(process_store):
-                if p.poll() is not None:
-                    process_store.discard(p)
+            _reap_finished_tracked_processes_locked()
             # If still full, refuse to grow unbounded.
             if len(process_store) >= PROCESS_STORE_CAP:
-                return
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                raise ProcessCapacityError(
+                    f"Detached process tracking capacity reached ({PROCESS_STORE_CAP})."
+                )
         process_store.add(proc)
 
 
