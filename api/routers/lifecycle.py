@@ -485,10 +485,25 @@ async def suspend_session(
         ):
             try:
                 await stop_recording()
-            except Exception:
-                pass
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to stop recording before suspend: {exc}",
+                )
+        wine_shutdown_result: Optional[Dict[str, Any]] = None
         if data.shutdown_wine:
-            graceful_wine_shutdown(session_dir)
+            wine_shutdown_result = graceful_wine_shutdown(session_dir)
+            failing_steps = [
+                name for name, result in wine_shutdown_result.items() if not result.get("ok")
+            ]
+            if failing_steps:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Session suspend aborted due to Wine shutdown failure. "
+                        f"Failed steps: {', '.join(failing_steps)}"
+                    ),
+                )
         new_state = "completed" if session_mode == "oneshot" else "suspended"
         write_session_state(session_dir, new_state)
         append_lifecycle_event(
@@ -497,12 +512,14 @@ async def suspend_session(
             "Session suspended via API" if new_state == "suspended" else "One-shot session completed",
             source="api",
         )
-        payload = {
+        payload: Dict[str, Any] = {
             "status": new_state,
             "session_dir": session_dir,
             "session_id": os.path.basename(session_dir),
             "session_mode": session_mode,
         }
+        if wine_shutdown_result is not None:
+            payload["wine_shutdown"] = wine_shutdown_result
         emit_operation_timing(
             session_dir,
             feature="lifecycle",

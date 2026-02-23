@@ -60,7 +60,10 @@ def test_sessions_suspend_oneshot_marks_completed(tmp_path):
         {"API_TOKEN": "test-token", "WINEBOT_SESSION_MODE": "oneshot"},
     ):
         with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
-            with patch("api.routers.lifecycle.graceful_wine_shutdown"):
+            with patch(
+                "api.routers.lifecycle.graceful_wine_shutdown",
+                return_value={"wineboot": {"ok": True}, "wineserver": {"ok": True}},
+            ):
                 response = client.post(
                     "/sessions/suspend",
                     headers={"X-API-Key": "test-token"},
@@ -84,6 +87,47 @@ def test_sessions_resume_completed_oneshot_conflict(tmp_path):
         )
     assert response.status_code == 409
     assert "cannot be resumed" in response.json()["detail"]
+
+
+def test_sessions_suspend_aborts_on_wine_shutdown_failure(tmp_path):
+    session_dir = tmp_path / "session-fail"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text("{}", encoding="utf-8")
+    (session_dir / "session.state").write_text("active", encoding="utf-8")
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
+            with patch(
+                "api.routers.lifecycle.graceful_wine_shutdown",
+                return_value={"wineboot": {"ok": False}, "wineserver": {"ok": True}},
+            ):
+                response = client.post(
+                    "/sessions/suspend",
+                    headers={"X-API-Key": "test-token"},
+                )
+    assert response.status_code == 500
+    assert "suspend aborted" in response.json()["detail"].lower()
+    assert (session_dir / "session.state").read_text(encoding="utf-8").strip() == "active"
+
+
+def test_sessions_suspend_aborts_on_recording_stop_failure(tmp_path):
+    session_dir = tmp_path / "session-recording-fail"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text("{}", encoding="utf-8")
+    (session_dir / "session.state").write_text("active", encoding="utf-8")
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
+            with patch("api.routers.lifecycle.recorder_running", return_value=True):
+                with patch(
+                    "api.routers.lifecycle.stop_recording",
+                    side_effect=RuntimeError("stop failed"),
+                ):
+                    response = client.post(
+                        "/sessions/suspend",
+                        headers={"X-API-Key": "test-token"},
+                    )
+    assert response.status_code == 500
+    assert "failed to stop recording" in response.json()["detail"].lower()
+    assert (session_dir / "session.state").read_text(encoding="utf-8").strip() == "active"
 
 
 def test_sessions_resume_non_existent_dir():
