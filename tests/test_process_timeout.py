@@ -1,4 +1,7 @@
 import time
+import pytest
+
+import api.utils.process as process_utils
 from api.utils.process import safe_command
 
 def test_default_timeout_respected():
@@ -39,3 +42,31 @@ def test_explicit_timeout_override():
     assert res["ok"] is False
     assert res["error"] == "timeout"
     assert 0.8 <= duration <= 2.5
+
+
+def test_manage_process_raises_when_capacity_exhausted(monkeypatch):
+    class FakeProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+            self._terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self._terminated = True
+
+    original_store = process_utils.process_store
+    fake_store = set()
+    monkeypatch.setattr(process_utils, "process_store", fake_store)
+    monkeypatch.setattr(process_utils, "PROCESS_STORE_CAP", 1)
+
+    first = FakeProc(1)
+    second = FakeProc(2)
+    process_utils.manage_process(first)
+    with pytest.raises(process_utils.ProcessCapacityError):
+        process_utils.manage_process(second)
+    assert second._terminated is True
+    assert len(fake_store) == 1
+
+    monkeypatch.setattr(process_utils, "process_store", original_store)

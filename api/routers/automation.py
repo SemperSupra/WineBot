@@ -10,7 +10,7 @@ from api.utils.files import (
     to_wine_path,
     read_session_dir,
 )
-from api.utils.process import safe_command, manage_process
+from api.utils.process import safe_command, manage_process, ProcessCapacityError
 from api.core.models import (
     AppRunModel,
     InspectWindowModel,
@@ -85,7 +85,10 @@ async def run_app(data: AppRunModel):
 
     if data.detach:
         proc = subprocess.Popen(cmd, start_new_session=True)
-        manage_process(proc)
+        try:
+            manage_process(proc)
+        except ProcessCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         session_dir = read_session_dir()
         emit_operation_timing(
             session_dir,

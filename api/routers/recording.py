@@ -29,7 +29,7 @@ from api.utils.files import (
     read_pid,
     performance_metrics_log_path,
 )
-from api.utils.process import manage_process, run_async_command
+from api.utils.process import manage_process, run_async_command, ProcessCapacityError
 
 router = APIRouter(prefix="/recording", tags=["recording"])
 
@@ -150,7 +150,10 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             str(segment),
         ]
         proc = subprocess.Popen(cmd)
-        manage_process(proc)
+        try:
+            manage_process(proc)
+        except ProcessCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
 
         pid = None
         pid_file = os.path.join(session_dir, "recorder.pid")

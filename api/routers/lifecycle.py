@@ -38,6 +38,11 @@ from api.core.telemetry import emit_operation_timing
 
 router = APIRouter(tags=["lifecycle"])
 session_transition_lock = asyncio.Lock()
+shutdown_transition_lock = asyncio.Lock()
+_shutdown_in_progress = False
+_shutdown_mode = ""
+_shutdown_started_at = 0.0
+_SHUTDOWN_GUARD_TTL_SEC = 120.0
 
 
 # --- Lifecycle Logic ---
@@ -181,13 +186,6 @@ def schedule_shutdown(session_dir: Optional[str], delay: float, sig: int) -> Non
         target=_shutdown_process, args=(session_dir, delay, sig), daemon=True
     )
     thread.start()
-    try:
-        subprocess.Popen(
-            ["/bin/sh", "-c", f"sleep {max(0.0, delay)}; kill -{int(sig)} 1"],
-            start_new_session=True,
-        )
-    except Exception:
-        pass
 
 
 @router.get("/lifecycle/status")
@@ -317,8 +315,19 @@ async def lifecycle_shutdown(
     power_off: bool = False,
 ):
     """Gracefully stop components and terminate the container process."""
+    global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
     op_started = time.perf_counter()
     session_dir = read_session_dir()
+    async with shutdown_transition_lock:
+        now = time.time()
+        if _shutdown_in_progress and (now - _shutdown_started_at) <= _SHUTDOWN_GUARD_TTL_SEC:
+            return {
+                "status": "already_shutting_down",
+                "mode": _shutdown_mode or "unknown",
+            }
+        _shutdown_in_progress = True
+        _shutdown_mode = "power_off" if power_off else "graceful"
+        _shutdown_started_at = now
     append_lifecycle_event(
         session_dir, "shutdown_requested", "Shutdown requested via API", source="api"
     )

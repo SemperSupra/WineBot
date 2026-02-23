@@ -59,6 +59,7 @@ from api.utils.files import (
 )
 from api.utils.process import (
     manage_process,
+    ProcessCapacityError,
     pid_running,
     safe_command,
     run_async_command,
@@ -369,7 +370,10 @@ def input_trace_start(data: Optional[InputTraceStartModel] = Body(default=None))
         if data.motion_sample_ms and data.motion_sample_ms > 0:
             cmd.extend(["--motion-sample-ms", str(data.motion_sample_ms)])
         proc = subprocess.Popen(cmd)
-        manage_process(proc)
+        try:
+            manage_process(proc)
+        except ProcessCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
 
     append_lifecycle_event(
         session_dir, "input_trace_started", "Input trace started", source="api"
@@ -528,7 +532,10 @@ def input_trace_x11_core_start(
         if data.motion_sample_ms and data.motion_sample_ms > 0:
             cmd.extend(["--motion-sample-ms", str(data.motion_sample_ms)])
         proc = subprocess.Popen(cmd)
-        manage_process(proc)
+        try:
+            manage_process(proc)
+        except ProcessCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         try:
             with open(input_trace_x11_core_pid_path(session_dir), "w") as f:
                 f.write(str(proc.pid))
@@ -913,7 +920,10 @@ def input_trace_windows_start(
             proc = start_ahk()
             backend_used = "ahk"
 
-        manage_process(proc)
+        try:
+            manage_process(proc)
+        except ProcessCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         try:
             with open(input_trace_windows_pid_path(session_dir), "w") as f:
                 f.write(str(proc.pid))
