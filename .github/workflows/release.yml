@@ -77,6 +77,8 @@ jobs:
           sudo rm -rf /usr/share/swift
           df -h
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Verify capability matrix references
+        run: python3 scripts/ci/verify-capability-matrix.py
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Build image for tests
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
@@ -129,6 +131,14 @@ jobs:
             pytest -v /work/tests/e2e/test_ux_quality.py
         timeout-minutes: 15
 
+      - name: Keyboard UX accessibility checks
+        env:
+          WINEBOT_IMAGE_VERSION: verify-test-final
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+            pytest -v /work/tests/e2e/test_ux_keyboard_accessibility.py
+        timeout-minutes: 10
+
       - name: Free disk before scan
         run: |
           docker system df || true
@@ -159,6 +169,16 @@ jobs:
       - name: Validate REL-RUNNER forbidden patterns
         run: |
           TARGET_INTENT=rel-runner scripts/ci/check-rel-forbidden.sh
+
+      - name: Generate trust pack artifact
+        run: |
+          scripts/ci/generate-trust-pack.sh artifacts/trust-pack-release
+
+      - name: Upload trust pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: trust-pack-release
+          path: artifacts/trust-pack-release
 
   publish:
     runs-on: ubuntu-latest

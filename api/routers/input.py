@@ -21,8 +21,8 @@ from api.core.models import (
     InputTraceWindowsStopModel,
 )
 from api.core.broker import broker
+from api.core.telemetry import emit_operation_timing
 from api.utils.files import (
-    ensure_session_dir,
     append_input_event,
     append_trace_event,
     read_session_dir,
@@ -70,6 +70,16 @@ input_trace_lock = threading.Lock()
 input_trace_x11_core_lock = threading.Lock()
 input_trace_windows_lock = threading.Lock()
 input_trace_network_lock = threading.Lock()
+
+
+def _require_active_session() -> str:
+    session_dir = read_session_dir()
+    if not session_dir or not os.path.isdir(session_dir):
+        raise HTTPException(
+            status_code=409,
+            detail="No active session. Resume or create a session before input operations.",
+        )
+    return session_dir
 
 
 @router.get("/events")
@@ -134,6 +144,7 @@ def input_events(
 @router.post("/mouse/click")
 async def click_at(data: ClickModel):
     """Click at coordinates (x, y)."""
+    op_started = time.perf_counter()
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
@@ -184,9 +195,7 @@ async def click_at(data: ClickModel):
         except Exception:
             pass
 
-    session_dir = ensure_session_dir()
-    if not session_dir:
-        raise HTTPException(status_code=500, detail="No active session")
+    session_dir = _require_active_session()
 
     trace_id = uuid.uuid4().hex
     append_input_event(
@@ -220,6 +229,18 @@ async def click_at(data: ClickModel):
 
     result = await run_async_command(cmd)
     if not result.get("ok"):
+        emit_operation_timing(
+            session_dir,
+            feature="input",
+            capability="mouse_click",
+            feature_set="control_input_automation",
+            operation="api_click",
+            duration_ms=(time.perf_counter() - op_started) * 1000.0,
+            result="error",
+            source="api",
+            metric_name="input.api_click.latency",
+            tags={"reason": "xdotool_failed"},
+        )
         raise HTTPException(
             status_code=500, detail=f"xdotool failed: {result.get('stderr')}"
         )
@@ -253,6 +274,19 @@ async def click_at(data: ClickModel):
     }
     append_trace_event(input_trace_windows_log_path(session_dir), payload)
 
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="mouse_click",
+        feature_set="control_input_automation",
+        operation="api_click",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.api_click.latency",
+        tags={"relative": bool(data.relative)},
+    )
+
     return {"status": "clicked", "x": data.x, "y": data.y, "trace_id": trace_id}
 
 
@@ -263,6 +297,7 @@ def input_trace_status(
     session_root: Optional[str] = None,
 ):
     """Input trace status for the active or specified session."""
+    op_started = time.perf_counter()
     target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
@@ -274,18 +309,31 @@ def input_trace_status(
         return {"running": False, "state": None, "session_dir": None}
     assert isinstance(target_dir, str)
     pid = input_trace_pid(target_dir)
-    return {
+    payload = {
         "session_dir": target_dir,
         "pid": pid,
         "running": input_trace_running(target_dir),
         "state": input_trace_state(target_dir),
         "log_path": input_trace_log_path(target_dir),
     }
+    emit_operation_timing(
+        target_dir,
+        feature="input",
+        capability="trace_x11",
+        feature_set="control_input_automation",
+        operation="trace_status",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_status.latency",
+    )
+    return payload
 
 
 @router.post("/trace/start")
 def input_trace_start(data: Optional[InputTraceStartModel] = Body(default=None)):
     """Start the input tracing process for the active session."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceStartModel()
     session_dir: Optional[str] = None
@@ -296,7 +344,7 @@ def input_trace_start(data: Optional[InputTraceStartModel] = Body(default=None))
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = ensure_session_dir()
+        session_dir = _require_active_session()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
     assert isinstance(session_dir, str)
@@ -326,17 +374,30 @@ def input_trace_start(data: Optional[InputTraceStartModel] = Body(default=None))
     append_lifecycle_event(
         session_dir, "input_trace_started", "Input trace started", source="api"
     )
-    return {
+    payload = {
         "status": "started",
         "session_dir": session_dir,
         "pid": proc.pid,
         "log_path": input_trace_log_path(session_dir),
     }
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_x11",
+        feature_set="control_input_automation",
+        operation="trace_start",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_start.latency",
+    )
+    return payload
 
 
 @router.post("/trace/stop")
 def input_trace_stop(data: Optional[InputTraceStopModel] = Body(default=None)):
     """Stop the input tracing process for the active session."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceStopModel()
     session_dir: Optional[str] = None
@@ -373,7 +434,19 @@ def input_trace_stop(data: Optional[InputTraceStopModel] = Body(default=None)):
     append_lifecycle_event(
         session_dir, "input_trace_stopped", "Input trace stopped", source="api"
     )
-    return {"status": "stopped", "session_dir": session_dir}
+    payload = {"status": "stopped", "session_dir": session_dir}
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_x11",
+        feature_set="control_input_automation",
+        operation="trace_stop",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_stop.latency",
+    )
+    return payload
 
 
 @router.get("/trace/x11core/status")
@@ -383,6 +456,7 @@ def input_trace_x11_core_status(
     session_root: Optional[str] = None,
 ):
     """X11 core input trace status."""
+    op_started = time.perf_counter()
     target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
@@ -394,13 +468,25 @@ def input_trace_x11_core_status(
         return {"running": False, "state": None, "session_dir": None}
     assert isinstance(target_dir, str)
     pid = input_trace_x11_core_pid(target_dir)
-    return {
+    payload = {
         "session_dir": target_dir,
         "pid": pid,
         "running": input_trace_x11_core_running(target_dir),
         "state": input_trace_x11_core_state(target_dir),
         "log_path": input_trace_x11_core_log_path(target_dir),
     }
+    emit_operation_timing(
+        target_dir,
+        feature="input",
+        capability="trace_x11_core",
+        feature_set="control_input_automation",
+        operation="trace_status",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_x11_core_status.latency",
+    )
+    return payload
 
 
 @router.post("/trace/x11core/start")
@@ -408,6 +494,7 @@ def input_trace_x11_core_start(
     data: Optional[InputTraceX11CoreStartModel] = Body(default=None),
 ):
     """Start the X11 core input tracing process for the active session."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceX11CoreStartModel()
     session_dir: Optional[str] = None
@@ -418,7 +505,7 @@ def input_trace_x11_core_start(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = ensure_session_dir()
+        session_dir = _require_active_session()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
     assert isinstance(session_dir, str)
@@ -454,12 +541,24 @@ def input_trace_x11_core_start(
         "X11 core input trace started",
         source="api",
     )
-    return {
+    payload = {
         "status": "started",
         "session_dir": session_dir,
         "pid": proc.pid,
         "log_path": input_trace_x11_core_log_path(session_dir),
     }
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_x11_core",
+        feature_set="control_input_automation",
+        operation="trace_start",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_x11_core_start.latency",
+    )
+    return payload
 
 
 @router.post("/trace/x11core/stop")
@@ -467,6 +566,7 @@ def input_trace_x11_core_stop(
     data: Optional[InputTraceX11CoreStopModel] = Body(default=None),
 ):
     """Stop the X11 core input tracing process for the active session."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceX11CoreStopModel()
     if data.session_id or data.session_dir:
@@ -506,7 +606,19 @@ def input_trace_x11_core_stop(
         "X11 core input trace stopped",
         source="api",
     )
-    return {"status": "stopped", "session_dir": session_dir}
+    payload = {"status": "stopped", "session_dir": session_dir}
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_x11_core",
+        feature_set="control_input_automation",
+        operation="trace_stop",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_x11_core_stop.latency",
+    )
+    return payload
 
 
 @router.get("/trace/client/status")
@@ -538,6 +650,7 @@ def input_trace_client_start(
     data: Optional[InputTraceClientStartModel] = Body(default=None),
 ):
     """Enable client-side input trace collection."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceClientStartModel()
     session_dir: Optional[str] = None
@@ -548,7 +661,7 @@ def input_trace_client_start(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = ensure_session_dir()
+        session_dir = _require_active_session()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
     assert isinstance(session_dir, str)
@@ -559,11 +672,23 @@ def input_trace_client_start(
         "Client input trace enabled",
         source="api",
     )
-    return {
+    payload = {
         "status": "enabled",
         "session_dir": session_dir,
         "log_path": input_trace_client_log_path(session_dir),
     }
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_client",
+        feature_set="control_input_automation",
+        operation="trace_enable",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_client_enable.latency",
+    )
+    return payload
 
 
 @router.post("/trace/client/stop")
@@ -571,6 +696,7 @@ def input_trace_client_stop(
     data: Optional[InputTraceClientStopModel] = Body(default=None),
 ):
     """Disable client-side input trace collection."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceClientStopModel()
     session_dir: Optional[str] = None
@@ -592,7 +718,19 @@ def input_trace_client_stop(
         "Client input trace disabled",
         source="api",
     )
-    return {"status": "disabled", "session_dir": session_dir}
+    payload = {"status": "disabled", "session_dir": session_dir}
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_client",
+        feature_set="control_input_automation",
+        operation="trace_disable",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_client_disable.latency",
+    )
+    return payload
 
 
 @router.post("/client/event")
@@ -628,6 +766,7 @@ def input_trace_windows_status(
     session_root: Optional[str] = None,
 ):
     """Windows-side input trace status."""
+    op_started = time.perf_counter()
     target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
@@ -639,7 +778,7 @@ def input_trace_windows_status(
         return {"running": False, "state": None, "session_dir": None}
     assert isinstance(target_dir, str)
     pid = input_trace_windows_pid(target_dir)
-    return {
+    payload = {
         "session_dir": target_dir,
         "pid": pid,
         "running": input_trace_windows_running(target_dir),
@@ -647,6 +786,18 @@ def input_trace_windows_status(
         "backend": input_trace_windows_backend(target_dir),
         "log_path": input_trace_windows_log_path(target_dir),
     }
+    emit_operation_timing(
+        target_dir,
+        feature="input",
+        capability="trace_windows",
+        feature_set="control_input_automation",
+        operation="trace_status",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_windows_status.latency",
+    )
+    return payload
 
 
 @router.post("/trace/windows/start")
@@ -654,6 +805,7 @@ def input_trace_windows_start(
     data: Optional[InputTraceWindowsStartModel] = Body(default=None),
 ):
     """Start Windows-side input tracing."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceWindowsStartModel()
     session_dir: Optional[str] = None
@@ -664,7 +816,7 @@ def input_trace_windows_start(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = ensure_session_dir()
+        session_dir = _require_active_session()
     if not session_dir:
         raise HTTPException(status_code=500, detail="No active session")
     assert isinstance(session_dir, str)
@@ -786,6 +938,18 @@ def input_trace_windows_start(
     }
     if warnings:
         payload["warnings"] = warnings
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_windows",
+        feature_set="control_input_automation",
+        operation="trace_start",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_windows_start.latency",
+        tags={"backend": backend_used or "unknown"},
+    )
     return payload
 
 
@@ -794,6 +958,7 @@ def input_trace_windows_stop(
     data: Optional[InputTraceWindowsStopModel] = Body(default=None),
 ):
     """Stop Windows-side input tracing."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceWindowsStopModel()
     session_dir: Optional[str] = None
@@ -826,7 +991,19 @@ def input_trace_windows_stop(
         "Windows input trace stopped",
         source="api",
     )
-    return {"status": "stopped", "session_dir": session_dir}
+    payload = {"status": "stopped", "session_dir": session_dir}
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_windows",
+        feature_set="control_input_automation",
+        operation="trace_stop",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_windows_stop.latency",
+    )
+    return payload
 
 
 @router.get("/trace/network/status")
@@ -836,6 +1013,7 @@ def input_trace_network_status(
     session_root: Optional[str] = None,
 ):
     """Network input trace status (VNC proxy)."""
+    op_started = time.perf_counter()
     target_dir: Optional[str] = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
@@ -847,13 +1025,25 @@ def input_trace_network_status(
         return {"running": False, "state": None, "session_dir": None}
     assert isinstance(target_dir, str)
     pid = input_trace_network_pid(target_dir)
-    return {
+    payload = {
         "session_dir": target_dir,
         "pid": pid,
         "running": input_trace_network_running(target_dir),
         "state": input_trace_network_state(target_dir),
         "log_path": input_trace_network_log_path(target_dir),
     }
+    emit_operation_timing(
+        target_dir,
+        feature="input",
+        capability="trace_network",
+        feature_set="control_input_automation",
+        operation="trace_status",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_network_status.latency",
+    )
+    return payload
 
 
 @router.post("/trace/network/start")
@@ -861,6 +1051,7 @@ def input_trace_network_start(
     data: Optional[InputTraceClientStartModel] = Body(default=None),
 ):
     """Enable network input trace logging (proxy must be running)."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceClientStartModel()
     session_dir: Optional[str] = None
@@ -871,9 +1062,7 @@ def input_trace_network_start(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = ensure_session_dir()
-    if not session_dir:
-        raise HTTPException(status_code=500, detail="No active session")
+        session_dir = _require_active_session()
     assert isinstance(session_dir, str)
     with input_trace_network_lock:
         if not input_trace_network_running(session_dir):
@@ -889,11 +1078,23 @@ def input_trace_network_start(
         "Network input trace enabled",
         source="api",
     )
-    return {
+    payload = {
         "status": "enabled",
         "session_dir": session_dir,
         "log_path": input_trace_network_log_path(session_dir),
     }
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_network",
+        feature_set="control_input_automation",
+        operation="trace_enable",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_network_enable.latency",
+    )
+    return payload
 
 
 @router.post("/trace/network/stop")
@@ -901,6 +1102,7 @@ def input_trace_network_stop(
     data: Optional[InputTraceClientStopModel] = Body(default=None),
 ):
     """Disable network input trace logging (proxy must be running)."""
+    op_started = time.perf_counter()
     if data is None:
         data = InputTraceClientStopModel()
     session_dir: Optional[str] = None
@@ -925,4 +1127,16 @@ def input_trace_network_stop(
         "Network input trace disabled",
         source="api",
     )
-    return {"status": "disabled", "session_dir": session_dir}
+    payload = {"status": "disabled", "session_dir": session_dir}
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="trace_network",
+        feature_set="control_input_automation",
+        operation="trace_disable",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.trace_network_disable.latency",
+    )
+    return payload

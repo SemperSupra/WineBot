@@ -126,6 +126,7 @@ def test_winebotctl_health():
                 "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
                 "CURL_RESPONSES": stub_info["responses"],
                 "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
             }
         )
         result = run_cli(["health"], env)
@@ -154,6 +155,7 @@ def test_winebotctl_idempotent_cache():
                 "CURL_RESPONSES": stub_info["responses"],
                 "CURL_COUNT_FILE": stub_info["count"],
                 "WINEBOT_IDEMPOTENT_CACHE": str(cache_path),
+                "WINEBOT_API_URL": "http://localhost:8000",
             }
         )
         result1 = run_cli(
@@ -193,6 +195,7 @@ def test_winebotctl_recording_start_payload():
                 "CURL_RESPONSES": stub_info["responses"],
                 "CURL_COUNT_FILE": stub_info["count"],
                 "CURL_BODY_LOG": stub_info["body_log"],
+                "WINEBOT_API_URL": "http://localhost:8000",
             }
         )
         result = run_cli(["recording", "start"], env)
@@ -207,3 +210,94 @@ def test_winebotctl_recording_start_payload():
         assert url.endswith("/recording/start")
         payload = json.loads(body)
         assert payload.get("new_session") is False
+
+
+def test_winebotctl_lifecycle_shutdown_requires_confirmation():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        stub_info = make_curl_stub(
+            tmpdir,
+            {
+                "POST http://localhost:8000/lifecycle/shutdown": {
+                    "status": 200,
+                    "body": {"status": "shutting_down"},
+                }
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                "CURL_RESPONSES": stub_info["responses"],
+                "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
+            }
+        )
+        result = run_cli(["lifecycle", "shutdown"], env)
+        assert result.returncode != 0
+        assert "requires confirmation" in result.stderr
+        count_path = Path(stub_info["count"])
+        count = int(count_path.read_text().strip()) if count_path.exists() else 0
+        assert count == 0
+
+
+def test_winebotctl_lifecycle_shutdown_with_yes_calls_api():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        stub_info = make_curl_stub(
+            tmpdir,
+            {
+                "POST http://localhost:8000/lifecycle/shutdown": {
+                    "status": 200,
+                    "body": {"status": "shutting_down"},
+                }
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                "CURL_RESPONSES": stub_info["responses"],
+                "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
+            }
+        )
+        result = run_cli(["lifecycle", "shutdown", "--yes"], env)
+        assert result.returncode == 0
+        payload = json.loads(result.stdout.strip())
+        assert payload["status"] == "shutting_down"
+
+
+def test_winebotctl_perf_summary():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        stub_info = make_curl_stub(
+            tmpdir,
+            {
+                "GET http://localhost:8000/recording/perf/summary": {
+                    "status": 200,
+                    "body": {
+                        "session_dir": "/artifacts/sessions/session-1",
+                        "metrics": {
+                            "recording.api_pause.latency": {
+                                "count": 2,
+                                "p95_ms": 22.0,
+                            }
+                        },
+                    },
+                }
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                "CURL_RESPONSES": stub_info["responses"],
+                "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
+            }
+        )
+        result = run_cli(["perf", "summary"], env)
+        assert result.returncode == 0
+        payload = json.loads(result.stdout.strip())
+        assert payload["metrics"]["recording.api_pause.latency"]["count"] == 2

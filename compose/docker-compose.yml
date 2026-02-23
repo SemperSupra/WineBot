@@ -43,7 +43,7 @@ x-winebot-base: &winebot_base
     dockerfile: docker/Dockerfile
     target: intent-${BUILD_INTENT:-rel}
     args:
-      BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/sempersupra/winebot-base:base-2026-02-09}
+      BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13}
       VCS_REF: ${VCS_REF:-local}
       BUILD_DATE: ${BUILD_DATE:-local}
       SOURCE_REPO: ${SOURCE_REPO:-https://github.com/sempersupra/winebot}
@@ -51,6 +51,7 @@ x-winebot-base: &winebot_base
   image: winebot:${WINEBOT_IMAGE_VERSION:-local}-${BUILD_INTENT:-rel}
   volumes:
     - ${WINEPREFIX_VOL:-wineprefix}:/wineprefix
+    - winebot-shared:/winebot-shared
     - ../apps:/apps:ro
     - ../automation/assets:/automation/assets:ro
     - ../artifacts:/artifacts
@@ -63,9 +64,15 @@ services:
     environment:
       <<: *winebot_env
       MODE: headless
+      WINEBOT_INSTANCE_CONTROL_MODE: ${WINEBOT_INSTANCE_CONTROL_MODE:-agent-only}
+      WINEBOT_SESSION_CONTROL_MODE: ${WINEBOT_SESSION_CONTROL_MODE:-agent-only}
     ports: []
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "TOKEN=$$(cat /winebot-shared/winebot_api_token 2>/dev/null || cat /tmp/winebot_api_token 2>/dev/null || true); if [ -n \"$$TOKEN\" ]; then curl -fsS -H \"X-API-Key: $$TOKEN\" http://localhost:8000/health || exit 1; else curl -fsS http://localhost:8000/health || exit 1; fi",
+        ]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -78,6 +85,9 @@ services:
     environment:
       <<: *winebot_env
       MODE: interactive
+      WINEBOT_RECORD: ${WINEBOT_RECORD:-1}
+      WINEBOT_INSTANCE_CONTROL_MODE: ${WINEBOT_INSTANCE_CONTROL_MODE:-hybrid}
+      WINEBOT_SESSION_CONTROL_MODE: ${WINEBOT_SESSION_CONTROL_MODE:-hybrid}
       ENABLE_VNC: "1"
       VNC_PASSWORD: ${VNC_PASSWORD:-winebot}
     ports:
@@ -87,7 +97,11 @@ services:
       - "6080:6080"
       - "${WINEDBG_PORT:-2345}:${WINEDBG_PORT:-2345}"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "TOKEN=$$(cat /winebot-shared/winebot_api_token 2>/dev/null || cat /tmp/winebot_api_token 2>/dev/null || true); if [ -n \"$$TOKEN\" ]; then curl -fsS -H \"X-API-Key: $$TOKEN\" http://127.0.0.1:8000/health || exit 1; else curl -fsS http://127.0.0.1:8000/health || exit 1; fi",
+        ]
       interval: 10s
       timeout: 10s
       retries: 30
@@ -109,7 +123,7 @@ services:
     volumes:
       - ..:/work
       - ../artifacts:/output
-      - /tmp:/tmp
+      - winebot-shared:/winebot-shared
     command: >
       bash -c "sleep 15 && /work/scripts/ci/test.sh && pytest -v -s /work/tests/e2e"
 
@@ -126,7 +140,7 @@ services:
       /work/scripts/ci/lint.sh
 
   smoke-test:
-    image: winebot:test
+    image: winebot:${WINEBOT_IMAGE_VERSION:-local}-${BUILD_INTENT:-rel}
     profiles:
       - test
     volumes:
@@ -136,3 +150,4 @@ services:
 
 volumes:
   wineprefix:
+  winebot-shared:

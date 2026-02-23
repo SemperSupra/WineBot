@@ -65,6 +65,18 @@
       </action>
     </item>
 
+    <separator label="Session Control" />
+    <item label="Graceful Shutdown...">
+      <action name="Execute">
+        <command>/scripts/internal/openbox-shutdown.sh graceful</command>
+      </action>
+    </item>
+    <item label="Power Off (Unsafe)...">
+      <action name="Execute">
+        <command>/scripts/internal/openbox-shutdown.sh power-off</command>
+      </action>
+    </item>
+
     <separator />
     <item label="Exit Openbox">
       <action name="Exit" />

@@ -13,7 +13,7 @@ def auth_headers():
 
 
 @patch("api.routers.input.broker.check_access", return_value=True)
-@patch("api.routers.input.ensure_session_dir", return_value="/tmp/session")
+@patch("api.routers.input._require_active_session", return_value="/tmp/session")
 @patch("api.routers.input.append_input_event")
 @patch("api.routers.input.run_async_command", new_callable=MagicMock)
 def test_click_at_validation(

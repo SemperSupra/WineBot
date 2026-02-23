@@ -20,6 +20,8 @@ Commands:
   test        Run containerized unit/integration tests
   smoke-test  Run containerized end-to-end smoke tests
   build       Build WineBot container images
+  profile     Start a named default runtime profile
+  feature-map Generate auto draft feature/capability commit map
   vuln        Run vulnerability scan on dependencies/images
   ctl         Proxy to winebotctl (API control)
   help        Show this help
@@ -58,7 +60,7 @@ smoke_test() {
     log "Running smoke tests..."
     # Build 'test' intent if it doesn't exist
     docker compose -f "$REPO_ROOT/compose/docker-compose.yml" build winebot
-    docker compose -f "$REPO_ROOT/compose/docker-compose.yml" --profile test run --rm smoke-test
+    "$REPO_ROOT/scripts/bin/smoke-test.sh" --no-build
 }
 
 # 5. Build
@@ -79,6 +81,89 @@ vuln() {
     fi
 }
 
+profile() {
+    sub="${1:-list}"
+    shift || true
+    case "$sub" in
+        list)
+            cat <<EOF
+Default runtime profiles:
+  human-desktop
+  assisted-desktop
+  unattended-runner
+  ci-oneshot
+  support-session
+
+Usage:
+  ./scripts/wb profile up <name> [--build] [--detach]
+EOF
+            ;;
+        up)
+            name="${1:-}"
+            shift || true
+            [ -n "$name" ] || { echo "ERROR: profile name required"; exit 1; }
+
+            build_flag=""
+            detach_flag=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --build) build_flag="--build"; shift ;;
+                    --detach) detach_flag="-d"; shift ;;
+                    *) echo "ERROR: Unknown profile option: $1"; exit 1 ;;
+                esac
+            done
+
+            compose_profile="headless"
+            service="winebot"
+            env_vars=()
+            case "$name" in
+                human-desktop)
+                    compose_profile="interactive"
+                    service="winebot-interactive"
+                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=human-only WINEBOT_SESSION_CONTROL_MODE=human-only)
+                    ;;
+                assisted-desktop)
+                    compose_profile="interactive"
+                    service="winebot-interactive"
+                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=hybrid WINEBOT_SESSION_CONTROL_MODE=hybrid)
+                    ;;
+                unattended-runner)
+                    compose_profile="headless"
+                    service="winebot"
+                    env_vars+=(MODE=headless WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=agent-only WINEBOT_SESSION_CONTROL_MODE=agent-only)
+                    ;;
+                ci-oneshot)
+                    compose_profile="headless"
+                    service="winebot"
+                    env_vars+=(MODE=headless WINEBOT_INSTANCE_MODE=oneshot WINEBOT_SESSION_MODE=oneshot WINEBOT_INSTANCE_CONTROL_MODE=agent-only WINEBOT_SESSION_CONTROL_MODE=agent-only APP_EXE=cmd.exe "APP_ARGS=/c exit /b 0")
+                    ;;
+                support-session)
+                    compose_profile="interactive"
+                    service="winebot-interactive"
+                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=oneshot WINEBOT_INSTANCE_CONTROL_MODE=hybrid WINEBOT_SESSION_CONTROL_MODE=hybrid)
+                    ;;
+                *)
+                    echo "ERROR: Unknown profile '$name'"
+                    exit 1
+                    ;;
+            esac
+
+            log "Starting profile '$name' (compose profile: $compose_profile, service: $service)..."
+            env "${env_vars[@]}" docker compose -f "$REPO_ROOT/compose/docker-compose.yml" --profile "$compose_profile" up --force-recreate $build_flag $detach_flag "$service"
+            ;;
+        *)
+            echo "ERROR: Unknown profile command: $sub"
+            exit 1
+            ;;
+    esac
+}
+
+feature_map() {
+    local limit="${1:-200}"
+    log "Generating feature/capability commit map draft (limit: ${limit})..."
+    python3 "$REPO_ROOT/scripts/internal/generate-feature-commit-map.py" --limit "$limit"
+}
+
 # 7. winebotctl Proxy
 ctl() {
     "$REPO_ROOT/scripts/bin/winebotctl" "$@"
@@ -93,6 +178,8 @@ case "$command" in
     test)       test_suite ;;
     smoke-test) smoke_test ;;
     build)      build "$@" ;;
+    profile)    profile "$@" ;;
+    feature-map) feature_map "$@" ;;
     vuln)       vuln ;;
     ctl)        ctl "$@" ;;
     help|--help|-h) usage ;;

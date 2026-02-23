@@ -16,6 +16,7 @@ from api.utils.files import (
     recorder_pid,
 )
 from api.core.recorder import recording_status
+from api.core.telemetry import emit_operation_timing
 
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -48,18 +49,57 @@ def _process_running(name: str, pid: Optional[int]) -> bool:
 @router.get("")
 def health_check():
     """High-level health summary."""
+    op_started = time.perf_counter()
+    session_dir = read_session_dir()
+    x11_started = time.perf_counter()
     x11 = safe_command(["xdpyinfo"])
+    emit_operation_timing(
+        session_dir,
+        feature="health",
+        capability="subcheck",
+        feature_set="runtime_foundation",
+        operation="health_x11_check",
+        duration_ms=(time.perf_counter() - x11_started) * 1000.0,
+        result="ok" if bool(x11.get("ok")) else "error",
+        source="api",
+        metric_name="health.x11_check.latency",
+    )
     wineprefix = os.getenv("WINEPREFIX", "/wineprefix")
     prefix_ok = os.path.isdir(wineprefix) and os.path.exists(
         os.path.join(wineprefix, "system.reg")
     )
 
     required_tools = ["winedbg", "gdb", "ffmpeg", "xdotool", "xdpyinfo", "Xvfb"]
+    tools_started = time.perf_counter()
     missing = [t for t in required_tools if not check_binary(t)["present"]]
+    emit_operation_timing(
+        session_dir,
+        feature="health",
+        capability="subcheck",
+        feature_set="runtime_foundation",
+        operation="health_tools_check",
+        duration_ms=(time.perf_counter() - tools_started) * 1000.0,
+        result="ok" if len(missing) == 0 else "error",
+        source="api",
+        metric_name="health.tools_check.latency",
+        tags={"missing_count": len(missing)},
+    )
 
     storage_paths = ["/wineprefix", "/artifacts", "/tmp"]
+    storage_started = time.perf_counter()
     storage = [statvfs_info(p) for p in storage_paths]
     storage_ok = all(s.get("ok") and s.get("writable", False) for s in storage)
+    emit_operation_timing(
+        session_dir,
+        feature="health",
+        capability="subcheck",
+        feature_set="runtime_foundation",
+        operation="health_storage_check",
+        duration_ms=(time.perf_counter() - storage_started) * 1000.0,
+        result="ok" if storage_ok else "error",
+        source="api",
+        metric_name="health.storage_check.latency",
+    )
 
     # Security check: Detect public IP exposure with VNC
     import socket
@@ -109,7 +149,7 @@ def health_check():
     ):
         status = "degraded"
 
-    return {
+    payload = {
         "status": status,
         "x11": "connected" if x11.get("ok") else "unavailable",
         "wineprefix": "ready" if prefix_ok else "missing",
@@ -119,11 +159,24 @@ def health_check():
         "security_warning": security_warning,
         "uptime_seconds": int(time.time() - START_TIME),
     }
+    emit_operation_timing(
+        session_dir,
+        feature="health",
+        capability="aggregate",
+        feature_set="runtime_foundation",
+        operation="health_check",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if status == "ok" else "degraded",
+        source="api",
+        metric_name="health.check.latency",
+    )
+    return payload
 
 
 @router.get("/environment")
 async def health_environment():
     """Deep validation of the X11 and Wine driver environment."""
+    op_started = time.perf_counter()
     x11 = await safe_async_command(["xdpyinfo"])
 
     # Wine driver check: This verifies if winex11.drv can actually initialize
@@ -144,7 +197,7 @@ async def health_environment():
     elif not wm_ok or not explorer_ok:
         status = "degraded"
 
-    return {
+    payload = {
         "status": status,
         "x11": {
             "ok": x11.get("ok"),
@@ -159,6 +212,18 @@ async def health_environment():
             "stderr": wine_driver.get("stderr") if not driver_ok else None,
         },
     }
+    emit_operation_timing(
+        read_session_dir(),
+        feature="health",
+        capability="environment",
+        feature_set="runtime_foundation",
+        operation="health_environment",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if status == "ok" else status,
+        source="api",
+        metric_name="health.environment.latency",
+    )
+    return payload
 
 
 @router.get("/system")
@@ -183,10 +248,11 @@ def health_system():
 @router.get("/x11")
 async def health_x11():
     """X11 health details."""
+    op_started = time.perf_counter()
     x11 = await safe_async_command(["xdpyinfo"])
     wm_ok = _process_running("openbox", None)
     active = await safe_async_command(["/automation/bin/x11.sh", "active-window"])
-    return {
+    payload = {
         "display": os.getenv("DISPLAY"),
         "screen": os.getenv("SCREEN"),
         "connected": x11.get("ok", False),
@@ -197,11 +263,24 @@ async def health_x11():
             None if active.get("ok") else (active.get("error") or active.get("stderr"))
         ),
     }
+    emit_operation_timing(
+        read_session_dir(),
+        feature="health",
+        capability="x11",
+        feature_set="runtime_foundation",
+        operation="health_x11",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if bool(x11.get("ok")) else "error",
+        source="api",
+        metric_name="health.x11.latency",
+    )
+    return payload
 
 
 @router.get("/windows")
 async def health_windows():
     """Window list and active window details."""
+    op_started = time.perf_counter()
     listing = await safe_async_command(["/automation/bin/x11.sh", "list-windows"])
     active = await safe_async_command(["/automation/bin/x11.sh", "active-window"])
     windows = []
@@ -210,7 +289,7 @@ async def health_windows():
             parts = line.strip().split(" ", 1)
             if len(parts) == 2:
                 windows.append({"id": parts[0], "title": parts[1]})
-    return {
+    payload = {
         "count": len(windows),
         "windows": windows,
         "active_window": active.get("stdout") if active.get("ok") else None,
@@ -220,6 +299,19 @@ async def health_windows():
             else (listing.get("error") or listing.get("stderr"))
         ),
     }
+    emit_operation_timing(
+        read_session_dir(),
+        feature="health",
+        capability="windows",
+        feature_set="runtime_foundation",
+        operation="health_windows",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok" if bool(listing.get("ok")) else "error",
+        source="api",
+        metric_name="health.windows.latency",
+        tags={"window_count": len(windows)},
+    )
+    return payload
 
 
 @router.get("/wine")
@@ -284,6 +376,7 @@ def health_storage():
 @router.get("/recording")
 async def health_recording():
     """Recorder status and current session."""
+    op_started = time.perf_counter()
     session_dir = read_session_dir()
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
     
@@ -291,7 +384,7 @@ async def health_recording():
     recorder_ok = _process_running("automation.recorder start", r_pid)
     
     status = recording_status(session_dir, enabled)
-    return {
+    payload = {
         "enabled": enabled,
         "session_dir": session_dir,
         "session_dir_exists": (os.path.isdir(session_dir) if session_dir else False),
@@ -299,4 +392,16 @@ async def health_recording():
         "recorder_pids": [str(r_pid)] if r_pid and pid_running(r_pid) else [],
         "state": status["state"],
     }
-
+    emit_operation_timing(
+        session_dir,
+        feature="health",
+        capability="recording",
+        feature_set="recording_and_artifacts",
+        operation="health_recording",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="health.recording.latency",
+        tags={"recorder_running": recorder_ok, "state": status["state"]},
+    )
+    return payload

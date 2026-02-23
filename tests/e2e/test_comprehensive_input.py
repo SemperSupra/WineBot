@@ -4,26 +4,30 @@ import time
 import json
 import glob
 import os
-
-API_URL = "http://winebot-interactive:8000"
+from _auth import API_URL, auth_headers, ui_url, ensure_agent_control
 
 
 class WineBotAPI:
     def __init__(self, url):
         self.url = url
+        self.headers = auth_headers()
 
     def get_windows(self):
-        res = requests.get(f"{self.url}/health/windows")
+        res = requests.get(f"{self.url}/health/windows", headers=self.headers)
         res.raise_for_status()
         return res.json().get("windows", [])
 
     def run_app(self, path):
-        res = requests.post(f"{self.url}/apps/run", json={"path": path, "detach": True})
+        res = requests.post(
+            f"{self.url}/apps/run",
+            json={"path": path, "detach": True},
+            headers=self.headers,
+        )
         res.raise_for_status()
         return res.json()
 
     def get_session_id(self):
-        res = requests.get(f"{self.url}/lifecycle/status")
+        res = requests.get(f"{self.url}/lifecycle/status", headers=self.headers)
         res.raise_for_status()
         return res.json().get("session_id")
 
@@ -42,6 +46,10 @@ def get_input_logs(session_id):
         lin_matches = glob.glob(f"{log_dir}/input_events.jsonl")
         if lin_matches:
             logs.append(lin_matches[0])
+        # 3. Client-side noVNC trace
+        client_matches = glob.glob(f"{log_dir}/input_events_client*.jsonl")
+        if client_matches:
+            logs.append(sorted(client_matches, key=os.path.getmtime, reverse=True)[0])
     return logs
 
 
@@ -49,7 +57,7 @@ def test_comprehensive_input(page: Page):
     api = WineBotAPI(API_URL)
 
     # 1. Setup Dashboard
-    page.goto(f"{API_URL}/ui/")
+    page.goto(ui_url())
 
     # Enable Dev Mode
     page.click(".mode-toggle", force=True)
@@ -78,8 +86,16 @@ def test_comprehensive_input(page: Page):
         scale_checkbox.click()
         time.sleep(1)  # Wait for resize
 
+    # Enable client-side trace so click evidence is captured even when
+    # Windows-side hooks only emit movement/keyboard.
+    trace_checkbox = page.locator("#vnc-trace-input")
+    if not trace_checkbox.is_checked():
+        trace_checkbox.click()
+        time.sleep(1)
+
     # 3. Launch Notepad
     print("Launching Notepad...")
+    ensure_agent_control()
     run_res = api.run_app("notepad.exe")
     print(f"Run result: {run_res}")
 
@@ -102,7 +118,9 @@ def test_comprehensive_input(page: Page):
 
     # Inspect window (use title)
     res = requests.post(
-        f"{API_URL}/inspect/window", json={"title": notepad_win["title"]}
+        f"{API_URL}/inspect/window",
+        json={"title": notepad_win["title"]},
+        headers=auth_headers(),
     )
     if res.ok:
         print(f"Inspection Result: {res.json()}")
@@ -155,9 +173,15 @@ def test_comprehensive_input(page: Page):
                     if (
                         event.get("event") == "mousedown"
                         or event.get("event") == "button_press"
+                        or event.get("event") == "client_mouse_down"
+                        or event.get("event") == "client_mouse_up"
                     ):
                         # Detail 1 or LButton
-                        if event.get("button") == "LButton" or event.get("button") == 1:
+                        if (
+                            event.get("button") == "LButton"
+                            or event.get("button") == 1
+                            or event.get("button") == 0
+                        ):
                             found_clicks += 1
                             print(f"Found Click in {log_file}: {event}")
                     # Check for keys (keydown in AHK, key_press in Linux)

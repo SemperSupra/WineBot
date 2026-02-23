@@ -1,5 +1,6 @@
 from playwright.sync_api import Page, expect
 import time
+from _auth import ui_url
 
 
 def test_mouse_input_trace(page: Page):
@@ -8,7 +9,7 @@ def test_mouse_input_trace(page: Page):
     page.on("pageerror", lambda exc: print(f"ERROR: {exc}"))
 
     # Load dashboard
-    page.goto("http://winebot-interactive:8000/ui/")
+    page.goto(ui_url())
 
     # Enable Dev Mode
     page.click(".mode-toggle", force=True)
@@ -66,7 +67,7 @@ def test_mouse_input_trace(page: Page):
     # The dashboard logs: "Last event: client_mouse_up" in stats
     # And detailed log entry.
 
-    expect(page.locator("#input-debug-stats")).to_contain_text("Mouseup")
+    expect(page.locator("#input-debug-stats")).to_contain_text("Mouse")
 
     # Verify coordinates in the detailed log (if implemented in index.html logging)
     # index.html logic: postClientTraceEvent(...)

@@ -44,7 +44,7 @@ jobs:
 
       - name: Run soak test
         env:
-          DURATION_SECONDS: 1800 # 30 minutes for nightly soak
+          DURATION_SECONDS: 3600 # 60 minutes for nightly soak
           INTERVAL_SECONDS: 30
           MAX_LOG_MB: 1024
           MAX_SESSION_MB: 8192
@@ -70,7 +70,27 @@ jobs:
 
           # Run the soak diagnostic script inside the container
           docker compose -f compose/docker-compose.yml exec -T --user winebot \
-            winebot-interactive /scripts/diagnose-trace-soak.sh
+            winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
+
+      - name: Run fault injection diagnostics
+        run: |
+          docker compose -f compose/docker-compose.yml exec -T --user winebot \
+            winebot-interactive /scripts/diagnostics/diagnose-fault-injection.sh
+
+      - name: Run profile matrix tests
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+            pytest -q /work/tests/test_profile_matrix.py /work/tests/test_config_guard.py
+
+      - name: Generate trust pack
+        run: |
+          scripts/ci/generate-trust-pack.sh artifacts/trust-pack-nightly
+
+      - name: Upload trust pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: trust-pack-nightly
+          path: artifacts/trust-pack-nightly
 
       - name: Collect diagnostics on failure
         if: failure()

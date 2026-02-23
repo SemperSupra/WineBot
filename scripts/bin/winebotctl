@@ -37,7 +37,9 @@ Commands:
   apps list|run [opts]
   input click X Y
   input trace start|stop|status|events [opts]
-  config set|get|list|apply [opts]
+  perf summary [opts]
+  config set|get|list|validate|apply [opts]
+  config profile list|set <name> [opts]
   diag bundle [opts]
   tail [source] [--follow] [--lines N]
   run ahk|autoit|python|winedbg [opts]
@@ -47,9 +49,12 @@ Examples:
   scripts/winebotctl health
   scripts/winebotctl sessions list
   scripts/winebotctl recording start --session-root /artifacts/sessions
+  scripts/winebotctl lifecycle shutdown --yes
+  scripts/winebotctl lifecycle shutdown --power-off --yes
   scripts/winebotctl input trace start --layer windows
   scripts/winebotctl input trace start --layer network
   scripts/winebotctl input trace events --source client --limit 50
+  scripts/winebotctl perf summary
   scripts/winebotctl api POST /sessions/suspend --json '{"shutdown_wine":true}'
   scripts/winebotctl diag bundle --session-root /artifacts/sessions --max-mb 200
 EOF
@@ -58,6 +63,25 @@ EOF
 die() {
   echo "ERROR: $*" >&2
   exit 1
+}
+
+confirm_destructive_action() {
+  local label="$1"
+  local force="${2:-0}"
+
+  if [ "$force" = "1" ] || [ "${WINEBOT_CONFIRM_SHUTDOWN:-}" = "YES" ]; then
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    die "${label} requires confirmation. Re-run with --yes or WINEBOT_CONFIRM_SHUTDOWN=YES."
+  fi
+
+  echo "Confirmation required for: ${label}"
+  read -r -p "Type SHUTDOWN to continue: " reply
+  if [ "$reply" != "SHUTDOWN" ]; then
+    die "Confirmation not provided; aborting."
+  fi
 }
 
 while [ $# -gt 0 ]; do
@@ -237,6 +261,103 @@ response_status() {
   printf '%s\n' "$1" | head -n 1
 }
 
+set_config_key_in_file() {
+  local config_file="$1"
+  local key="$2"
+  local val="$3"
+  if [[ ! "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    die "Invalid key name: $key (Only alphanumeric and underscores allowed)"
+  fi
+  local val_escaped="${val//\'/\'\\\'\'}"
+  if [ -s "$config_file" ]; then
+    grep -v "^export ${key}=" "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
+  fi
+  echo "export ${key}='${val_escaped}'" >> "$config_file"
+  chmod 600 "$config_file"
+}
+
+print_config_profile_values() {
+  local profile="$1"
+  case "$profile" in
+    human-desktop)
+      cat <<'EOF'
+MODE=interactive
+WINEBOT_INSTANCE_MODE=persistent
+WINEBOT_SESSION_MODE=persistent
+WINEBOT_INSTANCE_CONTROL_MODE=human-only
+WINEBOT_SESSION_CONTROL_MODE=human-only
+EOF
+      ;;
+    assisted-desktop)
+      cat <<'EOF'
+MODE=interactive
+WINEBOT_INSTANCE_MODE=persistent
+WINEBOT_SESSION_MODE=persistent
+WINEBOT_INSTANCE_CONTROL_MODE=hybrid
+WINEBOT_SESSION_CONTROL_MODE=hybrid
+EOF
+      ;;
+    unattended-runner)
+      cat <<'EOF'
+MODE=headless
+WINEBOT_INSTANCE_MODE=persistent
+WINEBOT_SESSION_MODE=persistent
+WINEBOT_INSTANCE_CONTROL_MODE=agent-only
+WINEBOT_SESSION_CONTROL_MODE=agent-only
+EOF
+      ;;
+    ci-oneshot)
+      cat <<'EOF'
+MODE=headless
+WINEBOT_INSTANCE_MODE=oneshot
+WINEBOT_SESSION_MODE=oneshot
+WINEBOT_INSTANCE_CONTROL_MODE=agent-only
+WINEBOT_SESSION_CONTROL_MODE=agent-only
+APP_EXE=cmd.exe
+APP_ARGS=/c exit /b 0
+EOF
+      ;;
+    support-session)
+      cat <<'EOF'
+MODE=interactive
+WINEBOT_INSTANCE_MODE=persistent
+WINEBOT_SESSION_MODE=oneshot
+WINEBOT_INSTANCE_CONTROL_MODE=hybrid
+WINEBOT_SESSION_CONTROL_MODE=hybrid
+EOF
+      ;;
+    *)
+      die "Unknown profile: $profile"
+      ;;
+  esac
+}
+
+apply_config_profile_to_file() {
+  local profile="$1"
+  local config_file="$2"
+  while IFS='=' read -r key value; do
+    [ -z "$key" ] && continue
+    set_config_key_in_file "$config_file" "$key" "$value"
+  done < <(print_config_profile_values "$profile")
+}
+
+validate_config_files() {
+  local config_file="$1"
+  local instance_file="${2:-}"
+  local validator="${SCRIPT_DIR}/../internal/validate-winebot-config.py"
+  if [ ! -f "$validator" ]; then
+    die "Validator script not found: $validator"
+  fi
+  local args=(python3 "$validator")
+  if [ -f "$config_file" ]; then
+    args+=(--env-file "$config_file")
+  fi
+  if [ -n "$instance_file" ] && [ -f "$instance_file" ]; then
+    args+=(--env-file "$instance_file")
+  fi
+  "${args[@]}"
+}
+
 response_body() {
   printf '%s\n' "$1" | tail -n +2
 }
@@ -321,6 +442,7 @@ case "$command" in
         delay=""
         wine_shutdown="true"
         power_off="false"
+        confirm_yes="0"
         while [ $# -gt 0 ]; do
           case "$1" in
             --delay)
@@ -335,11 +457,20 @@ case "$command" in
               power_off="true"
               shift
               ;;
+            --yes)
+              confirm_yes="1"
+              shift
+              ;;
             *)
               die "Unknown lifecycle shutdown option: $1"
               ;;
           esac
         done
+        if [ "$power_off" = "true" ]; then
+          confirm_destructive_action "lifecycle power-off" "$confirm_yes"
+        else
+          confirm_destructive_action "lifecycle graceful shutdown" "$confirm_yes"
+        fi
         path="/lifecycle/shutdown"
         if [ "$power_off" = "true" ]; then
           path="${path}?power_off=true"
@@ -933,15 +1064,73 @@ PY
     printf '%s\n' "$body"
     ;;
 
+  perf)
+    sub="${1:-summary}"
+    shift || true
+    case "$sub" in
+      summary)
+        session_id=""
+        session_dir=""
+        session_root=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --id)
+              session_id="$2"
+              shift 2
+              ;;
+            --dir)
+              session_dir="$2"
+              shift 2
+              ;;
+            --root)
+              session_root="$2"
+              shift 2
+              ;;
+            *)
+              die "Unknown perf summary option: $1"
+              ;;
+          esac
+        done
+        path="/recording/perf/summary"
+        query=""
+        if [ -n "$session_id" ]; then query="session_id=${session_id}"; fi
+        if [ -n "$session_dir" ]; then
+          if [ -n "$query" ]; then query="${query}&"; fi
+          query="${query}session_dir=${session_dir}"
+        fi
+        if [ -n "$session_root" ]; then
+          if [ -n "$query" ]; then query="${query}&"; fi
+          query="${query}session_root=${session_root}"
+        fi
+        if [ -n "$query" ]; then
+          path="${path}?${query}"
+        fi
+        resp="$(api_request GET "$path")"
+        ;;
+      *)
+        die "Unknown perf command: $sub"
+        ;;
+    esac
+    status="$(response_status "$resp")"
+    body="$(response_body "$resp")"
+    if [ "$status" -ge 400 ]; then
+      echo "$body" >&2
+      exit 1
+    fi
+    printf '%s\n' "$body"
+    ;;
+
   config)
     action="${1:-list}"
     shift || true
     
-    config_file="/wineprefix/winebot.env"
+    global_config_file="/wineprefix/winebot.env"
+    instance_config_file="/wineprefix/winebot.${HOSTNAME}.env"
+    config_file="$global_config_file"
     while [ $# -gt 0 ]; do
       case "$1" in
         --instance)
-          config_file="/wineprefix/winebot.${HOSTNAME}.env"
+          config_file="$instance_config_file"
           shift
           ;;
         *)
@@ -950,34 +1139,34 @@ PY
       esac
     done
 
-    touch "$config_file" 2>/dev/null || config_file="${HOME}/.config/winebot/env"
-    touch "$config_file"
+    if ! touch "$config_file" 2>/dev/null; then
+      fallback_candidates=("${HOME}/.config/winebot/env" "/tmp/winebot/env")
+      configured="0"
+      for candidate in "${fallback_candidates[@]}"; do
+        if mkdir -p "$(dirname "$candidate")" 2>/dev/null && touch "$candidate" 2>/dev/null; then
+          config_file="$candidate"
+          configured="1"
+          break
+        fi
+      done
+      if [ "$configured" != "1" ]; then
+        die "Unable to create a writable config file."
+      fi
+    fi
+    validation_primary="$config_file"
+    validation_secondary=""
+    if [ "$config_file" = "$instance_config_file" ]; then
+      validation_secondary="$global_config_file"
+    elif [ "$config_file" = "$global_config_file" ]; then
+      validation_secondary="$instance_config_file"
+    fi
 
     case "$action" in
       set)
         key="$1"
         val="$2"
         if [ -z "$key" ]; then die "Usage: config set <KEY> <VALUE>"; fi
-        
-        # 1. Validate Key (Alphanumeric and underscores only)
-        if [[ ! "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-            die "Invalid key name: $key (Only alphanumeric and underscores allowed)"
-        fi
-
-        # 2. Sanitize Value (Escape double quotes and backslashes)
-        # Note: We wrap in single quotes in the file for better isolation
-        val_escaped="${val//\'/\'\\\'\'}"
-        
-        # 3. Remove existing key
-        if [ -s "$config_file" ]; then
-            grep -v "^export ${key}=" "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
-        fi
-
-        # 4. Add new key safely
-        echo "export ${key}='${val_escaped}'" >> "$config_file"
-        
-        # 5. Secure file permissions
-        chmod 600 "$config_file"
+        set_config_key_in_file "$config_file" "$key" "$val"
         echo "Set ${key} (stored securely in $config_file)"
         ;;
       get)
@@ -992,7 +1181,39 @@ PY
             echo "No overrides set."
         fi
         ;;
+      validate)
+        validate_config_files "$validation_primary" "$validation_secondary"
+        ;;
+      profile)
+        sub="${1:-list}"
+        shift || true
+        case "$sub" in
+          list)
+            cat <<'EOF'
+Available WineBot default profiles:
+- human-desktop
+- assisted-desktop
+- unattended-runner
+- ci-oneshot
+- support-session
+Use: scripts/winebotctl config profile set <name>
+EOF
+            ;;
+          set)
+            profile="${1:-}"
+            if [ -z "$profile" ]; then
+              die "Usage: config profile set <name>"
+            fi
+            apply_config_profile_to_file "$profile" "$config_file"
+            echo "Applied profile '$profile' to $config_file"
+            ;;
+          *)
+            die "Unknown config profile action: $sub"
+            ;;
+        esac
+        ;;
       apply)
+        validate_config_files "$validation_primary" "$validation_secondary"
         echo "Configuration saved to $config_file."
         echo "Restarting session to apply changes..."
         api_request POST "/lifecycle/shutdown" ""
