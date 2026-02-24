@@ -1,8 +1,12 @@
 import asyncio
+import glob
+import os
+import time
 from typing import Protocol, runtime_checkable, Dict, Any
 from api.core.models import RecorderState
 from api.utils.files import recorder_state, write_recorder_state, recorder_running
 from api.utils.process import run_async_command
+from api.utils.config import config
 
 
 @runtime_checkable
@@ -15,6 +19,7 @@ class Recorder(Protocol):
 
 
 recorder_lock = asyncio.Lock()
+_heartbeat_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def recording_status(session_dir: str | None, enabled: bool) -> dict:
@@ -45,10 +50,49 @@ def recording_status(session_dir: str | None, enabled: bool) -> dict:
 
 def recorder_heartbeat_check(session_dir: str) -> bool:
     """Verifies that the recorder is actually writing data by checking file growth."""
-    # We check the most recent part file if segmenting, or the main mkv
-    # Finding current file is complex, we just check if ANY mkv in logs/session is recent or growing.
-    # Implementation detail: simplified check for now
-    return True
+    stale_seconds = max(5, int(config.WINEBOT_RECORDER_HEARTBEAT_STALE_SECONDS))
+    grace_seconds = max(1, int(config.WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS))
+    now = time.time()
+
+    try:
+        candidates = glob.glob(os.path.join(session_dir, "video*.mkv"))
+        if not candidates:
+            pid_path = os.path.join(session_dir, "ffmpeg.pid")
+            if os.path.exists(pid_path):
+                pid_age = now - os.path.getmtime(pid_path)
+                return pid_age <= grace_seconds
+            return False
+        latest = max(candidates, key=lambda path: os.path.getmtime(path))
+        stat = os.stat(latest)
+        size = int(stat.st_size)
+        mtime = float(stat.st_mtime)
+    except Exception:
+        return False
+
+    entry = _heartbeat_cache.get(session_dir)
+    if not entry or entry.get("path") != latest:
+        _heartbeat_cache[session_dir] = {
+            "path": latest,
+            "size": size,
+            "last_growth": now,
+        }
+        return True
+
+    last_size = int(entry.get("size", 0))
+    last_growth = float(entry.get("last_growth", now))
+    if size > last_size:
+        _heartbeat_cache[session_dir] = {
+            "path": latest,
+            "size": size,
+            "last_growth": now,
+        }
+        return True
+
+    # If file timestamp changed recently, treat as healthy even if size is stable.
+    if (now - mtime) <= grace_seconds:
+        return True
+
+    return (now - last_growth) <= stale_seconds
 
 
 async def stop_recording():

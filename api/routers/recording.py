@@ -30,6 +30,13 @@ from api.utils.files import (
     performance_metrics_log_path,
 )
 from api.utils.process import manage_process, run_async_command, ProcessCapacityError
+from api.utils.config import config
+from api.core.operations import (
+    create_operation,
+    heartbeat_operation,
+    complete_operation,
+    fail_operation,
+)
 
 router = APIRouter(prefix="/recording", tags=["recording"])
 
@@ -68,6 +75,10 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             status_code=400, detail="Recording is disabled by configuration."
         )
 
+    session_dir_hint = read_session_dir()
+    operation_id = await create_operation(
+        "recording_start", session_dir=session_dir_hint, metadata={}
+    )
     async with recorder_lock:
         if data is None:
             data = RecordingStartModel()
@@ -83,14 +94,29 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
                     "--session-dir",
                     current_session,
                 ]
-                result = await run_async_command(cmd)
+                result = await run_async_command(
+                    cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
+                )
                 if not result["ok"]:
+                    await fail_operation(operation_id, error=result.get("stderr") or "resume failed")
                     raise HTTPException(
                         status_code=500,
                         detail=(result["stderr"] or "Failed to resume recorder"),
                     )
-                return {"status": "resumed", "session_dir": current_session}
-            return {"status": "already_recording", "session_dir": current_session}
+                payload = {
+                    "status": "resumed",
+                    "session_dir": current_session,
+                    "operation_id": operation_id,
+                }
+                await complete_operation(operation_id, result=payload)
+                return payload
+            payload = {
+                "status": "already_recording",
+                "session_dir": current_session,
+                "operation_id": operation_id,
+            }
+            await complete_operation(operation_id, result=payload)
+            return payload
 
         session_dir = None
         if not data.new_session and current_session and os.path.isdir(current_session):
@@ -149,10 +175,17 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             "--segment",
             str(segment),
         ]
+        await heartbeat_operation(
+            operation_id,
+            phase="spawn",
+            message="starting recorder process",
+            progress=40,
+        )
         proc = subprocess.Popen(cmd)
         try:
             manage_process(proc)
         except ProcessCapacityError as exc:
+            await fail_operation(operation_id, error=str(exc))
             raise HTTPException(status_code=503, detail=str(exc))
 
         pid = None
@@ -174,6 +207,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             "resolution": resolution,
             "fps": fps,
             "recorder_pid": pid,
+            "operation_id": operation_id,
         }
         emit_operation_timing(
             session_dir,
@@ -187,6 +221,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             metric_name="recording.api_start.latency",
             tags={"status": "started", "segment": segment},
         )
+        await complete_operation(operation_id, result=result)
         return result
 
 
@@ -199,13 +234,22 @@ async def stop_recording_endpoint():
             status_code=400, detail="Recording is disabled by configuration."
         )
 
+    operation_id = await create_operation(
+        "recording_stop", session_dir=read_session_dir(), metadata={}
+    )
     async with recorder_lock:
         session_dir = read_session_dir()
         if not session_dir:
-            return {"status": "already_stopped"}
+            payload = {"status": "already_stopped", "operation_id": operation_id}
+            await complete_operation(operation_id, result=payload)
+            return payload
         if not recorder_running(session_dir):
             write_recorder_state(session_dir, RecorderState.IDLE.value)
-            result = {"status": "already_stopped", "session_dir": session_dir}
+            result = {
+                "status": "already_stopped",
+                "session_dir": session_dir,
+                "operation_id": operation_id,
+            }
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -218,6 +262,7 @@ async def stop_recording_endpoint():
                 metric_name="recording.api_stop.latency",
                 tags={"status": "already_stopped"},
             )
+            await complete_operation(operation_id, result=result)
             return result
 
         write_recorder_state(session_dir, RecorderState.STOPPING.value)
@@ -229,8 +274,13 @@ async def stop_recording_endpoint():
             "--session-dir",
             session_dir,
         ]
-        result = await run_async_command(cmd)
+        result = await run_async_command(
+            cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS
+        )
         if not result["ok"]:
+            await fail_operation(
+                operation_id, error=(result.get("stderr") or "Failed to stop recorder")
+            )
             raise HTTPException(
                 status_code=500, detail=(result["stderr"] or "Failed to stop recorder")
             )
@@ -241,7 +291,11 @@ async def stop_recording_endpoint():
                 break
             await asyncio.sleep(0.2)
 
-        result = {"status": "stopped", "session_dir": session_dir}
+        result = {
+            "status": "stopped",
+            "session_dir": session_dir,
+            "operation_id": operation_id,
+        }
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -254,6 +308,7 @@ async def stop_recording_endpoint():
             metric_name="recording.api_stop.latency",
             tags={"status": "stopped"},
         )
+        await complete_operation(operation_id, result=result)
         return result
 
 
@@ -308,7 +363,9 @@ async def pause_recording():
             "--session-dir",
             session_dir,
         ]
-        result = await run_async_command(cmd)
+        result = await run_async_command(
+            cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
+        )
         if not result["ok"]:
             raise HTTPException(
                 status_code=500, detail=(result["stderr"] or "Failed to pause recorder")
@@ -380,7 +437,9 @@ async def resume_recording():
             "--session-dir",
             session_dir,
         ]
-        result = await run_async_command(cmd)
+        result = await run_async_command(
+            cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
+        )
         if not result["ok"]:
             raise HTTPException(
                 status_code=500,

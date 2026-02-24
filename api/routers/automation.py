@@ -21,6 +21,7 @@ from api.core.models import (
 )
 from api.core.broker import broker
 from api.core.telemetry import emit_operation_timing
+from api.utils.config import config
 
 
 router = APIRouter(tags=["automation"])
@@ -104,7 +105,7 @@ async def run_app(data: AppRunModel):
         )
         return {"status": "detached", "pid": proc.pid}
 
-    result = safe_command(cmd, timeout=30)
+    result = safe_command(cmd, timeout=config.WINEBOT_TIMEOUT_AUTOMATION_APP_RUN_SECONDS)
     session_dir = read_session_dir()
     if not result["ok"]:
         emit_operation_timing(
@@ -182,7 +183,7 @@ async def run_ahk(data: AHKModel):
         f.write(data.script)
 
     cmd = ["ahk", to_wine_path(script_path)]
-    result = safe_command(cmd, timeout=30)
+    result = safe_command(cmd, timeout=config.WINEBOT_TIMEOUT_AUTOMATION_SCRIPT_SECONDS)
     emit_operation_timing(
         session_dir,
         feature="automation",
@@ -214,7 +215,7 @@ async def run_autoit(data: AutoItModel):
         f.write(data.script)
 
     cmd = ["autoit", to_wine_path(script_path)]
-    result = safe_command(cmd, timeout=30)
+    result = safe_command(cmd, timeout=config.WINEBOT_TIMEOUT_AUTOMATION_SCRIPT_SECONDS)
     emit_operation_timing(
         session_dir,
         feature="automation",
@@ -246,7 +247,7 @@ async def run_python(data: PythonScriptModel):
         f.write(data.script)
 
     cmd = ["python3", script_path]
-    result = safe_command(cmd, timeout=30)
+    result = safe_command(cmd, timeout=config.WINEBOT_TIMEOUT_AUTOMATION_SCRIPT_SECONDS)
     emit_operation_timing(
         session_dir,
         feature="automation",

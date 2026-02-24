@@ -13,10 +13,36 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     WINE_SCRIPT_PATH=$(winepath -w /automation/core/input_trace_windows.ahk)
     echo "--> Starting Windows Input Trace..."
     (
+      TRACE_RESTART_WINDOW="${WINEBOT_TRACE_RESTART_WINDOW_SECONDS:-120}"
+      TRACE_MAX_RESTARTS="${WINEBOT_TRACE_MAX_RESTARTS_PER_WINDOW:-10}"
+      TRACE_BACKOFF_BASE="${WINEBOT_TRACE_RESTART_BACKOFF_BASE_SECONDS:-5}"
+      TRACE_BACKOFF_MAX="${WINEBOT_TRACE_RESTART_BACKOFF_MAX_SECONDS:-60}"
+      trace_window_start="$(date +%s)"
+      trace_restarts=0
+      trace_backoff="$TRACE_BACKOFF_BASE"
       while true; do
+        now="$(date +%s)"
+        if [ $((now - trace_window_start)) -ge "$TRACE_RESTART_WINDOW" ]; then
+          trace_window_start="$now"
+          trace_restarts=0
+          trace_backoff="$TRACE_BACKOFF_BASE"
+        fi
+        if [ "$trace_restarts" -ge "$TRACE_MAX_RESTARTS" ]; then
+          echo "--> AHK trace circuit breaker open: ${trace_restarts} restarts in ${TRACE_RESTART_WINDOW}s. Cooling down ${TRACE_RESTART_WINDOW}s." >> "$SESSION_DIR/logs/ahk_trace.log"
+          sleep "$TRACE_RESTART_WINDOW"
+          trace_window_start="$(date +%s)"
+          trace_restarts=0
+          trace_backoff="$TRACE_BACKOFF_BASE"
+        fi
         wine "/opt/winebot/windows-tools/AutoHotkey/AutoHotkeyU64.exe" "$WINE_SCRIPT_PATH" "$WINE_LOG_PATH" "$WIN_TRACE_MS" "$SESSION_ID" >> "$SESSION_DIR/logs/ahk_trace.log" 2>&1
-        echo "--> AHK trace exited (RC: $?), restarting in 5s..." >> "$SESSION_DIR/logs/ahk_trace.log"
-        sleep 5
+        rc="$?"
+        trace_restarts=$((trace_restarts + 1))
+        echo "--> AHK trace exited (RC: ${rc}), restarting in ${trace_backoff}s..." >> "$SESSION_DIR/logs/ahk_trace.log"
+        sleep "$trace_backoff"
+        trace_backoff=$((trace_backoff * 2))
+        if [ "$trace_backoff" -gt "$TRACE_BACKOFF_MAX" ]; then
+          trace_backoff="$TRACE_BACKOFF_MAX"
+        fi
       done
     ) &
 fi
@@ -82,10 +108,30 @@ if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
     (
       # Reduce noise for the supervisor's wine calls
       export WINEDEBUG="-all"
+      SUP_RESTART_WINDOW="${WINEBOT_SUPERVISOR_RESTART_WINDOW_SECONDS:-120}"
+      SUP_MAX_RESTARTS="${WINEBOT_SUPERVISOR_MAX_RESTARTS_PER_WINDOW:-6}"
+      SUP_BACKOFF_BASE="${WINEBOT_SUPERVISOR_BACKOFF_BASE_SECONDS:-2}"
+      SUP_BACKOFF_MAX="${WINEBOT_SUPERVISOR_BACKOFF_MAX_SECONDS:-30}"
+      sup_window_start="$(date +%s)"
+      sup_restart_count=0
+      sup_backoff="$SUP_BACKOFF_BASE"
       while true; do
         if ! pgrep -f "explorer.exe" > /dev/null; then
+            now="$(date +%s)"
+            if [ $((now - sup_window_start)) -ge "$SUP_RESTART_WINDOW" ]; then
+                sup_window_start="$now"
+                sup_restart_count=0
+                sup_backoff="$SUP_BACKOFF_BASE"
+            fi
+            if [ "$sup_restart_count" -ge "$SUP_MAX_RESTARTS" ]; then
+                echo "--> Supervisor circuit breaker open: explorer restarts=${sup_restart_count}/${SUP_RESTART_WINDOW}s. Cooling down ${SUP_RESTART_WINDOW}s." >> "$SESSION_DIR/logs/explorer.log"
+                sleep "$SUP_RESTART_WINDOW"
+                sup_window_start="$(date +%s)"
+                sup_restart_count=0
+                sup_backoff="$SUP_BACKOFF_BASE"
+            fi
             # Small delay before restart to avoid tight crash loops
-            sleep 2
+            sleep "$sup_backoff"
             if ! pgrep -f "explorer.exe" > /dev/null; then
                 if [ "${WINEBOT_LOG_LEVEL:-}" = "DEBUG" ]; then
                     echo "--> Supervisor: Restarting explorer.exe"
@@ -95,8 +141,15 @@ if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
                 else
                     nohup wine explorer.exe >"$SESSION_DIR/logs/explorer.log" 2>&1 &
                 fi
+                sup_restart_count=$((sup_restart_count + 1))
+                sup_backoff=$((sup_backoff * 2))
+                if [ "$sup_backoff" -gt "$SUP_BACKOFF_MAX" ]; then
+                    sup_backoff="$SUP_BACKOFF_MAX"
+                fi
                 sleep 5
             fi
+        else
+            sup_backoff="$SUP_BACKOFF_BASE"
         fi
 
         # Check for wineserver crash

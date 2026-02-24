@@ -3,6 +3,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from api.core.models import RecorderState
 from api.core.models import ControlPolicyMode
@@ -346,3 +347,85 @@ def test_logs_tail_follow_stream_limit_rejects_when_exhausted():
                     response = client.get("/logs/tail?follow=true", headers=_auth())
     assert response.status_code == 429
     assert "Too many active log follow streams" in response.json()["detail"]
+
+
+def test_lifecycle_shutdown_exposes_operation_status(tmp_path):
+    session_dir = tmp_path / "session-op"
+    session_dir.mkdir()
+
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
+            with patch("api.routers.lifecycle.append_lifecycle_event"):
+                with patch("api.routers.lifecycle.write_instance_state"):
+                    with patch(
+                        "api.routers.lifecycle.atomic_shutdown",
+                        new=AsyncMock(return_value={"ok": True}),
+                    ):
+                        with patch("api.routers.lifecycle.schedule_shutdown"):
+                            response = client.post("/lifecycle/shutdown", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    op_id = body.get("operation_id")
+    assert op_id
+
+    op_res = client.get(f"/operations/{op_id}", headers=_auth())
+    assert op_res.status_code == 200
+    op = op_res.json()
+    assert op["status"] == "succeeded"
+    assert op["kind"] == "lifecycle_shutdown"
+
+
+def test_resume_session_rolls_back_state_on_broker_failure(tmp_path):
+    current_dir = tmp_path / "session-current"
+    target_dir = tmp_path / "session-target"
+    current_dir.mkdir()
+    target_dir.mkdir()
+    (current_dir / "session.json").write_text("{}", encoding="utf-8")
+    (target_dir / "session.json").write_text("{}", encoding="utf-8")
+    (current_dir / "session.state").write_text("active", encoding="utf-8")
+    (target_dir / "session.state").write_text("suspended", encoding="utf-8")
+
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}):
+        with patch("api.routers.lifecycle.read_session_dir", return_value=str(current_dir)):
+            with patch("api.routers.lifecycle.resolve_session_dir", return_value=str(target_dir)):
+                with patch("api.routers.lifecycle.append_lifecycle_event"):
+                    with patch("api.routers.lifecycle.link_wine_user_dir"):
+                        with patch("api.routers.lifecycle.ensure_user_profile"):
+                            with patch(
+                                "api.routers.lifecycle.atomic_shutdown",
+                                new=AsyncMock(return_value={"ok": True}),
+                            ):
+                                with patch(
+                                    "api.routers.lifecycle.broker.update_session",
+                                    new=AsyncMock(
+                                        side_effect=HTTPException(
+                                            status_code=500, detail="broker update failed"
+                                        )
+                                    ),
+                                ):
+                                    response = client.post(
+                                        "/sessions/resume",
+                                        json={"session_dir": str(target_dir)},
+                                        headers=_auth(),
+                                    )
+
+    assert response.status_code == 500
+    assert (target_dir / "session.state").read_text(encoding="utf-8").strip() == "suspended"
+    assert (current_dir / "session.state").read_text(encoding="utf-8").strip() == "active"
+
+
+def test_recording_stop_returns_operation_id(tmp_path):
+    session_dir = tmp_path / "session-rec-stop"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text("{}", encoding="utf-8")
+
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
+        with patch("api.routers.recording.read_session_dir", return_value=str(session_dir)):
+            with patch("api.routers.recording.recorder_running", return_value=False):
+                response = client.post("/recording/stop", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "already_stopped"
+    assert body.get("operation_id")

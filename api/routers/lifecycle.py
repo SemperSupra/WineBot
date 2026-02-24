@@ -35,6 +35,14 @@ from api.core.broker import broker
 from api.core.models import SessionSuspendModel, SessionResumeModel
 from api.core.models import ControlPolicyMode
 from api.core.telemetry import emit_operation_timing
+from api.core.operations import (
+    create_operation,
+    heartbeat_operation,
+    complete_operation,
+    fail_operation,
+    get_operation,
+    list_operations,
+)
 
 
 router = APIRouter(tags=["lifecycle"])
@@ -81,7 +89,9 @@ def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     append_lifecycle_event(
         session_dir, "wine_shutdown_requested", "Requesting Wine shutdown", source="api"
     )
-    wineboot = safe_command(["wineboot", "--shutdown"], timeout=10)
+    wineboot = safe_command(
+        ["wineboot", "--shutdown"], timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_WINEBOOT_SECONDS
+    )
     results["wineboot"] = wineboot
     if wineboot.get("ok"):
         append_lifecycle_event(
@@ -98,7 +108,9 @@ def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
             source="api",
             extra=wineboot,
         )
-    wineserver = safe_command(["wineserver", "-k"], timeout=5)
+    wineserver = safe_command(
+        ["wineserver", "-k"], timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_WINESERVER_SECONDS
+    )
     results["wineserver"] = wineserver
     if wineserver.get("ok"):
         append_lifecycle_event(
@@ -134,7 +146,9 @@ def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
         ("xvfb", ["pkill", "-TERM", "-x", "Xvfb"]),
     ]
     for name, cmd in components:
-        result = safe_command(cmd, timeout=3)
+        result = safe_command(
+            cmd, timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_COMPONENT_SECONDS
+        )
         results[name] = result
         if result.get("ok"):
             append_lifecycle_event(
@@ -310,8 +324,56 @@ async def atomic_shutdown(session_dir: Optional[str], wine_shutdown: bool = True
 
     # 3. Shutdown UI Components
     results["components"] = graceful_component_shutdown(session_dir)
-    
+    failed_steps = []
+    for group_name in ("wine", "components"):
+        group = results.get(group_name)
+        if isinstance(group, dict):
+            for name, value in group.items():
+                if isinstance(value, dict) and not bool(value.get("ok")):
+                    failed_steps.append(f"{group_name}.{name}")
+    if isinstance(results.get("recorder"), str) and results["recorder"].startswith("error:"):
+        failed_steps.append("recorder")
+    results["ok"] = len(failed_steps) == 0
+    if failed_steps:
+        results["failed_steps"] = failed_steps
     return results
+
+
+def _restore_resume_state(
+    previous_session_dir: Optional[str],
+    target_dir: str,
+    previous_target_state: Optional[str],
+    previous_current_state: Optional[str],
+) -> None:
+    if previous_target_state:
+        write_session_state(target_dir, previous_target_state)
+    if previous_session_dir:
+        write_session_dir(previous_session_dir)
+        os.environ["WINEBOT_SESSION_DIR"] = previous_session_dir
+        os.environ["WINEBOT_SESSION_ID"] = os.path.basename(previous_session_dir)
+        if previous_current_state:
+            write_session_state(previous_session_dir, previous_current_state)
+
+
+@router.get("/operations/{operation_id}")
+async def operation_status(operation_id: str):
+    item = await get_operation(operation_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Operation not found")
+    return item
+
+
+@router.get("/operations")
+async def operations_list(limit: int = 50):
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be >= 1")
+    if limit > config.WINEBOT_MAX_SESSIONS_QUERY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be <= {config.WINEBOT_MAX_SESSIONS_QUERY}",
+        )
+    items = await list_operations(limit=limit)
+    return {"operations": items}
 
 
 @router.post("/lifecycle/shutdown")
@@ -324,13 +386,21 @@ async def lifecycle_shutdown(
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
     op_started = time.perf_counter()
     session_dir = read_session_dir()
+    operation_id = await create_operation(
+        "lifecycle_shutdown",
+        session_dir=session_dir,
+        metadata={"power_off": bool(power_off), "wine_shutdown": bool(wine_shutdown)},
+    )
     async with shutdown_transition_lock:
         now = time.time()
         if _shutdown_in_progress and (now - _shutdown_started_at) <= _SHUTDOWN_GUARD_TTL_SEC:
-            return {
+            payload = {
                 "status": "already_shutting_down",
                 "mode": _shutdown_mode or "unknown",
+                "operation_id": operation_id,
             }
+            await complete_operation(operation_id, result=payload)
+            return payload
         _shutdown_in_progress = True
         _shutdown_mode = "power_off" if power_off else "graceful"
         _shutdown_started_at = now
@@ -338,6 +408,12 @@ async def lifecycle_shutdown(
         session_dir, "shutdown_requested", "Shutdown requested via API", source="api"
     )
     if power_off:
+        await heartbeat_operation(
+            operation_id,
+            phase="power_off_prepare",
+            message="preparing immediate power off",
+            progress=50,
+        )
         write_instance_state("powering_off", reason="api_lifecycle_shutdown_power_off")
         append_lifecycle_event(
             session_dir, "power_off", "Immediate shutdown requested", source="api"
@@ -351,6 +427,10 @@ async def lifecycle_shutdown(
             extra=tail_kill,
         )
         schedule_shutdown(session_dir, max(0.0, delay), signal.SIGKILL)
+        await complete_operation(
+            operation_id,
+            result={"status": "powering_off", "delay_seconds": delay},
+        )
         emit_operation_timing(
             session_dir,
             feature="lifecycle",
@@ -362,13 +442,35 @@ async def lifecycle_shutdown(
             source="api",
             metric_name="lifecycle.shutdown.latency",
         )
-        return {"status": "powering_off", "delay_seconds": delay}
+        return {"status": "powering_off", "delay_seconds": delay, "operation_id": operation_id}
 
     write_instance_state("shutting_down", reason="api_lifecycle_shutdown")
+    await heartbeat_operation(
+        operation_id,
+        phase="atomic_shutdown",
+        message="stopping recorder and core components",
+        progress=40,
+    )
     results = await atomic_shutdown(session_dir, wine_shutdown=wine_shutdown)
+    if not bool(results.get("ok", True)):
+        await fail_operation(
+            operation_id,
+            error="atomic shutdown failed",
+            result=results,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Shutdown aborted due to component stop failures",
+        )
+    await heartbeat_operation(
+        operation_id,
+        phase="signal_schedule",
+        message="scheduling termination signal",
+        progress=90,
+    )
     schedule_shutdown(session_dir, delay, signal.SIGTERM)
     
-    payload = {
+    shutdown_payload: Dict[str, Any] = {
         "status": "shutting_down",
         "delay_seconds": delay,
         "results": results
@@ -384,7 +486,9 @@ async def lifecycle_shutdown(
         source="api",
         metric_name="lifecycle.shutdown.latency",
     )
-    return payload
+    await complete_operation(operation_id, result=shutdown_payload)
+    shutdown_payload["operation_id"] = operation_id
+    return shutdown_payload
 
 
 @router.post("/lifecycle/reset_workspace")
@@ -401,9 +505,9 @@ async def reset_workspace():
         await asyncio.sleep(3)
 
     # Force geometry update (mostly for windowed mode now)
-    subprocess.run(
+    safe_command(
         ["xdotool", "search", "--class", "explorer", "windowmove", "0", "0"],
-        capture_output=True,
+        timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_COMPONENT_SECONDS,
     )
 
     return {"status": "ok", "message": "Workspace reset requested"}
@@ -554,20 +658,42 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         data = SessionResumeModel()
     async with session_transition_lock:
         current_session = read_session_dir()
+        operation_id = await create_operation(
+            "session_resume",
+            session_dir=current_session,
+            metadata={
+                "restart_wine": bool(data.restart_wine),
+                "target_session_id": data.session_id,
+                "target_session_dir": data.session_dir,
+            },
+        )
         try:
             target_dir = resolve_session_dir(
                 data.session_id, data.session_dir, data.session_root
             )
         except Exception as exc:
+            await fail_operation(operation_id, error=str(exc))
             raise HTTPException(status_code=400, detail=str(exc))
         if not os.path.isdir(target_dir):
+            await fail_operation(operation_id, error="Session directory not found")
             raise HTTPException(status_code=404, detail="Session directory not found")
-        session_mode = read_session_mode(target_dir)
-        _validate_session_transition(
-            read_session_state(target_dir),
-            "resume",
-            session_mode,
+        await heartbeat_operation(
+            operation_id,
+            phase="validate_target",
+            message="target session validated",
+            progress=15,
+            extra={"target_dir": target_dir},
         )
+        session_mode = read_session_mode(target_dir)
+        try:
+            _validate_session_transition(
+                read_session_state(target_dir),
+                "resume",
+                session_mode,
+            )
+        except HTTPException as exc:
+            await fail_operation(operation_id, error=str(exc.detail))
+            raise
     
         # HARDENING: Verify artifact schema version compatibility
         session_json = os.path.join(target_dir, "session.json")
@@ -580,17 +706,51 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                         # We could implement migrations here, but for now we just warn or fail
                         pass
                     elif float(old_ver) > float(ARTIFACT_SCHEMA_VERSION):
-                        raise HTTPException(
+                        err = HTTPException(
                             status_code=409, 
                             detail=f"Session version {old_ver} is newer than current build ({ARTIFACT_SCHEMA_VERSION})."
                         )
+                        await fail_operation(operation_id, error=str(err.detail))
+                        raise err
             except (ValueError, json.JSONDecodeError):
                 pass
 
         # HARDENING: Force shutdown of current session before resume
         if current_session and current_session != target_dir:
             append_lifecycle_event(current_session, "handover_start", f"Handing over to {target_dir}")
-            await atomic_shutdown(current_session, wine_shutdown=bool(data.restart_wine))
+            await heartbeat_operation(
+                operation_id,
+                phase="handover_shutdown",
+                message="shutting down current session before handover",
+                progress=35,
+                extra={"current_session": current_session},
+            )
+            try:
+                shutdown_results = await asyncio.wait_for(
+                    atomic_shutdown(current_session, wine_shutdown=bool(data.restart_wine)),
+                    timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_SESSION_HANDOVER_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                await fail_operation(
+                    operation_id, error="handover shutdown timed out"
+                )
+                raise HTTPException(
+                    status_code=504,
+                    detail="Session handover timed out while stopping current session",
+                )
+            if not bool(shutdown_results.get("ok", True)):
+                await fail_operation(
+                    operation_id,
+                    error="handover shutdown failed",
+                    result=shutdown_results,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Session handover aborted due to shutdown failure: "
+                        + ", ".join(shutdown_results.get("failed_steps", []))
+                    ),
+                )
 
         session_json = os.path.join(target_dir, "session.json")
         if not os.path.exists(session_json):
@@ -601,40 +761,68 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         os.makedirs(user_dir, exist_ok=True)
         ensure_user_profile(user_dir)
 
-        write_session_dir(target_dir)
-        os.environ["WINEBOT_SESSION_DIR"] = target_dir
-        os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
-        os.environ["WINEBOT_USER_DIR"] = user_dir
-        link_wine_user_dir(user_dir)
-        write_session_state(target_dir, "active")
-        append_lifecycle_event(
-            target_dir, "session_resumed", "Session resumed via API", source="api"
+        previous_target_state = read_session_state(target_dir)
+        previous_current_state = (
+            read_session_state(current_session) if current_session else None
         )
+        try:
+            await heartbeat_operation(
+                operation_id,
+                phase="activate_target",
+                message="activating target session context",
+                progress=70,
+            )
+            write_session_dir(target_dir)
+            os.environ["WINEBOT_SESSION_DIR"] = target_dir
+            os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
+            os.environ["WINEBOT_USER_DIR"] = user_dir
+            link_wine_user_dir(user_dir)
+            write_session_state(target_dir, "active")
+            append_lifecycle_event(
+                target_dir, "session_resumed", "Session resumed via API", source="api"
+            )
 
-        if data.restart_wine:
-            try:
-                subprocess.Popen(["wine", "explorer"])
-            except Exception:
-                pass
+            if data.restart_wine:
+                try:
+                    subprocess.Popen(["wine", "explorer"])
+                except Exception:
+                    pass
 
-        status = "resumed"
-        if current_session == target_dir:
-            status = "already_active"
+            status = "resumed"
+            if current_session == target_dir:
+                status = "already_active"
 
-        # Update broker
-        interactive = os.getenv("MODE", "headless") == "interactive"
-        session_control_mode = ControlPolicyMode(read_session_control_mode(target_dir))
-        await broker.update_session(
-            os.path.basename(target_dir),
-            interactive,
-            session_control_mode=session_control_mode,
-        )
+            # Update broker
+            interactive = os.getenv("MODE", "headless") == "interactive"
+            session_control_mode = ControlPolicyMode(read_session_control_mode(target_dir))
+            await broker.update_session(
+                os.path.basename(target_dir),
+                interactive,
+                session_control_mode=session_control_mode,
+            )
+        except Exception as exc:
+            _restore_resume_state(
+                previous_session_dir=current_session,
+                target_dir=target_dir,
+                previous_target_state=previous_target_state,
+                previous_current_state=previous_current_state,
+            )
+            append_lifecycle_event(
+                target_dir,
+                "session_resume_rollback",
+                "Session resume rolled back after failure",
+                source="api",
+                extra={"error": str(exc)},
+            )
+            await fail_operation(operation_id, error=str(exc))
+            raise
 
         payload = {
             "status": status,
             "session_dir": target_dir,
             "session_id": os.path.basename(target_dir),
             "previous_session": current_session,
+            "operation_id": operation_id,
         }
         emit_operation_timing(
             target_dir,
@@ -648,4 +836,5 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
             metric_name="lifecycle.session_resume.latency",
             tags={"status": status},
         )
+        await complete_operation(operation_id, result=payload)
         return payload
