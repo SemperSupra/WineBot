@@ -42,10 +42,43 @@ Resource guardrails for API retrieval and streaming are configurable:
 - `WINEBOT_MAX_LOG_TAIL_LINES` (default `2000`)
 - `WINEBOT_MAX_LOG_FOLLOW_STREAMS` (default `8`)
 - `WINEBOT_LOG_FOLLOW_IDLE_TIMEOUT_SECONDS` (default `300`)
+- `WINEBOT_MAX_OPERATION_RECORDS` (default `500`)
+- `WINEBOT_OPERATION_RECORD_TTL_SECONDS` (default `86400`)
 
 When limits are exceeded, endpoints return explicit validation (`400`) or capacity (`429`) responses instead of allocating unbounded memory/streams.
 
-## 4. Performance Metrics
+## 4. Temporal Guardrails and Liveness
+
+Temporal budgets and long-action guardrails are configurable:
+- `WINEBOT_TIMEOUT_AUTOMATION_APP_RUN_SECONDS` (default `30`)
+- `WINEBOT_TIMEOUT_AUTOMATION_SCRIPT_SECONDS` (default `30`)
+- `WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS` (default `15`)
+- `WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS` (default `20`)
+- `WINEBOT_TIMEOUT_LIFECYCLE_WINEBOOT_SECONDS` (default `10`)
+- `WINEBOT_TIMEOUT_LIFECYCLE_WINESERVER_SECONDS` (default `5`)
+- `WINEBOT_TIMEOUT_LIFECYCLE_COMPONENT_SECONDS` (default `3`)
+- `WINEBOT_TIMEOUT_LIFECYCLE_SESSION_HANDOVER_SECONDS` (default `60`)
+- `WINEBOT_RECORDER_HEARTBEAT_STALE_SECONDS` (default `30`)
+- `WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS` (default `15`)
+
+Long-running lifecycle actions expose operation status:
+- `GET /operations?limit=N`
+- `GET /operations/{operation_id}`
+
+`/lifecycle/shutdown` and `/sessions/resume` include `operation_id` in responses for progress/liveness tracking.
+
+## 5. Supervisor Retry Throttling
+
+Init-time trace/supervisor loops include bounded retry behavior with cooldown:
+- `WINEBOT_TRACE_RESTART_WINDOW_SECONDS`
+- `WINEBOT_TRACE_MAX_RESTARTS_PER_WINDOW`
+- `WINEBOT_TRACE_RESTART_BACKOFF_BASE_SECONDS`
+- `WINEBOT_TRACE_RESTART_BACKOFF_MAX_SECONDS`
+- `WINEBOT_SUPERVISOR_RESTART_WINDOW_SECONDS`
+- `WINEBOT_SUPERVISOR_MAX_RESTARTS_PER_WINDOW`
+- `WINEBOT_SUPERVISOR_BACKOFF_BASE_SECONDS`
+- `WINEBOT_SUPERVISOR_BACKOFF_MAX_SECONDS`
+## 6. Performance Metrics
 
 Runtime profiling events are written to `logs/perf_metrics.jsonl` in each session directory. This includes monitor sampling and recording operation latencies (API and auto pause/resume), enabling post-run analysis of feature overhead.
 
@@ -65,7 +98,7 @@ WINEBOT_TELEMETRY_SAMPLE_RATE=0.25 \
 docker compose -f compose/docker-compose.yml --profile headless up --build
 ```
 
-## 5. Discovery & Management
+## 7. Discovery & Management
 
 ### Local Network (mDNS)
 Use the built-in mDNS discovery to locate nodes on the local network. The "WineBot Hub" pattern allows a single management plane to aggregate state from many distributed containers.
