@@ -88,6 +88,10 @@ Test capability coverage matrix:
 
 See [docs/test-capability-matrix.md](docs/test-capability-matrix.md).
 
+Standards and conformance coverage:
+
+See [docs/conformance.md](docs/conformance.md).
+
 Generate release/CI trust evidence bundle:
 
 `scripts/ci/generate-trust-pack.sh artifacts/trust-pack`

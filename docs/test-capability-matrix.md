@@ -22,3 +22,4 @@ Rules:
 | Fault recovery | process fault injection and recovery expectations | `scripts/diagnostics/diagnose-master.sh`, `scripts/diagnostics/diagnose-fault-injection.sh` |
 | Resource bounds and soak | long-run memory/log/session growth constraints | `scripts/diagnostics/diagnose-trace-soak.sh`, `scripts/diagnostics/soak-resource-bounds.sh` |
 | Release trust evidence | machine-readable test and diagnostics summary | `scripts/ci/generate-trust-pack.sh` |
+| Standards conformance | OpenAPI/HTTP/OCI/CLI/mDNS contract enforcement | `tests/test_conformance_openapi.py`, `tests/test_conformance_http_semantics.py`, `tests/test_conformance_runtime_policy.py`, `tests/test_conformance_cli_contract.py`, `tests/test_conformance_mdns.py` |

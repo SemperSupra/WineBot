@@ -4,6 +4,11 @@ echo "--- Running Unit Tests ---"
 pytest \
   tests/test_api.py \
   tests/test_api_contracts.py \
+  tests/test_conformance_openapi.py \
+  tests/test_conformance_http_semantics.py \
+  tests/test_conformance_runtime_policy.py \
+  tests/test_conformance_cli_contract.py \
+  tests/test_conformance_mdns.py \
   tests/test_input_validation.py \
   tests/test_input_lifecycle_regression.py \
   tests/test_lifecycle_hardened.py \

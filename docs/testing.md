@@ -155,6 +155,16 @@ Telemetry contract and rate-limit tests:
 
 `pytest -q tests/test_telemetry_contract.py tests/test_command_substrate_telemetry.py tests/test_telemetry.py`
 
+## Conformance and Standards Validation
+
+WineBot includes explicit standards conformance suites for API, HTTP semantics, runtime policy, CLI contracts, and mDNS format:
+
+`pytest -q tests/test_conformance_openapi.py tests/test_conformance_http_semantics.py tests/test_conformance_runtime_policy.py tests/test_conformance_cli_contract.py tests/test_conformance_mdns.py`
+
+Reference:
+
+`docs/conformance.md`
+
 ## UX and Accessibility
 
 In addition to existing UI/UX suites, keyboard navigation baseline is validated with:

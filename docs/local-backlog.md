@@ -19,3 +19,18 @@ This file tracks in-flight and planned work items that are not yet fully deliver
 
 - `OPEN` Phase 5: Timeline-correlated playback and diagnostic UX.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/40
+
+## Conformance Program
+
+- `DONE` Baseline conformance suite integrated in CI.
+  - Scope: OpenAPI validation, HTTP semantics checks, OCI/runtime policy checks, CLI contract checks, mDNS service-type checks.
+  - References: `docs/conformance.md`, `tests/test_conformance_openapi.py`, `tests/test_conformance_http_semantics.py`, `tests/test_conformance_runtime_policy.py`, `tests/test_conformance_cli_contract.py`, `tests/test_conformance_mdns.py`.
+
+- `OPEN` Advanced API conformance fuzzing.
+  - GitHub issue: https://github.com/SemperSupra/WineBot/issues/43
+
+- `OPEN` SBOM schema and license-policy conformance gates.
+  - GitHub issue: https://github.com/SemperSupra/WineBot/issues/44
+
+- `OPEN` Real-network DNS-SD/mDNS integration conformance.
+  - GitHub issue: https://github.com/SemperSupra/WineBot/issues/42
