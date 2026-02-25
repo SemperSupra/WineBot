@@ -19,7 +19,7 @@ from api.core.recorder import (
     write_recorder_state,
 )
 from api.core.telemetry import emit_operation_timing
-from api.core.monitor import set_manual_pause_lock
+from api.core import monitor as recording_monitor
 from api.utils.files import (
     read_session_dir,
     resolve_session_dir,
@@ -47,6 +47,13 @@ from api.core.operations import (
 router = APIRouter(prefix="/recording", tags=["recording"])
 
 DEFAULT_SESSION_ROOT = "/artifacts/sessions"
+
+
+def set_manual_pause_lock(session_dir: str, locked: bool) -> None:
+    """Compatibility wrapper: no-op if monitor helper is unavailable."""
+    maybe_fn = getattr(recording_monitor, "set_manual_pause_lock", None)
+    if callable(maybe_fn):
+        maybe_fn(session_dir, locked)
 
 
 def _int_env(name: str, default: int, minimum: int = 0, maximum: Optional[int] = None) -> int:
