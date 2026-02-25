@@ -2,6 +2,8 @@
 
 WineBot supports recording session video with automatically generated subtitles and positional annotations.
 
+Planned recording phases are tracked in `docs/local-backlog.md`.
+
 ## Enabling Recording
 
 Recording is opt-in and controlled via environment variables or the `--record` flag in `scripts/run-app.sh`.
