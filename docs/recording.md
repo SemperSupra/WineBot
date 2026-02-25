@@ -36,6 +36,7 @@ Artifacts produced:
 - `events_001.vtt`, `events_001.ass`, ...: Subtitles/overlays for each segment.
 - `parts_001.txt`: Concatenation list for sub‑segments.
 - `session.json`: Session‑level metadata (resolution, fps, start time, etc).
+- `recording_artifacts_manifest.json`: Generated artifact index with per-file metadata (`path`, category, size, mtime, hash status), session config snapshot, and `recording_timeline_id`.
 - `segment_index.txt`: Next segment number to use.
  - `screenshots/`: Screenshots captured via API or scripts.
  - `logs/`: API, entrypoint, and automation logs.
@@ -53,6 +54,7 @@ Pause stops the current sub‑segment quickly; resume starts a new sub‑segment
 Recording action endpoints return both legacy `status` and normalized convergence fields:
 - `result=converged` with `converged=true`: requested state is already reached.
 - `result=accepted` with `converged=false`: accepted, still converging asynchronously (for example `stop_requested`, `resume_requested`).
+- `recording_timeline_id`: stable correlation id for the recording lifecycle across API responses and session artifacts.
 
 For asynchronous cases, use `GET /health/recording` and wait for the target state (typically `idle` after stop).
 

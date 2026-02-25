@@ -95,6 +95,7 @@ def test_recording_resume_requested_contract():
     assert body["action"] == "resume"
     assert body["result"] == "accepted"
     assert body["converged"] is False
+    assert body.get("recording_timeline_id", "").startswith("timeline-")
 
 
 def test_recording_stop_requested_contract():
@@ -119,6 +120,7 @@ def test_recording_stop_requested_contract():
     assert body["result"] == "accepted"
     assert body["converged"] is False
     assert "warning" in body
+    assert body.get("recording_timeline_id", "").startswith("timeline-")
 
 
 def test_recording_openapi_response_models():

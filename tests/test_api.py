@@ -104,6 +104,8 @@ def test_recording_start(mock_popen, mock_read, mock_pid, tmp_path, auth_headers
         assert body["action"] == "start"
         assert body["result"] == "converged"
         assert body["converged"] is True
+        assert body.get("recording_timeline_id", "").startswith("timeline-")
+        assert os.path.exists(os.path.join(body["session_dir"], "recording_artifacts_manifest.json"))
 
 
 @patch("api.routers.recording.run_async_command", new_callable=AsyncMock)
@@ -124,6 +126,10 @@ def test_recording_stop(
         assert body["action"] == "stop"
         assert body["result"] == "converged"
         assert body["converged"] is True
+        assert body.get("recording_timeline_id", "").startswith("timeline-")
+        assert os.path.exists(
+            os.path.join(str(session_dir), "recording_artifacts_manifest.json")
+        )
 
 
 @patch("api.routers.automation.safe_command")

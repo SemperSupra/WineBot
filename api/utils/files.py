@@ -5,6 +5,8 @@ import time
 import asyncio
 import datetime
 import platform
+import hashlib
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
@@ -364,9 +366,23 @@ def write_session_dir(path: str) -> None:
 
 def write_session_manifest(session_dir: str, session_id: str) -> None:
     try:
+        recording_timeline_id = None
+        existing_path = os.path.join(session_dir, "session.json")
+        if os.path.exists(existing_path):
+            try:
+                with open(existing_path, "r", encoding="utf-8") as existing_file:
+                    existing = json.load(existing_file)
+                raw_existing_timeline = existing.get("recording_timeline_id")
+                if raw_existing_timeline:
+                    recording_timeline_id = str(raw_existing_timeline)
+            except Exception:
+                recording_timeline_id = None
+        if not recording_timeline_id:
+            recording_timeline_id = f"timeline-{uuid.uuid4().hex}"
         manifest = {
             "schema_version": ARTIFACT_SCHEMA_VERSION,
             "session_id": session_id,
+            "recording_timeline_id": recording_timeline_id,
             "start_time_epoch": time.time(),
             "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "hostname": platform.node(),
@@ -382,6 +398,154 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
         os.rename(tmp_path, manifest_path)
     except Exception:
         pass
+
+
+def read_session_manifest(session_dir: str) -> Optional[Dict[str, Any]]:
+    manifest_path = os.path.join(session_dir, "session.json")
+    if not os.path.exists(manifest_path):
+        return None
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def get_recording_timeline_id(session_dir: str) -> Optional[str]:
+    manifest = read_session_manifest(session_dir)
+    if not manifest:
+        return None
+    raw_value = manifest.get("recording_timeline_id")
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    return value or None
+
+
+def ensure_recording_timeline_id(session_dir: str) -> str:
+    os.makedirs(session_dir, exist_ok=True)
+    manifest_path = os.path.join(session_dir, "session.json")
+    manifest = read_session_manifest(session_dir) or {}
+    timeline_id = str(manifest.get("recording_timeline_id") or "").strip()
+    if not timeline_id:
+        timeline_id = f"timeline-{uuid.uuid4().hex}"
+        manifest["recording_timeline_id"] = timeline_id
+    manifest.setdefault("schema_version", ARTIFACT_SCHEMA_VERSION)
+    manifest.setdefault("session_id", os.path.basename(session_dir))
+    manifest.setdefault("start_time_epoch", time.time())
+    manifest.setdefault(
+        "start_time_iso",
+        datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    )
+    manifest.setdefault("hostname", platform.node())
+    manifest.setdefault("display", os.getenv("DISPLAY", ":99"))
+    manifest.setdefault("resolution", "1280x720")
+    manifest.setdefault("fps", 30)
+    manifest.setdefault("git_sha", None)
+
+    tmp_path = f"{manifest_path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    os.replace(tmp_path, manifest_path)
+    return timeline_id
+
+
+def write_recording_artifact_manifest(
+    session_dir: str,
+    generated_by_action: str = "refresh",
+) -> Optional[str]:
+    if not os.path.isdir(session_dir):
+        return None
+    timeline_id = ensure_recording_timeline_id(session_dir)
+    session_manifest = read_session_manifest(session_dir) or {}
+    max_hash_bytes = max(
+        1,
+        int(getattr(config, "WINEBOT_ARTIFACT_MANIFEST_MAX_HASH_FILE_BYTES", 64 * 1024 * 1024)),
+    )
+
+    def _category_for(rel_path: str) -> str:
+        if rel_path.startswith("logs/input_events"):
+            return "input_trace"
+        if rel_path.startswith("logs/"):
+            return "log"
+        if rel_path.startswith("screenshots/"):
+            return "screenshot"
+        if rel_path.startswith("video_"):
+            return "video"
+        if rel_path.startswith("events_"):
+            return "events"
+        if rel_path.startswith("segment_"):
+            return "segment_manifest"
+        if rel_path.endswith(".vtt") or rel_path.endswith(".ass"):
+            return "subtitle"
+        if rel_path == "session.json":
+            return "session_manifest"
+        if rel_path.endswith(".json") and "health" in rel_path:
+            return "health"
+        return "other"
+
+    artifacts: List[Dict[str, Any]] = []
+    for root, _dirs, files in os.walk(session_dir):
+        for name in files:
+            if name == "recording_artifacts_manifest.json":
+                continue
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, session_dir)
+            try:
+                stat = os.stat(full_path)
+            except FileNotFoundError:
+                continue
+            entry: Dict[str, Any] = {
+                "path": rel_path,
+                "category": _category_for(rel_path),
+                "size_bytes": int(stat.st_size),
+                "mtime_epoch": float(stat.st_mtime),
+            }
+            if stat.st_size <= max_hash_bytes:
+                digest = hashlib.sha256()
+                try:
+                    with open(full_path, "rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    entry["sha256"] = digest.hexdigest()
+                    entry["sha256_status"] = "ok"
+                except Exception:
+                    entry["sha256_status"] = "error"
+            else:
+                entry["sha256_status"] = "skipped_too_large"
+            artifacts.append(entry)
+
+    artifacts.sort(key=lambda item: str(item.get("path", "")))
+    config_snapshot = {
+        "WINEBOT_RECORD": os.getenv("WINEBOT_RECORD", "0"),
+        "WINEBOT_SESSION_ROOT": os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT),
+        "WINEBOT_SESSION_MODE": os.getenv("WINEBOT_SESSION_MODE", "persistent"),
+        "WINEBOT_SESSION_CONTROL_MODE": os.getenv("WINEBOT_SESSION_CONTROL_MODE", "hybrid"),
+        "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS": os.getenv(
+            "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS", "3"
+        ),
+    }
+    manifest_payload: Dict[str, Any] = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "manifest_type": "recording_artifacts",
+        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at_epoch_ms": int(time.time() * 1000),
+        "generated_by_action": generated_by_action,
+        "session_id": session_manifest.get("session_id", os.path.basename(session_dir)),
+        "recording_timeline_id": timeline_id,
+        "session_dir": session_dir,
+        "config_snapshot": config_snapshot,
+        "artifacts": artifacts,
+    }
+    output_path = os.path.join(session_dir, "recording_artifacts_manifest.json")
+    tmp_output_path = f"{output_path}.tmp"
+    with open(tmp_output_path, "w", encoding="utf-8") as f:
+        json.dump(manifest_payload, f, indent=2)
+    os.replace(tmp_output_path, output_path)
+    return output_path
 
 
 def link_wine_user_dir(user_dir: str) -> None:

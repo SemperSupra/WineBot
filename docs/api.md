@@ -233,6 +233,7 @@ All recording action endpoints (`/recording/start`, `/recording/pause`, `/record
   "status": "legacy_status_string",
   "result": "converged|accepted",
   "converged": true,
+  "recording_timeline_id": "timeline-...",
   "session_dir": "/artifacts/sessions/session-...",
   "operation_id": "uuid-when-available",
   "warning": "optional warning text"
@@ -243,6 +244,7 @@ All recording action endpoints (`/recording/start`, `/recording/pause`, `/record
 - `result` and `converged` are the canonical state-convergence signals:
   - `result=converged` and `converged=true`: target state reached before response.
   - `result=accepted` and `converged=false`: command accepted, convergence still in progress.
+- `recording_timeline_id` is stable for the full recording lifecycle and is written to `session.json`, `segment_*.json`, and `recording_artifacts_manifest.json`.
 
 #### Recording Transition Guarantees
 | Endpoint | Typical `status` values | Convergence guarantee |

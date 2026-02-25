@@ -141,6 +141,7 @@ class RecordingActionResponse(BaseModel):
     status: str
     result: RecordingActionResult
     converged: bool
+    recording_timeline_id: Optional[str] = None
     session_dir: Optional[str] = None
     operation_id: Optional[str] = None
     warning: Optional[str] = None

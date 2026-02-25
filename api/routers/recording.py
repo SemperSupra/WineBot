@@ -26,6 +26,8 @@ from api.utils.files import (
     ensure_session_subdirs,
     write_session_dir,
     write_session_manifest,
+    ensure_recording_timeline_id,
+    write_recording_artifact_manifest,
     write_session_mode,
     write_session_control_mode,
     write_session_state,
@@ -72,6 +74,7 @@ def _action_response(
     *,
     action: str,
     status: str,
+    recording_timeline_id: Optional[str] = None,
     session_dir: Optional[str] = None,
     operation_id: Optional[str] = None,
     converged: bool = True,
@@ -84,6 +87,8 @@ def _action_response(
         "result": "converged" if converged else "accepted",
         "converged": converged,
     }
+    if recording_timeline_id:
+        payload["recording_timeline_id"] = recording_timeline_id
     if session_dir:
         payload["session_dir"] = session_dir
     if operation_id:
@@ -129,12 +134,14 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
     operation_id = await create_operation(
         "recording_start", session_dir=session_dir_hint, metadata={}
     )
+    recording_timeline_id: Optional[str] = None
     async with recorder_lock:
         if data is None:
             data = RecordingStartModel()
         current_session = read_session_dir()
         
         if current_session and recorder_running(current_session):
+            recording_timeline_id = ensure_recording_timeline_id(current_session)
             if recorder_state(current_session) == RecorderState.PAUSED.value:
                 cmd = [
                     "python3",
@@ -156,6 +163,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
                 payload = _action_response(
                     action="start",
                     status="resumed",
+                    recording_timeline_id=recording_timeline_id,
                     session_dir=current_session,
                     operation_id=operation_id,
                     converged=True,
@@ -166,6 +174,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             payload = _action_response(
                 action="start",
                 status="already_recording",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=current_session,
                 operation_id=operation_id,
                 converged=True,
@@ -202,6 +211,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
         else:
             session_id = os.path.basename(session_dir)
             ensure_session_subdirs(session_dir)
+        recording_timeline_id = ensure_recording_timeline_id(session_dir)
         write_session_state(session_dir, "active")
 
         assert isinstance(session_dir, str)
@@ -254,6 +264,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
         result = _action_response(
             action="start",
             status="started",
+            recording_timeline_id=recording_timeline_id,
             session_dir=session_dir,
             operation_id=operation_id,
             converged=True,
@@ -271,6 +282,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             }
         )
         set_manual_pause_lock(session_dir, False)
+        write_recording_artifact_manifest(session_dir, generated_by_action="start")
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -301,10 +313,14 @@ async def stop_recording_endpoint():
     )
     async with recorder_lock:
         session_dir = read_session_dir()
+        recording_timeline_id = (
+            ensure_recording_timeline_id(session_dir) if session_dir else None
+        )
         if not session_dir:
             payload = _action_response(
                 action="stop",
                 status="already_stopped",
+                recording_timeline_id=recording_timeline_id,
                 operation_id=operation_id,
                 converged=True,
             )
@@ -315,6 +331,7 @@ async def stop_recording_endpoint():
             result = _action_response(
                 action="stop",
                 status="already_stopped",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 operation_id=operation_id,
                 converged=True,
@@ -374,10 +391,14 @@ async def stop_recording_endpoint():
             result = _action_response(
                 action="stop",
                 status="stop_requested",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 operation_id=operation_id,
                 converged=False,
                 warning="Recorder stop requested; finalization still in progress.",
+            )
+            write_recording_artifact_manifest(
+                session_dir, generated_by_action="stop_requested"
             )
             await complete_operation(operation_id, result=result)
             return result
@@ -385,11 +406,13 @@ async def stop_recording_endpoint():
         result = _action_response(
             action="stop",
             status="stopped",
+            recording_timeline_id=recording_timeline_id,
             session_dir=session_dir,
             operation_id=operation_id,
             converged=True,
         )
         set_manual_pause_lock(session_dir, False)
+        write_recording_artifact_manifest(session_dir, generated_by_action="stop")
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -417,16 +440,21 @@ async def pause_recording():
 
     async with recorder_lock:
         session_dir = read_session_dir()
+        recording_timeline_id = (
+            ensure_recording_timeline_id(session_dir) if session_dir else None
+        )
         if not session_dir:
             return _action_response(
                 action="pause",
                 status=RecorderState.IDLE.value,
+                recording_timeline_id=recording_timeline_id,
                 converged=True,
             )
         if not recorder_running(session_dir):
             result = _action_response(
                 action="pause",
                 status="already_paused",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 converged=True,
             )
@@ -447,6 +475,7 @@ async def pause_recording():
             result = _action_response(
                 action="pause",
                 status="already_paused",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 converged=True,
             )
@@ -511,6 +540,7 @@ async def pause_recording():
         result = _action_response(
             action="pause",
             status="paused",
+            recording_timeline_id=recording_timeline_id,
             session_dir=session_dir,
             converged=True,
         )
@@ -546,16 +576,21 @@ async def resume_recording():
 
     async with recorder_lock:
         session_dir = read_session_dir()
+        recording_timeline_id = (
+            ensure_recording_timeline_id(session_dir) if session_dir else None
+        )
         if not session_dir:
             return _action_response(
                 action="resume",
                 status=RecorderState.IDLE.value,
+                recording_timeline_id=recording_timeline_id,
                 converged=True,
             )
         if not recorder_running(session_dir):
             result = _action_response(
                 action="resume",
                 status=RecorderState.IDLE.value,
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 converged=True,
             )
@@ -576,6 +611,7 @@ async def resume_recording():
             result = _action_response(
                 action="resume",
                 status="already_recording",
+                recording_timeline_id=recording_timeline_id,
                 session_dir=session_dir,
                 converged=True,
             )
@@ -633,6 +669,7 @@ async def resume_recording():
         result = _action_response(
             action="resume",
             status="resumed",
+            recording_timeline_id=recording_timeline_id,
             session_dir=session_dir,
             converged=True,
         )

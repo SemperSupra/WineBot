@@ -8,6 +8,7 @@ import logging
 import fcntl
 import datetime
 import subprocess
+import uuid
 from collections import deque
 from typing import Optional, Any
 
@@ -456,6 +457,7 @@ def cmd_start(args):
     if not os.path.exists(session_manifest_path):
         manifest = SessionManifest(
             session_id=os.path.basename(session_dir),
+            recording_timeline_id=f"timeline-{uuid.uuid4().hex}",
             start_time_epoch=start_time_epoch,
             start_time_iso=get_iso_time(),
             hostname=os.uname().nodename,
@@ -481,6 +483,7 @@ def cmd_start(args):
         segment_manifest = {
             "schema_version": manifest.schema_version,
             "session_id": manifest.session_id,
+            "recording_timeline_id": manifest.recording_timeline_id,
             "segment": segment,
             "start_time_epoch": start_time_epoch,
             "start_time_iso": get_iso_time(),
