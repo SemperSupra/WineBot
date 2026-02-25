@@ -52,6 +52,7 @@ _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
 _SHUTDOWN_GUARD_TTL_SEC = 120.0
+_TRANSITION_MARKER_FILE = "session.transition.json"
 
 
 # --- Lifecycle Logic ---
@@ -353,6 +354,37 @@ def _restore_resume_state(
         os.environ["WINEBOT_SESSION_ID"] = os.path.basename(previous_session_dir)
         if previous_current_state:
             write_session_state(previous_session_dir, previous_current_state)
+
+
+def _transition_marker_path(session_dir: str) -> str:
+    return os.path.join(session_dir, _TRANSITION_MARKER_FILE)
+
+
+def _write_transition_marker(session_dir: str, phase: str, extra: Optional[Dict[str, Any]] = None) -> None:
+    payload: Dict[str, Any] = {
+        "phase": phase,
+        "timestamp_epoch_ms": int(time.time() * 1000),
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    if extra:
+        payload["extra"] = extra
+    tmp_path = f"{_transition_marker_path(session_dir)}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, _transition_marker_path(session_dir))
+
+
+def _clear_transition_marker(session_dir: Optional[str]) -> None:
+    if not session_dir:
+        return
+    path = _transition_marker_path(session_dir)
+    try:
+        if os.path.exists(path):
+            os.unlink(path)
+    except Exception:
+        pass
 
 
 @router.get("/operations/{operation_id}")
@@ -765,6 +797,17 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         previous_current_state = (
             read_session_state(current_session) if current_session else None
         )
+        _write_transition_marker(
+            target_dir,
+            "resume_target_prepare",
+            extra={"operation_id": operation_id, "previous_session": current_session},
+        )
+        if current_session and current_session != target_dir:
+            _write_transition_marker(
+                current_session,
+                "resume_handover_out",
+                extra={"operation_id": operation_id, "target_session": target_dir},
+            )
         try:
             await heartbeat_operation(
                 operation_id,
@@ -800,6 +843,9 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                 interactive,
                 session_control_mode=session_control_mode,
             )
+            _clear_transition_marker(target_dir)
+            if current_session and current_session != target_dir:
+                _clear_transition_marker(current_session)
         except Exception as exc:
             _restore_resume_state(
                 previous_session_dir=current_session,
@@ -807,6 +853,9 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                 previous_target_state=previous_target_state,
                 previous_current_state=previous_current_state,
             )
+            _clear_transition_marker(target_dir)
+            if current_session and current_session != target_dir:
+                _clear_transition_marker(current_session)
             append_lifecycle_event(
                 target_dir,
                 "session_resume_rollback",

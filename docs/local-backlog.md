@@ -34,3 +34,14 @@ This file tracks in-flight and planned work items that are not yet fully deliver
 
 - `OPEN` Real-network DNS-SD/mDNS integration conformance.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/42
+
+## Invariant Hardening Program
+
+- `DONE` Phase A: canonical invariants + executable invariant checks + runtime invariant health endpoint.
+  - Scope: `docs/invariants.md`, `tests/test_invariants.py`, `/health/invariants`, fail-closed atomic writes for critical state files.
+
+- `DONE` Phase B: session resume transition markers and rollback-safe marker cleanup.
+  - Scope: `api/routers/lifecycle.py` transactional transition markers.
+
+- `OPEN` Advanced durability and CAS transition guards (grouped deferred scope).
+  - GitHub issue: https://github.com/SemperSupra/WineBot/issues/45

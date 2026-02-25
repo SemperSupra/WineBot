@@ -7,6 +7,7 @@ import datetime
 import platform
 import hashlib
 import uuid
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
@@ -26,6 +27,25 @@ ALLOWED_PREFIXES: Final[List[str]] = [
     "/opt/winebot",
     "/usr/bin",
 ]
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
+    _atomic_write_text(path, json.dumps(payload))
 
 
 def validate_path(path: str):
@@ -359,8 +379,7 @@ def ensure_user_profile(user_dir: str) -> None:
 
 
 def write_session_dir(path: str) -> None:
-    with open(SESSION_FILE, "w") as f:
-        f.write(path)
+    _atomic_write_text(SESSION_FILE, path)
     set_current_session_dir(path)
 
 
@@ -567,11 +586,7 @@ def link_wine_user_dir(user_dir: str) -> None:
 
 
 def write_session_state(session_dir: str, state: str) -> None:
-    try:
-        with open(os.path.join(session_dir, "session.state"), "w") as f:
-            f.write(state)
-    except Exception:
-        pass
+    _atomic_write_text(os.path.join(session_dir, "session.state"), state)
 
 
 def get_instance_mode() -> str:
@@ -602,12 +617,7 @@ def write_instance_control_mode(mode: str) -> str:
     normalized = (mode or "").strip().lower()
     if normalized not in {"human-only", "agent-only", "hybrid"}:
         normalized = "hybrid"
-    try:
-        os.makedirs(os.path.dirname(INSTANCE_CONTROL_MODE_FILE), exist_ok=True)
-        with open(INSTANCE_CONTROL_MODE_FILE, "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    _atomic_write_text(INSTANCE_CONTROL_MODE_FILE, normalized)
     return normalized
 
 
@@ -668,11 +678,7 @@ def write_instance_state(state: str, reason: str = "") -> Dict[str, Any]:
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
     }
-    try:
-        with open(INSTANCE_STATE_FILE, "w") as f:
-            json.dump(payload, f)
-    except Exception:
-        pass
+    _atomic_write_json(INSTANCE_STATE_FILE, payload)
     return payload
 
 
@@ -688,11 +694,7 @@ def write_session_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
     if normalized not in {"persistent", "oneshot"}:
         normalized = "persistent"
-    try:
-        with open(_session_mode_path(session_dir), "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    _atomic_write_text(_session_mode_path(session_dir), normalized)
 
 
 def read_session_mode(session_dir: str) -> str:
@@ -710,11 +712,7 @@ def write_session_control_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
     if normalized not in {"human-only", "agent-only", "hybrid"}:
         normalized = "hybrid"
-    try:
-        with open(_session_control_mode_path(session_dir), "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    _atomic_write_text(_session_control_mode_path(session_dir), normalized)
 
 
 def read_session_control_mode(session_dir: str) -> str:

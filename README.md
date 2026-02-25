@@ -92,6 +92,10 @@ Standards and conformance coverage:
 
 See [docs/conformance.md](docs/conformance.md).
 
+Invariant registry and enforcement model:
+
+See [docs/invariants.md](docs/invariants.md).
+
 Generate release/CI trust evidence bundle:
 
 `scripts/ci/generate-trust-pack.sh artifacts/trust-pack`

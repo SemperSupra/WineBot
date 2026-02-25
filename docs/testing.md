@@ -165,6 +165,16 @@ Reference:
 
 `docs/conformance.md`
 
+## Invariant Validation
+
+Lifecycle/control/config invariants are codified and tested:
+
+`pytest -q tests/test_invariants.py tests/test_lifecycle_hardened.py tests/test_config_guard.py`
+
+Runtime invariant status is available at:
+
+`GET /health/invariants`
+
 ## UX and Accessibility
 
 In addition to existing UI/UX suites, keyboard navigation baseline is validated with:
