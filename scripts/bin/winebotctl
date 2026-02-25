@@ -676,6 +676,54 @@ else:
     print(data.get("state", ""))
 PY
     }
+    validate_recording_action_response() {
+      local action="$1"
+      local body="$2"
+      python3 - <<'PY' "$action" "$body"
+import json
+import sys
+
+action = sys.argv[1]
+raw = sys.argv[2]
+allowed = {
+    "start": {"started", "resumed", "already_recording"},
+    "pause": {"paused", "already_paused", "idle"},
+    "resume": {"resumed", "already_recording", "idle", "resume_requested"},
+    "stop": {"stopped", "already_stopped", "stop_requested"},
+}
+
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    print("Invalid JSON response for recording command", file=sys.stderr)
+    raise SystemExit(1)
+
+status = str(data.get("status", "") or "")
+if not status:
+    print("Recording response missing required 'status' field", file=sys.stderr)
+    raise SystemExit(1)
+
+if "result" in data or "converged" in data:
+    result = data.get("result")
+    converged = data.get("converged")
+    if result not in {"converged", "accepted"}:
+        print("Recording response has invalid 'result' field", file=sys.stderr)
+        raise SystemExit(1)
+    if not isinstance(converged, bool):
+        print("Recording response has non-boolean 'converged' field", file=sys.stderr)
+        raise SystemExit(1)
+    if converged and result != "converged":
+        print("Recording response mismatch: converged=true requires result=converged", file=sys.stderr)
+        raise SystemExit(1)
+    if not converged and result != "accepted":
+        print("Recording response mismatch: converged=false requires result=accepted", file=sys.stderr)
+        raise SystemExit(1)
+
+if status not in allowed.get(action, set()):
+    print(f"Unexpected recording status for {action}: {status}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    }
     case "$sub" in
       status)
         resp="$(api_request GET "/health/recording")"
@@ -770,6 +818,12 @@ PY
     if [ "$status" -ge 400 ]; then
       echo "$body" >&2
       exit 1
+    fi
+    if [ "$sub" != "status" ]; then
+      if ! validate_recording_action_response "$sub" "$body"; then
+        echo "$body" >&2
+        exit 1
+      fi
     fi
     printf '%s\n' "$body"
     ;;

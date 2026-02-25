@@ -224,17 +224,72 @@ Start a recording session.
 - **Response:** `{"status":"started","session_id":"...","session_dir":"...","segment":1,"output_file":"...","events_file":"..."}`
 If a session already exists and `new_session` is false, each start creates a new numbered segment in the same session directory.
 
+#### Recording Action Contract
+All recording action endpoints (`/recording/start`, `/recording/pause`, `/recording/resume`, `/recording/stop`) return a shared envelope:
+
+```json
+{
+  "action": "start|pause|resume|stop",
+  "status": "legacy_status_string",
+  "result": "converged|accepted",
+  "converged": true,
+  "session_dir": "/artifacts/sessions/session-...",
+  "operation_id": "uuid-when-available",
+  "warning": "optional warning text"
+}
+```
+
+- `status` is preserved for backward compatibility with existing scripts/UI.
+- `result` and `converged` are the canonical state-convergence signals:
+  - `result=converged` and `converged=true`: target state reached before response.
+  - `result=accepted` and `converged=false`: command accepted, convergence still in progress.
+
+#### Recording Transition Guarantees
+| Endpoint | Typical `status` values | Convergence guarantee |
+| --- | --- | --- |
+| `POST /recording/start` | `started`, `resumed`, `already_recording` | Converged on response |
+| `POST /recording/pause` | `paused`, `already_paused`, `idle` | Converged on response |
+| `POST /recording/resume` | `resumed`, `already_recording`, `idle`, `resume_requested` | `resume_requested` means accepted, not yet converged |
+| `POST /recording/stop` | `stopped`, `already_stopped`, `stop_requested` | `stop_requested` means accepted, not yet converged |
+
+#### Recording Idempotency Examples
+Example: repeated pause (safe no-op):
+```bash
+curl -s -X POST http://localhost:8000/recording/pause -H 'X-API-Key: TOKEN'
+curl -s -X POST http://localhost:8000/recording/pause -H 'X-API-Key: TOKEN'
+```
+Second call may return:
+```json
+{"action":"pause","status":"already_paused","result":"converged","converged":true}
+```
+
+Example: stop accepted but still finalizing:
+```bash
+curl -s -X POST http://localhost:8000/recording/stop -H 'X-API-Key: TOKEN'
+```
+Possible response:
+```json
+{
+  "action":"stop",
+  "status":"stop_requested",
+  "result":"accepted",
+  "converged":false,
+  "warning":"Recorder stop requested; finalization still in progress."
+}
+```
+Client behavior: treat as success-accepted, then poll `GET /health/recording` until `state=idle`.
+
 #### `POST /recording/pause`
 Pause the active recording session.
-- **Response:** `{"status":"paused","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `paused` or `already_paused`.
 
 #### `POST /recording/resume`
 Resume the active recording session.
-- **Response:** `{"status":"resumed","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `resumed`, `already_recording`, `resume_requested`.
 
 #### `POST /recording/stop`
 Stop the active recording session.
-- **Response:** `{"status":"stopped","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `stopped`, `already_stopped`, `stop_requested`.
 
 #### `GET /recording/perf/summary`
 Summarize metrics from `logs/perf_metrics.jsonl` for a session.

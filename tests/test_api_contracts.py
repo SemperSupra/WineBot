@@ -43,7 +43,11 @@ def test_recording_pause_and_resume_contract():
             with patch("api.routers.recording.recorder_running", return_value=True):
                 with patch(
                     "api.routers.recording.recorder_state",
-                    return_value=RecorderState.PAUSED.value,
+                    side_effect=[
+                        RecorderState.PAUSED.value,  # pause: already paused
+                        RecorderState.PAUSED.value,  # resume: precondition
+                        RecorderState.RECORDING.value,  # resume settle loop
+                    ],
                 ):
                     with patch(
                         "api.routers.recording.run_async_command",
@@ -54,9 +58,82 @@ def test_recording_pause_and_resume_contract():
                         resume_res = client.post("/recording/resume", headers=_auth())
 
     assert pause_res.status_code == 200
-    assert pause_res.json()["status"] == "already_paused"
+    pause_body = pause_res.json()
+    assert pause_body["status"] == "already_paused"
+    assert pause_body["action"] == "pause"
+    assert pause_body["result"] == "converged"
+    assert pause_body["converged"] is True
     assert resume_res.status_code == 200
-    assert resume_res.json()["status"] == "resumed"
+    resume_body = resume_res.json()
+    assert resume_body["status"] == "resumed"
+    assert resume_body["action"] == "resume"
+    assert resume_body["result"] == "converged"
+    assert resume_body["converged"] is True
+
+
+def test_recording_resume_requested_contract():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
+        with patch("api.routers.recording.read_session_dir", return_value="/tmp/s1"):
+            with patch("api.routers.recording.recorder_running", return_value=True):
+                with patch(
+                    "api.routers.recording.recorder_state",
+                    return_value=RecorderState.PAUSED.value,
+                ):
+                    with patch(
+                        "api.routers.recording.run_async_command",
+                        new_callable=AsyncMock,
+                    ) as mock_run:
+                        with patch(
+                            "api.routers.recording.asyncio.sleep", new=AsyncMock()
+                        ):
+                            mock_run.return_value = {"ok": True, "stderr": ""}
+                            response = client.post("/recording/resume", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "resume_requested"
+    assert body["action"] == "resume"
+    assert body["result"] == "accepted"
+    assert body["converged"] is False
+
+
+def test_recording_stop_requested_contract():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
+        with patch("api.routers.recording.read_session_dir", return_value="/tmp/s1"):
+            with patch("api.routers.recording.recorder_running", return_value=True):
+                with patch(
+                    "api.routers.recording.run_async_command",
+                    new_callable=AsyncMock,
+                ) as mock_run:
+                    with patch("api.routers.recording._int_env", return_value=1):
+                        with patch(
+                            "api.routers.recording.asyncio.sleep", new=AsyncMock()
+                        ):
+                            mock_run.return_value = {"ok": True, "stderr": ""}
+                            response = client.post("/recording/stop", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "stop_requested"
+    assert body["action"] == "stop"
+    assert body["result"] == "accepted"
+    assert body["converged"] is False
+    assert "warning" in body
+
+
+def test_recording_openapi_response_models():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+        response = client.get("/openapi.json")
+    assert response.status_code == 200
+    payload = response.json()
+    stop_schema = payload["paths"]["/recording/stop"]["post"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    start_schema = payload["paths"]["/recording/start"]["post"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    assert stop_schema["$ref"].endswith("/RecordingActionResponse")
+    assert start_schema["$ref"].endswith("/RecordingStartResponse")
 
 
 def test_recording_perf_summary_contract(tmp_path):
@@ -428,4 +505,7 @@ def test_recording_stop_returns_operation_id(tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "already_stopped"
+    assert body["action"] == "stop"
+    assert body["result"] == "converged"
+    assert body["converged"] is True
     assert body.get("operation_id")

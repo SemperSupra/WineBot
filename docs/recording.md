@@ -21,6 +21,7 @@ Set `WINEBOT_RECORD=1` when starting the container.
 | `WINEBOT_SESSION_LABEL` | Optional label appended to the session ID | (empty) |
 | `WINEBOT_USER_DIR` | Override the session user directory (Wine user home) | (empty) |
 | `WINEBOT_RECORD_FORMAT` | Video format (currently MKV is canonical) | `mkv` |
+| `WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS` | Max synchronous API wait before returning `stop_requested` while finalization continues | `3` |
 
 ## Sessions and Artifacts
 
@@ -47,6 +48,13 @@ Artifacts produced:
 
 ### Pause/Resume behavior
 Pause stops the current sub‑segment quickly; resume starts a new sub‑segment. On stop, sub‑segments are concatenated into `video_###.mkv` and subtitles are generated on the merged timeline.
+
+### Action response semantics
+Recording action endpoints return both legacy `status` and normalized convergence fields:
+- `result=converged` with `converged=true`: requested state is already reached.
+- `result=accepted` with `converged=false`: accepted, still converging asynchronously (for example `stop_requested`, `resume_requested`).
+
+For asynchronous cases, use `GET /health/recording` and wait for the target state (typically `idle` after stop).
 
 ## Adding Annotations
 

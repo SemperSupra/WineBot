@@ -6,7 +6,12 @@ import subprocess
 import time
 import uuid
 import json
-from api.core.models import RecordingStartModel, RecorderState
+from api.core.models import (
+    RecordingStartModel,
+    RecorderState,
+    RecordingActionResponse,
+    RecordingStartResponse,
+)
 from api.core.recorder import (
     recorder_lock,
     recorder_running,
@@ -14,6 +19,7 @@ from api.core.recorder import (
     write_recorder_state,
 )
 from api.core.telemetry import emit_operation_timing
+from api.core.monitor import set_manual_pause_lock
 from api.utils.files import (
     read_session_dir,
     resolve_session_dir,
@@ -43,6 +49,43 @@ router = APIRouter(prefix="/recording", tags=["recording"])
 DEFAULT_SESSION_ROOT = "/artifacts/sessions"
 
 
+def _int_env(name: str, default: int, minimum: int = 0, maximum: Optional[int] = None) -> int:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except Exception:
+        value = default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _action_response(
+    *,
+    action: str,
+    status: str,
+    session_dir: Optional[str] = None,
+    operation_id: Optional[str] = None,
+    converged: bool = True,
+    warning: Optional[str] = None,
+) -> Dict[str, object]:
+    """Return a normalized action payload while preserving legacy status values."""
+    payload: Dict[str, object] = {
+        "action": action,
+        "status": status,
+        "result": "converged" if converged else "accepted",
+        "converged": converged,
+    }
+    if session_dir:
+        payload["session_dir"] = session_dir
+    if operation_id:
+        payload["operation_id"] = operation_id
+    if warning:
+        payload["warning"] = warning
+    return payload
+
+
 def parse_resolution(screen: str) -> str:
     if not screen:
         return "1920x1080"
@@ -66,7 +109,7 @@ def generate_session_id(label: Optional[str]) -> str:
     return session_id
 
 
-@router.post("/start")
+@router.post("/start", response_model=RecordingStartResponse, response_model_exclude_none=True)
 async def start_recording(data: Optional[RecordingStartModel] = Body(default=None)):
     """Start a recording session."""
     op_started = time.perf_counter()
@@ -103,18 +146,23 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
                         status_code=500,
                         detail=(result["stderr"] or "Failed to resume recorder"),
                     )
-                payload = {
-                    "status": "resumed",
-                    "session_dir": current_session,
-                    "operation_id": operation_id,
-                }
+                payload = _action_response(
+                    action="start",
+                    status="resumed",
+                    session_dir=current_session,
+                    operation_id=operation_id,
+                    converged=True,
+                )
+                set_manual_pause_lock(current_session, False)
                 await complete_operation(operation_id, result=payload)
                 return payload
-            payload = {
-                "status": "already_recording",
-                "session_dir": current_session,
-                "operation_id": operation_id,
-            }
+            payload = _action_response(
+                action="start",
+                status="already_recording",
+                session_dir=current_session,
+                operation_id=operation_id,
+                converged=True,
+            )
             await complete_operation(operation_id, result=payload)
             return payload
 
@@ -196,10 +244,16 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
                 break
             await asyncio.sleep(0.1)
 
-        result = {
-            "status": "started",
+        result = _action_response(
+            action="start",
+            status="started",
+            session_dir=session_dir,
+            operation_id=operation_id,
+            converged=True,
+        )
+        result.update(
+            {
             "session_id": session_id,
-            "session_dir": session_dir,
             "segment": segment,
             "output_file": output_file,
             "events_file": events_file,
@@ -207,8 +261,9 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
             "resolution": resolution,
             "fps": fps,
             "recorder_pid": pid,
-            "operation_id": operation_id,
-        }
+            }
+        )
+        set_manual_pause_lock(session_dir, False)
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -225,7 +280,7 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
         return result
 
 
-@router.post("/stop")
+@router.post("/stop", response_model=RecordingActionResponse, response_model_exclude_none=True)
 async def stop_recording_endpoint():
     """Stop the active recording session."""
     op_started = time.perf_counter()
@@ -240,16 +295,24 @@ async def stop_recording_endpoint():
     async with recorder_lock:
         session_dir = read_session_dir()
         if not session_dir:
-            payload = {"status": "already_stopped", "operation_id": operation_id}
+            payload = _action_response(
+                action="stop",
+                status="already_stopped",
+                operation_id=operation_id,
+                converged=True,
+            )
             await complete_operation(operation_id, result=payload)
             return payload
         if not recorder_running(session_dir):
             write_recorder_state(session_dir, RecorderState.IDLE.value)
-            result = {
-                "status": "already_stopped",
-                "session_dir": session_dir,
-                "operation_id": operation_id,
-            }
+            result = _action_response(
+                action="stop",
+                status="already_stopped",
+                session_dir=session_dir,
+                operation_id=operation_id,
+                converged=True,
+            )
+            set_manual_pause_lock(session_dir, False)
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -285,17 +348,41 @@ async def stop_recording_endpoint():
                 status_code=500, detail=(result["stderr"] or "Failed to stop recorder")
             )
 
-        for _ in range(10):
+        # Keep API stop responsive; finalization can continue asynchronously.
+        sync_wait_sec = _int_env(
+            "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS",
+            default=3,
+            minimum=1,
+            maximum=max(1, int(config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS)),
+        )
+        settle_iters = max(1, int(sync_wait_sec * 5))
+        stopped = False
+        for _ in range(settle_iters):
             if not recorder_running(session_dir):
                 write_recorder_state(session_dir, RecorderState.IDLE.value)
+                stopped = True
                 break
             await asyncio.sleep(0.2)
+        if not stopped:
+            result = _action_response(
+                action="stop",
+                status="stop_requested",
+                session_dir=session_dir,
+                operation_id=operation_id,
+                converged=False,
+                warning="Recorder stop requested; finalization still in progress.",
+            )
+            await complete_operation(operation_id, result=result)
+            return result
 
-        result = {
-            "status": "stopped",
-            "session_dir": session_dir,
-            "operation_id": operation_id,
-        }
+        result = _action_response(
+            action="stop",
+            status="stopped",
+            session_dir=session_dir,
+            operation_id=operation_id,
+            converged=True,
+        )
+        set_manual_pause_lock(session_dir, False)
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -312,7 +399,7 @@ async def stop_recording_endpoint():
         return result
 
 
-@router.post("/pause")
+@router.post("/pause", response_model=RecordingActionResponse, response_model_exclude_none=True)
 async def pause_recording():
     """Pause the active recording session."""
     op_started = time.perf_counter()
@@ -324,9 +411,18 @@ async def pause_recording():
     async with recorder_lock:
         session_dir = read_session_dir()
         if not session_dir:
-            return {"status": RecorderState.IDLE.value}
+            return _action_response(
+                action="pause",
+                status=RecorderState.IDLE.value,
+                converged=True,
+            )
         if not recorder_running(session_dir):
-            result = {"status": "already_paused", "session_dir": session_dir}
+            result = _action_response(
+                action="pause",
+                status="already_paused",
+                session_dir=session_dir,
+                converged=True,
+            )
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -341,7 +437,12 @@ async def pause_recording():
             )
             return result
         if recorder_state(session_dir) == RecorderState.PAUSED.value:
-            result = {"status": "already_paused", "session_dir": session_dir}
+            result = _action_response(
+                action="pause",
+                status="already_paused",
+                session_dir=session_dir,
+                converged=True,
+            )
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -367,10 +468,50 @@ async def pause_recording():
             cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
         )
         if not result["ok"]:
-            raise HTTPException(
-                status_code=500, detail=(result["stderr"] or "Failed to pause recorder")
+            # If pause command races with recorder state transition, treat desired
+            # target as converging instead of surfacing a hard API failure.
+            current_state = recorder_state(session_dir)
+            if current_state == RecorderState.PAUSED.value or not recorder_running(session_dir):
+                result = {"ok": True, "stdout": "", "stderr": ""}
+            else:
+                retry = await run_async_command(
+                    cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
+                )
+                if retry.get("ok"):
+                    result = {"ok": True, "stdout": "", "stderr": ""}
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(retry.get("stderr") or result.get("stderr") or "Failed to pause recorder"),
+                    )
+        settle_iters = max(1, int(config.WINEBOT_RECORDING_STATE_SETTLE_SECONDS * 5))
+        paused = False
+        for attempt in range(2):
+            for _ in range(settle_iters):
+                if recorder_state(session_dir) == RecorderState.PAUSED.value:
+                    paused = True
+                    break
+                await asyncio.sleep(0.2)
+            if paused:
+                break
+            # Retry a single time if pause signal was acknowledged but state lagged.
+            retry = await run_async_command(
+                cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
             )
-        result = {"status": "paused", "session_dir": session_dir}
+            if not retry.get("ok"):
+                break
+        result = _action_response(
+            action="pause",
+            status="paused",
+            session_dir=session_dir,
+            converged=True,
+        )
+        set_manual_pause_lock(session_dir, True)
+        if not paused:
+            raise HTTPException(
+                status_code=504,
+                detail="Recorder did not enter paused state before timeout",
+            )
         emit_operation_timing(
             session_dir,
             feature="recording",
@@ -386,7 +527,7 @@ async def pause_recording():
         return result
 
 
-@router.post("/resume")
+@router.post("/resume", response_model=RecordingActionResponse, response_model_exclude_none=True)
 async def resume_recording():
     """Resume the active recording session."""
     op_started = time.perf_counter()
@@ -398,9 +539,18 @@ async def resume_recording():
     async with recorder_lock:
         session_dir = read_session_dir()
         if not session_dir:
-            return {"status": RecorderState.IDLE.value}
+            return _action_response(
+                action="resume",
+                status=RecorderState.IDLE.value,
+                converged=True,
+            )
         if not recorder_running(session_dir):
-            result = {"status": RecorderState.IDLE.value, "session_dir": session_dir}
+            result = _action_response(
+                action="resume",
+                status=RecorderState.IDLE.value,
+                session_dir=session_dir,
+                converged=True,
+            )
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -415,7 +565,12 @@ async def resume_recording():
             )
             return result
         if recorder_state(session_dir) != RecorderState.PAUSED.value:
-            result = {"status": "already_recording", "session_dir": session_dir}
+            result = _action_response(
+                action="resume",
+                status="already_recording",
+                session_dir=session_dir,
+                converged=True,
+            )
             emit_operation_timing(
                 session_dir,
                 feature="recording",
@@ -441,11 +596,43 @@ async def resume_recording():
             cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
         )
         if not result["ok"]:
-            raise HTTPException(
-                status_code=500,
-                detail=(result["stderr"] or "Failed to resume recorder"),
+            # Handle race where resume target is already reached.
+            current_state = recorder_state(session_dir)
+            if current_state != RecorderState.PAUSED.value and recorder_running(session_dir):
+                result = {"ok": True, "stdout": "", "stderr": ""}
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(result["stderr"] or "Failed to resume recorder"),
+                )
+        settle_iters = max(1, int(config.WINEBOT_RECORDING_STATE_SETTLE_SECONDS * 5))
+        resumed = False
+        for attempt in range(2):
+            for _ in range(settle_iters):
+                current_state = recorder_state(session_dir)
+                if current_state != RecorderState.PAUSED.value and recorder_running(session_dir):
+                    resumed = True
+                    break
+                await asyncio.sleep(0.2)
+            if resumed:
+                break
+            retry = await run_async_command(
+                cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
             )
-        result = {"status": "resumed", "session_dir": session_dir}
+            if not retry.get("ok"):
+                break
+        result = _action_response(
+            action="resume",
+            status="resumed",
+            session_dir=session_dir,
+            converged=True,
+        )
+        set_manual_pause_lock(session_dir, False)
+        if not resumed:
+            result["status"] = "resume_requested"
+            result["result"] = "accepted"
+            result["converged"] = False
+            result["warning"] = "Resume requested; recorder state convergence pending."
         emit_operation_timing(
             session_dir,
             feature="recording",

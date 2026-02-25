@@ -212,6 +212,79 @@ def test_winebotctl_recording_start_payload():
         assert payload.get("new_session") is False
 
 
+def test_winebotctl_recording_stop_accepts_async_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        stub_info = make_curl_stub(
+            tmpdir,
+            {
+                "GET http://localhost:8000/health/recording": {
+                    "status": 200,
+                    "body": {"state": "recording"},
+                },
+                "POST http://localhost:8000/recording/stop": {
+                    "status": 200,
+                    "body": {
+                        "action": "stop",
+                        "status": "stop_requested",
+                        "result": "accepted",
+                        "converged": False,
+                    },
+                },
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                "CURL_RESPONSES": stub_info["responses"],
+                "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
+            }
+        )
+        result = run_cli(["recording", "stop"], env)
+        assert result.returncode == 0
+        payload = json.loads(result.stdout.strip())
+        assert payload["status"] == "stop_requested"
+        assert payload["result"] == "accepted"
+        assert payload["converged"] is False
+
+
+def test_winebotctl_recording_rejects_inconsistent_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        stub_info = make_curl_stub(
+            tmpdir,
+            {
+                "GET http://localhost:8000/health/recording": {
+                    "status": 200,
+                    "body": {"state": "recording"},
+                },
+                "POST http://localhost:8000/recording/stop": {
+                    "status": 200,
+                    "body": {
+                        "action": "stop",
+                        "status": "stop_requested",
+                        "result": "converged",
+                        "converged": False,
+                    },
+                },
+            },
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                "CURL_RESPONSES": stub_info["responses"],
+                "CURL_COUNT_FILE": stub_info["count"],
+                "WINEBOT_API_URL": "http://localhost:8000",
+            }
+        )
+        result = run_cli(["recording", "stop"], env)
+        assert result.returncode != 0
+        assert "converged=false requires result=accepted" in result.stderr
+
+
 def test_winebotctl_lifecycle_shutdown_requires_confirmation():
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)

@@ -255,6 +255,26 @@ Profile and config helpers:
 
 `scripts/winebotctl perf summary`
 
+## Recording API Quick Reference
+
+Recording action endpoints share a common response contract:
+- `action`: `start|pause|resume|stop`
+- `status`: legacy compatibility status string
+- `result`: `converged|accepted`
+- `converged`: boolean convergence signal
+
+Common `status` values:
+- `POST /recording/start`: `started`, `resumed`, `already_recording`
+- `POST /recording/pause`: `paused`, `already_paused`, `idle`
+- `POST /recording/resume`: `resumed`, `already_recording`, `resume_requested`
+- `POST /recording/stop`: `stopped`, `already_stopped`, `stop_requested`
+
+When `result=accepted` and `converged=false` (for example `stop_requested`), the action was accepted and is still converging; poll `GET /health/recording` until the target state is reached.
+
+See:
+- [docs/api.md](docs/api.md) (Recording Action Contract, transition guarantees, idempotency examples)
+- [docs/recording.md](docs/recording.md) (recording behavior and runtime knobs)
+
 ## Take a screenshot (headless)
 
 `docker compose -f compose/docker-compose.yml --profile headless exec --user winebot winebot ./automation/screenshot.sh`

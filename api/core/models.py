@@ -10,6 +10,18 @@ class RecorderState(str, Enum):
     STOPPING = "stopping"
 
 
+class RecordingActionResult(str, Enum):
+    CONVERGED = "converged"
+    ACCEPTED = "accepted"
+
+
+class RecordingAction(str, Enum):
+    START = "start"
+    STOP = "stop"
+    PAUSE = "pause"
+    RESUME = "resume"
+
+
 class ControlMode(str, Enum):
     USER = "USER"
     AGENT = "AGENT"
@@ -122,6 +134,27 @@ class RecordingStartModel(BaseModel):
     resolution: Optional[str] = None
     fps: Optional[int] = 30
     new_session: Optional[bool] = False
+
+
+class RecordingActionResponse(BaseModel):
+    action: RecordingAction
+    status: str
+    result: RecordingActionResult
+    converged: bool
+    session_dir: Optional[str] = None
+    operation_id: Optional[str] = None
+    warning: Optional[str] = None
+
+
+class RecordingStartResponse(RecordingActionResponse):
+    session_id: Optional[str] = None
+    segment: Optional[int] = None
+    output_file: Optional[str] = None
+    events_file: Optional[str] = None
+    display: Optional[str] = None
+    resolution: Optional[str] = None
+    fps: Optional[int] = None
+    recorder_pid: Optional[int] = None
 
 
 class SessionResumeModel(BaseModel):
