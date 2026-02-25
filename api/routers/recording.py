@@ -491,7 +491,8 @@ async def pause_recording():
                         status_code=500,
                         detail=(retry.get("stderr") or result.get("stderr") or "Failed to pause recorder"),
                     )
-        settle_iters = max(1, int(config.WINEBOT_RECORDING_STATE_SETTLE_SECONDS * 5))
+        settle_seconds = float(getattr(config, "WINEBOT_RECORDING_STATE_SETTLE_SECONDS", 2.0))
+        settle_iters = max(1, int(settle_seconds * 5))
         paused = False
         for attempt in range(2):
             for _ in range(settle_iters):
@@ -612,7 +613,8 @@ async def resume_recording():
                     status_code=500,
                     detail=(result["stderr"] or "Failed to resume recorder"),
                 )
-        settle_iters = max(1, int(config.WINEBOT_RECORDING_STATE_SETTLE_SECONDS * 5))
+        settle_seconds = float(getattr(config, "WINEBOT_RECORDING_STATE_SETTLE_SECONDS", 2.0))
+        settle_iters = max(1, int(settle_seconds * 5))
         resumed = False
         for attempt in range(2):
             for _ in range(settle_iters):
