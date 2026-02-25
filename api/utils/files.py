@@ -10,6 +10,17 @@ import uuid
 import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
+from api.core.constants import (
+    MODE_HEADLESS,
+    CONTROL_MODE_AGENT_ONLY,
+    CONTROL_MODE_HYBRID,
+    VALID_CONTROL_POLICY_MODES,
+    LIFECYCLE_MODE_PERSISTENT,
+    LIFECYCLE_MODE_ONESHOT,
+    VALID_LIFECYCLE_MODES,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_ACTIVE,
+)
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.core.session_context import set_current_session_dir
 from api.utils.process import pid_running
@@ -32,7 +43,7 @@ ALLOWED_PREFIXES: Final[List[str]] = [
 def _atomic_write_text(path: str, content: str) -> None:
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=directory, text=True)
+    fd, tmp_path = tempfile.mkstemp(prefix="tmp-", dir=directory, text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
@@ -541,8 +552,8 @@ def write_recording_artifact_manifest(
     config_snapshot = {
         "WINEBOT_RECORD": os.getenv("WINEBOT_RECORD", "0"),
         "WINEBOT_SESSION_ROOT": os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT),
-        "WINEBOT_SESSION_MODE": os.getenv("WINEBOT_SESSION_MODE", "persistent"),
-        "WINEBOT_SESSION_CONTROL_MODE": os.getenv("WINEBOT_SESSION_CONTROL_MODE", "hybrid"),
+        "WINEBOT_SESSION_MODE": os.getenv("WINEBOT_SESSION_MODE", LIFECYCLE_MODE_PERSISTENT),
+        "WINEBOT_SESSION_CONTROL_MODE": os.getenv("WINEBOT_SESSION_CONTROL_MODE", CONTROL_MODE_HYBRID),
         "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS": os.getenv(
             "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS", "3"
         ),
@@ -590,15 +601,15 @@ def write_session_state(session_dir: str, state: str) -> None:
 
 
 def get_instance_mode() -> str:
-    mode = (os.getenv("WINEBOT_INSTANCE_MODE") or "persistent").strip().lower()
-    if mode not in {"persistent", "oneshot"}:
-        return "persistent"
+    mode = (os.getenv("WINEBOT_INSTANCE_MODE") or LIFECYCLE_MODE_PERSISTENT).strip().lower()
+    if mode not in VALID_LIFECYCLE_MODES:
+        return LIFECYCLE_MODE_PERSISTENT
     return mode
 
 
 def get_instance_control_mode() -> str:
-    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
-    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    runtime_mode = (os.getenv("MODE") or MODE_HEADLESS).strip().lower()
+    default_mode = CONTROL_MODE_AGENT_ONLY if runtime_mode == MODE_HEADLESS else CONTROL_MODE_HYBRID
     mode = ""
     try:
         if os.path.exists(INSTANCE_CONTROL_MODE_FILE):
@@ -608,31 +619,31 @@ def get_instance_control_mode() -> str:
         mode = ""
     if not mode:
         mode = (os.getenv("WINEBOT_INSTANCE_CONTROL_MODE") or default_mode).strip().lower()
-    if mode not in {"human-only", "agent-only", "hybrid"}:
+    if mode not in VALID_CONTROL_POLICY_MODES:
         return default_mode
     return mode
 
 
 def write_instance_control_mode(mode: str) -> str:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"human-only", "agent-only", "hybrid"}:
-        normalized = "hybrid"
+    if normalized not in VALID_CONTROL_POLICY_MODES:
+        normalized = CONTROL_MODE_HYBRID
     _atomic_write_text(INSTANCE_CONTROL_MODE_FILE, normalized)
     return normalized
 
 
 def get_session_mode_default() -> str:
-    mode = (os.getenv("WINEBOT_SESSION_MODE") or "persistent").strip().lower()
-    if mode not in {"persistent", "oneshot"}:
-        return "persistent"
+    mode = (os.getenv("WINEBOT_SESSION_MODE") or LIFECYCLE_MODE_PERSISTENT).strip().lower()
+    if mode not in VALID_LIFECYCLE_MODES:
+        return LIFECYCLE_MODE_PERSISTENT
     return mode
 
 
 def get_session_control_mode_default() -> str:
-    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
-    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    runtime_mode = (os.getenv("MODE") or MODE_HEADLESS).strip().lower()
+    default_mode = CONTROL_MODE_AGENT_ONLY if runtime_mode == MODE_HEADLESS else CONTROL_MODE_HYBRID
     mode = (os.getenv("WINEBOT_SESSION_CONTROL_MODE") or default_mode).strip().lower()
-    if mode not in {"human-only", "agent-only", "hybrid"}:
+    if mode not in VALID_CONTROL_POLICY_MODES:
         return default_mode
     return mode
 
@@ -650,7 +661,7 @@ def read_instance_state() -> Dict[str, Any]:
         if not isinstance(data, dict):
             return default_state
         mode = str(data.get("mode", get_instance_mode())).lower()
-        if mode not in {"persistent", "oneshot"}:
+        if mode not in VALID_LIFECYCLE_MODES:
             mode = get_instance_mode()
         state = str(data.get("state", "unknown"))
         return {
@@ -692,8 +703,8 @@ def _session_control_mode_path(session_dir: str) -> str:
 
 def write_session_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"persistent", "oneshot"}:
-        normalized = "persistent"
+    if normalized not in VALID_LIFECYCLE_MODES:
+        normalized = LIFECYCLE_MODE_PERSISTENT
     _atomic_write_text(_session_mode_path(session_dir), normalized)
 
 
@@ -701,7 +712,7 @@ def read_session_mode(session_dir: str) -> str:
     try:
         with open(_session_mode_path(session_dir), "r") as f:
             mode = f.read().strip().lower()
-        if mode in {"persistent", "oneshot"}:
+        if mode in VALID_LIFECYCLE_MODES:
             return mode
     except Exception:
         pass
@@ -710,8 +721,8 @@ def read_session_mode(session_dir: str) -> str:
 
 def write_session_control_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"human-only", "agent-only", "hybrid"}:
-        normalized = "hybrid"
+    if normalized not in VALID_CONTROL_POLICY_MODES:
+        normalized = CONTROL_MODE_HYBRID
     _atomic_write_text(_session_control_mode_path(session_dir), normalized)
 
 
@@ -719,7 +730,7 @@ def read_session_control_mode(session_dir: str) -> str:
     try:
         with open(_session_control_mode_path(session_dir), "r") as f:
             mode = f.read().strip().lower()
-        if mode in {"human-only", "agent-only", "hybrid"}:
+        if mode in VALID_CONTROL_POLICY_MODES:
             return mode
     except Exception:
         pass
@@ -738,7 +749,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
         if not os.path.exists(_session_control_mode_path(session_dir)):
             write_session_control_mode(session_dir, get_session_control_mode_default())
         # In one-shot mode, completed sessions are terminal and should not be reused.
-        if read_session_mode(session_dir) == "oneshot" and read_session_state(session_dir) == "completed":
+        if read_session_mode(session_dir) == LIFECYCLE_MODE_ONESHOT and read_session_state(session_dir) == SESSION_STATE_COMPLETED:
             session_dir = None
         else:
             return session_dir
@@ -760,7 +771,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
         write_session_manifest(temp_dir, session_id)
         write_session_mode(temp_dir, get_session_mode_default())
         write_session_control_mode(temp_dir, get_session_control_mode_default())
-        write_session_state(temp_dir, "active")
+        write_session_state(temp_dir, SESSION_STATE_ACTIVE)
 
         # Atomic commit
         os.rename(temp_dir, session_dir)

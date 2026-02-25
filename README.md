@@ -38,6 +38,12 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL. |
 | `WINEBOT_COMMAND_TIMEOUT` | `5` | Subprocess execution limit in seconds. |
 | `WINEBOT_SESSION_ROOT` | `/artifacts/sessions` | Path to store session data. |
+| `WINEBOT_MAX_DETACHED_PROCESSES` | `500` | Cap for tracked detached subprocess records. |
+| `WINEBOT_RESOURCE_MONITOR_INTERVAL_SECONDS` | `5` | Background resource monitor tick interval. |
+| `WINEBOT_SESSION_CLEANUP_INTERVAL_SECONDS` | `60` | Session cleanup cadence. |
+| `WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS` | `0.05` | Max wait when acquiring a log-follow stream slot. |
+| `WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS` | `120` | Duplicate shutdown guard TTL window. |
+| `WINEBOT_ALLOW_HEADLESS_HYBRID` | `0` | Explicit override to allow headless `hybrid` control mode. |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS` | `180` | Auto-pause recording when idle (seconds). |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS_HUMAN` | (Unset) | Optional human-specific inactivity threshold override. |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT` | (Unset) | Optional agent-specific inactivity threshold override. |
@@ -53,6 +59,8 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_TELEMETRY_FEATURE_SETS` | (Unset) | Optional allowlist of feature sets. |
 | `WINEBOT_TELEMETRY_SAMPLE_RATE` | `1.0` | Probability of event emission (0.0-1.0). |
 | `WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN` | `600` | Global telemetry emission cap per minute. |
+
+Invalid environment values now fail closed at startup with explicit validation errors.
 
 ## Quickstart
 

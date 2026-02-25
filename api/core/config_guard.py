@@ -1,10 +1,15 @@
 import os
 from typing import List
-
-
-VALID_RUNTIME_MODES = {"interactive", "headless"}
-VALID_LIFECYCLE_MODES = {"persistent", "oneshot"}
-VALID_CONTROL_MODES = {"human-only", "agent-only", "hybrid"}
+from api.core.constants import (
+    MODE_HEADLESS,
+    VALID_RUNTIME_MODES,
+    VALID_LIFECYCLE_MODES,
+    VALID_CONTROL_POLICY_MODES,
+    CONTROL_MODE_HUMAN_ONLY,
+    CONTROL_MODE_AGENT_ONLY,
+    CONTROL_MODE_HYBRID,
+    LIFECYCLE_MODE_PERSISTENT,
+)
 
 
 def _normalize(value: str, default: str) -> str:
@@ -12,13 +17,13 @@ def _normalize(value: str, default: str) -> str:
 
 
 def compute_effective_control_mode(instance_mode: str, session_mode: str) -> str:
-    instance_mode = _normalize(instance_mode, "hybrid")
-    session_mode = _normalize(session_mode, "hybrid")
-    if instance_mode == "human-only" or session_mode == "human-only":
-        return "human-only"
-    if instance_mode == "agent-only" or session_mode == "agent-only":
-        return "agent-only"
-    return "hybrid"
+    instance_mode = _normalize(instance_mode, CONTROL_MODE_HYBRID)
+    session_mode = _normalize(session_mode, CONTROL_MODE_HYBRID)
+    if instance_mode == CONTROL_MODE_HUMAN_ONLY or session_mode == CONTROL_MODE_HUMAN_ONLY:
+        return CONTROL_MODE_HUMAN_ONLY
+    if instance_mode == CONTROL_MODE_AGENT_ONLY or session_mode == CONTROL_MODE_AGENT_ONLY:
+        return CONTROL_MODE_AGENT_ONLY
+    return CONTROL_MODE_HYBRID
 
 
 def validate_runtime_configuration(
@@ -33,10 +38,10 @@ def validate_runtime_configuration(
     errors: List[str] = []
 
     runtime_mode = _normalize(runtime_mode, "headless")
-    instance_lifecycle_mode = _normalize(instance_lifecycle_mode, "persistent")
-    session_lifecycle_mode = _normalize(session_lifecycle_mode, "persistent")
-    instance_control_mode = _normalize(instance_control_mode, "hybrid")
-    session_control_mode = _normalize(session_control_mode, "hybrid")
+    instance_lifecycle_mode = _normalize(instance_lifecycle_mode, LIFECYCLE_MODE_PERSISTENT)
+    session_lifecycle_mode = _normalize(session_lifecycle_mode, LIFECYCLE_MODE_PERSISTENT)
+    instance_control_mode = _normalize(instance_control_mode, CONTROL_MODE_HYBRID)
+    session_control_mode = _normalize(session_control_mode, CONTROL_MODE_HYBRID)
     build_intent = _normalize(build_intent, "rel")
 
     if runtime_mode not in VALID_RUNTIME_MODES:
@@ -53,14 +58,14 @@ def validate_runtime_configuration(
             f"WINEBOT_SESSION_MODE must be one of {sorted(VALID_LIFECYCLE_MODES)} "
             f"(got '{session_lifecycle_mode}')"
         )
-    if instance_control_mode not in VALID_CONTROL_MODES:
+    if instance_control_mode not in VALID_CONTROL_POLICY_MODES:
         errors.append(
-            f"WINEBOT_INSTANCE_CONTROL_MODE must be one of {sorted(VALID_CONTROL_MODES)} "
+            f"WINEBOT_INSTANCE_CONTROL_MODE must be one of {sorted(VALID_CONTROL_POLICY_MODES)} "
             f"(got '{instance_control_mode}')"
         )
-    if session_control_mode not in VALID_CONTROL_MODES:
+    if session_control_mode not in VALID_CONTROL_POLICY_MODES:
         errors.append(
-            f"WINEBOT_SESSION_CONTROL_MODE must be one of {sorted(VALID_CONTROL_MODES)} "
+            f"WINEBOT_SESSION_CONTROL_MODE must be one of {sorted(VALID_CONTROL_POLICY_MODES)} "
             f"(got '{session_control_mode}')"
         )
 
@@ -74,13 +79,13 @@ def validate_runtime_configuration(
             "Use MODE=headless."
         )
 
-    if runtime_mode == "headless" and effective_mode == "human-only":
+    if runtime_mode == MODE_HEADLESS and effective_mode == CONTROL_MODE_HUMAN_ONLY:
         errors.append(
             "Invalid combination: headless runtime cannot be human-only "
             "(no interactive human control surface)."
         )
 
-    if runtime_mode == "headless" and effective_mode == "hybrid" and not allow_headless_hybrid:
+    if runtime_mode == MODE_HEADLESS and effective_mode == CONTROL_MODE_HYBRID and not allow_headless_hybrid:
         errors.append(
             "Invalid combination: headless + hybrid is blocked by default. "
             "Set WINEBOT_ALLOW_HEADLESS_HYBRID=1 only if you intentionally accept "
@@ -93,8 +98,10 @@ def validate_runtime_configuration(
 def validate_current_environment(
     session_control_mode: str = "",
 ) -> List[str]:
-    runtime_mode = os.getenv("MODE", "headless")
-    runtime_default_control = "agent-only" if runtime_mode.strip().lower() == "headless" else "hybrid"
+    runtime_mode = os.getenv("MODE", MODE_HEADLESS)
+    runtime_default_control = (
+        CONTROL_MODE_AGENT_ONLY if runtime_mode.strip().lower() == MODE_HEADLESS else CONTROL_MODE_HYBRID
+    )
     allow_headless_hybrid = (os.getenv("WINEBOT_ALLOW_HEADLESS_HYBRID") or "0").strip() in {
         "1",
         "true",
@@ -103,8 +110,8 @@ def validate_current_environment(
     }
     return validate_runtime_configuration(
         runtime_mode=runtime_mode,
-        instance_lifecycle_mode=os.getenv("WINEBOT_INSTANCE_MODE", "persistent"),
-        session_lifecycle_mode=os.getenv("WINEBOT_SESSION_MODE", "persistent"),
+        instance_lifecycle_mode=os.getenv("WINEBOT_INSTANCE_MODE", LIFECYCLE_MODE_PERSISTENT),
+        session_lifecycle_mode=os.getenv("WINEBOT_SESSION_MODE", LIFECYCLE_MODE_PERSISTENT),
         instance_control_mode=os.getenv(
             "WINEBOT_INSTANCE_CONTROL_MODE", runtime_default_control
         ),

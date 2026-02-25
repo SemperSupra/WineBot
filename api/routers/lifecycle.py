@@ -35,6 +35,12 @@ from api.core.broker import broker
 from api.core.models import SessionSuspendModel, SessionResumeModel
 from api.core.models import ControlPolicyMode
 from api.core.telemetry import emit_operation_timing
+from api.core.constants import (
+    LIFECYCLE_MODE_ONESHOT,
+    SESSION_STATE_ACTIVE,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_SUSPENDED,
+)
 from api.core.operations import (
     create_operation,
     heartbeat_operation,
@@ -51,7 +57,6 @@ shutdown_transition_lock = asyncio.Lock()
 _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
-_SHUTDOWN_GUARD_TTL_SEC = 120.0
 _TRANSITION_MARKER_FILE = "session.transition.json"
 
 
@@ -59,15 +64,15 @@ _TRANSITION_MARKER_FILE = "session.transition.json"
 def _validate_session_transition(
     current_state: Optional[str], target: str, session_mode: str
 ) -> None:
-    state = (current_state or "active").strip().lower()
+    state = (current_state or SESSION_STATE_ACTIVE).strip().lower()
     if target == "suspend":
-        if state in {"completed"}:
+        if state in {SESSION_STATE_COMPLETED}:
             raise HTTPException(
                 status_code=409,
                 detail="Cannot suspend a completed session",
             )
     elif target == "resume":
-        if session_mode == "oneshot" and state == "completed":
+        if session_mode == LIFECYCLE_MODE_ONESHOT and state == SESSION_STATE_COMPLETED:
             raise HTTPException(
                 status_code=409,
                 detail="One-shot session is completed and cannot be resumed",
@@ -425,7 +430,9 @@ async def lifecycle_shutdown(
     )
     async with shutdown_transition_lock:
         now = time.time()
-        if _shutdown_in_progress and (now - _shutdown_started_at) <= _SHUTDOWN_GUARD_TTL_SEC:
+        if _shutdown_in_progress and (
+            now - _shutdown_started_at
+        ) <= float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS):
             payload = {
                 "status": "already_shutting_down",
                 "mode": _shutdown_mode or "unknown",
@@ -651,12 +658,18 @@ async def suspend_session(
                         f"Failed steps: {', '.join(failing_steps)}"
                     ),
                 )
-        new_state = "completed" if session_mode == "oneshot" else "suspended"
+        new_state = (
+            SESSION_STATE_COMPLETED
+            if session_mode == LIFECYCLE_MODE_ONESHOT
+            else SESSION_STATE_SUSPENDED
+        )
         write_session_state(session_dir, new_state)
         append_lifecycle_event(
             session_dir,
-            "session_suspended" if new_state == "suspended" else "session_completed",
-            "Session suspended via API" if new_state == "suspended" else "One-shot session completed",
+            "session_suspended" if new_state == SESSION_STATE_SUSPENDED else "session_completed",
+            "Session suspended via API"
+            if new_state == SESSION_STATE_SUSPENDED
+            else "One-shot session completed",
             source="api",
         )
         payload: Dict[str, Any] = {
@@ -820,7 +833,7 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
             os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
             os.environ["WINEBOT_USER_DIR"] = user_dir
             link_wine_user_dir(user_dir)
-            write_session_state(target_dir, "active")
+            write_session_state(target_dir, SESSION_STATE_ACTIVE)
             append_lifecycle_event(
                 target_dir, "session_resumed", "Session resumed via API", source="api"
             )

@@ -53,6 +53,7 @@ Tests:
 
 1. Critical state files are written atomically (`fsync` + `replace`) and fail closed on IO errors.
 2. Critical state writes are not silently ignored.
+3. Runtime temporary state files used for atomic commits are non-hidden and cleaned up after replace.
 
 Code:
 - `api/utils/files.py`

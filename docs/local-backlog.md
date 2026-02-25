@@ -45,3 +45,22 @@ This file tracks in-flight and planned work items that are not yet fully deliver
 
 - `OPEN` Advanced durability and CAS transition guards (grouped deferred scope).
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/45
+
+## Understandability Hardening Program
+
+- `DONE` Phase A: magic-number/string consolidation and safe configuration upgrades.
+  - Scope:
+    - centralized lifecycle/control constants (`api/core/constants.py`)
+    - non-hidden runtime atomic temp file handling (`api/utils/files.py`)
+    - configurable runtime timing guards (`api/utils/config.py`, `api/server.py`, `api/routers/lifecycle.py`)
+    - strict fail-closed config parsing with explicit errors (`api/utils/config.py`)
+    - strict validation tests (`tests/test_config_strict_validation.py`)
+
+- `OPEN` Phase B (deferred): machine-readable config metadata and `winebotctl config describe`.
+  - Tracking: local backlog (docs/CLI UX enhancement)
+
+- `OPEN` Phase B (deferred): static guardrail for magic literals in critical modules.
+  - Tracking: local backlog (lint/test enhancement)
+
+- `OPEN` Phase C (deferred): XDG runtime/state path migration with compatibility fallback.
+  - GitHub issue: https://github.com/SemperSupra/WineBot/issues/46

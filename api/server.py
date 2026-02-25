@@ -62,13 +62,15 @@ async def resource_monitor_task():
     """Background task to reap zombies and monitor disk usage."""
     cleanup_counter = 0
     logger.info("Resource monitor task started.")
+    monitor_interval = max(1, int(config.WINEBOT_RESOURCE_MONITOR_INTERVAL_SECONDS))
+    cleanup_interval = max(1, int(config.WINEBOT_SESSION_CLEANUP_INTERVAL_SECONDS))
     while True:
         # Reap completed detached children under lock.
         reap_finished_tracked_processes()
 
         # Periodic session cleanup (every 60 seconds)
-        cleanup_counter += 5
-        if cleanup_counter >= 60:
+        cleanup_counter += monitor_interval
+        if cleanup_counter >= cleanup_interval:
             cleanup_counter = 0
             try:
                 cleanup_old_sessions(
@@ -78,7 +80,7 @@ async def resource_monitor_task():
             except Exception as e:
                 logger.error(f"Session cleanup failed: {e}")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(monitor_interval)
 
 
 @asynccontextmanager
@@ -315,7 +317,10 @@ async def tail_logs(
         return {"source": source, "lines": content}
 
     try:
-        await asyncio.wait_for(_follow_stream_semaphore.acquire(), timeout=0.05)
+        await asyncio.wait_for(
+            _follow_stream_semaphore.acquire(),
+            timeout=max(0.001, float(config.WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS)),
+        )
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=429,
