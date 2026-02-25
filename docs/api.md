@@ -47,6 +47,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 - `GET /version` returns the same values as JSON fields.
 - `session.json`, `segment_*.json`, and JSONL event streams include `schema_version`.
 - Readers default missing `schema_version` to `1.0` for backward compatibility with older artifacts.
+- Invalid configuration values fail closed at startup with explicit validation errors.
 
 ## Endpoints
 
@@ -61,6 +62,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 | GET | `/health/tools` | Tool availability |
 | GET | `/health/storage` | Storage stats |
 | GET | `/health/recording` | Recorder status |
+| GET | `/health/invariants` | Runtime invariant validation report |
 | GET | `/lifecycle/status` | Lifecycle status for core components |
 | GET | `/lifecycle/events` | Recent lifecycle events |
 | POST | `/lifecycle/shutdown` | Gracefully stop the container |
@@ -119,6 +121,10 @@ Disk space and writeability for `/wineprefix`, `/artifacts`, and `/tmp`.
 
 #### `GET /health/recording`
 Recorder status and current session info (if any).
+
+#### `GET /health/invariants`
+Runtime invariant report for lifecycle/control/config constraints.
+- **Response:** `{"ok": true|false, "violations": [{"code":"...", "detail":"..."}]}`
 
 #### `GET /lifecycle/status`
 Status for core WineBot components (Xvfb, Openbox, VNC/noVNC, recorder, etc).

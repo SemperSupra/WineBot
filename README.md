@@ -61,10 +61,9 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN` | `600` | Global telemetry emission cap per minute. |
 
 Invalid environment values now fail closed at startup with explicit validation errors.
+For full runtime/scalability controls, see `docs/scalability.md`.
 
 ## Quickstart
-
-Headless:
 
 Headless:
 

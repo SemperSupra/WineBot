@@ -169,7 +169,7 @@ Reference:
 
 Lifecycle/control/config invariants are codified and tested:
 
-`pytest -q tests/test_invariants.py tests/test_lifecycle_hardened.py tests/test_config_guard.py`
+`pytest -q tests/test_invariants.py tests/test_lifecycle_hardened.py tests/test_config_guard.py tests/test_config_strict_validation.py`
 
 Runtime invariant status is available at:
 

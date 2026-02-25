@@ -37,13 +37,15 @@ WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 d
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `WINEBOT_RECORD` | `0` | Enable session recording (ffmpeg). |
-| `WINEBOT_INPUT_TRACE` | `0` | Enable X11 input event logging. |
-| `WINEBOT_INPUT_TRACE_WINDOWS` | `0` | Enable Windows-side (AHK) input logging. |
+| `WINEBOT_RECORD` | profile-dependent (`0` headless, `1` interactive) | Enable session recording (ffmpeg). |
+| `WINEBOT_INPUT_TRACE` | profile-dependent (`1` in compose defaults) | Enable X11 input event logging. |
+| `WINEBOT_INPUT_TRACE_WINDOWS` | profile-dependent (`1` in compose defaults) | Enable Windows-side (AHK) input logging. |
 | `WINEBOT_INPUT_TRACE_NETWORK` | `0` | Enable VNC proxy logging. |
 | `API_TOKEN` | (None) | Secure API access key. |
 | `VNC_PASSWORD` | (None) | Password for x11vnc. |
 | `SCREEN` | `1280x720x24` | Xvfb display resolution. |
+| `WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS` | `120` | Duplicate shutdown guard window. |
+| `WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS` | `0.05` | Timeout acquiring log-follow stream slot. |
 
 ## 4. Common Tasks
 
@@ -56,7 +58,7 @@ WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 d
 docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner pytest tests/e2e/test_ux_quality.py
 
 # Unit tests
-docker compose -f compose/docker-compose.yml run --rm winebot bash -lc 'PYTHONPATH=/ pytest /tests'
+docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner scripts/ci/test.sh
 ```
 
 ### How to apply config changes?
@@ -100,6 +102,7 @@ Performs a mouse click at specific coordinates.
 
 ### Health & Discovery
 - **`GET /health`**: Use this to verify system readiness. Check `security_warning` for potential exposure.
+- **`GET /health/invariants`**: Use this to verify runtime lifecycle/control/config invariants.
 - **mDNS Discovery**: WineBot broadcasts `_winebot-session._tcp.local.`. Agents on the same network can discover instances automatically.
 
 ## 6. Responsible Automation (Agent Ethics)
@@ -110,5 +113,4 @@ To ensure system stability and reliability, agents must adhere to the following 
 2.  **Action Throttling:** Enforce a minimum "Politeness" delay of at least **100ms** between discrete API actions (e.g., clicks or keypresses) to allow the Wine/X11 stack to settle.
 3.  **Graceful Termination:** Always attempt to call `POST /lifecycle/shutdown` before exiting to ensure video artifacts are finalized and resources are reaped.
 4.  **Least Privilege:** Do not attempt to modify files outside of `/wineprefix` or `/artifacts`. The `apps` and `automation` directories are mounted as Read-Only for safety.
-
 
