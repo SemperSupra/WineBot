@@ -77,6 +77,11 @@ jobs:
         run: |
           scripts/ci/check-rel-forbidden.sh
 
+      - name: Normalize artifact ownership
+        run: |
+          mkdir -p artifacts
+          sudo chown -R "$(id -u):$(id -g)" artifacts
+
       - name: Generate trust pack artifact
         run: |
           scripts/ci/generate-trust-pack.sh artifacts/trust-pack
