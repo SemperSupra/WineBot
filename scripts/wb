@@ -6,6 +6,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROFILE_CATALOG="$REPO_ROOT/scripts/internal/profile-catalog.sh"
+if [ -f "$PROFILE_CATALOG" ]; then
+    # shellcheck source=scripts/internal/profile-catalog.sh
+    source "$PROFILE_CATALOG"
+else
+    echo "ERROR: missing profile catalog: $PROFILE_CATALOG" >&2
+    exit 1
+fi
 
 usage() {
     cat <<EOF
@@ -86,69 +94,75 @@ profile() {
     shift || true
     case "$sub" in
         list)
+            local use_cases
+            local perf_profiles
+            local aliases
+            use_cases="$(wb_profile_use_case_names)"
+            perf_profiles="$(wb_profile_performance_names)"
+            aliases="$(wb_profile_legacy_aliases)"
             cat <<EOF
-Default runtime profiles:
-  human-desktop
-  assisted-desktop
-  unattended-runner
-  ci-oneshot
-  support-session
+Use-case startup profiles:
+$(printf '%s\n' "$use_cases" | sed 's/^/  /')
+
+Performance profiles:
+$(printf '%s\n' "$perf_profiles" | sed 's/^/  /')
+
+Legacy aliases:
+$(printf '%s\n' "$aliases" | sed 's/^/  /')
 
 Usage:
-  ./scripts/wb profile up <name> [--build] [--detach]
+  ./scripts/wb profile up <use-case> [--performance <name>] [--build] [--detach]
 EOF
             ;;
         up)
-            name="${1:-}"
+            local use_case
+            local performance
+            local resolved
+            local mode
+            use_case="${1:-}"
             shift || true
-            [ -n "$name" ] || { echo "ERROR: profile name required"; exit 1; }
+            [ -n "$use_case" ] || { echo "ERROR: use-case profile name required"; exit 1; }
 
             build_flag=""
             detach_flag=""
+            performance=""
             while [ $# -gt 0 ]; do
                 case "$1" in
+                    --performance)
+                        performance="${2:-}"
+                        [ -n "$performance" ] || { echo "ERROR: --performance requires a value"; exit 1; }
+                        shift 2
+                        ;;
                     --build) build_flag="--build"; shift ;;
                     --detach) detach_flag="-d"; shift ;;
                     *) echo "ERROR: Unknown profile option: $1"; exit 1 ;;
                 esac
             done
 
-            compose_profile="headless"
-            service="winebot"
+            compose_profile=""
+            service=""
             env_vars=()
-            case "$name" in
-                human-desktop)
-                    compose_profile="interactive"
-                    service="winebot-interactive"
-                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=human-only WINEBOT_SESSION_CONTROL_MODE=human-only)
-                    ;;
-                assisted-desktop)
-                    compose_profile="interactive"
-                    service="winebot-interactive"
-                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=hybrid WINEBOT_SESSION_CONTROL_MODE=hybrid)
-                    ;;
-                unattended-runner)
-                    compose_profile="headless"
-                    service="winebot"
-                    env_vars+=(MODE=headless WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=persistent WINEBOT_INSTANCE_CONTROL_MODE=agent-only WINEBOT_SESSION_CONTROL_MODE=agent-only)
-                    ;;
-                ci-oneshot)
-                    compose_profile="headless"
-                    service="winebot"
-                    env_vars+=(MODE=headless WINEBOT_INSTANCE_MODE=oneshot WINEBOT_SESSION_MODE=oneshot WINEBOT_INSTANCE_CONTROL_MODE=agent-only WINEBOT_SESSION_CONTROL_MODE=agent-only APP_EXE=cmd.exe "APP_ARGS=/c exit /b 0")
-                    ;;
-                support-session)
-                    compose_profile="interactive"
-                    service="winebot-interactive"
-                    env_vars+=(MODE=interactive WINEBOT_INSTANCE_MODE=persistent WINEBOT_SESSION_MODE=oneshot WINEBOT_INSTANCE_CONTROL_MODE=hybrid WINEBOT_SESSION_CONTROL_MODE=hybrid)
-                    ;;
-                *)
-                    echo "ERROR: Unknown profile '$name'"
-                    exit 1
-                    ;;
-            esac
+            if ! resolved="$(wb_profile_render_values "$use_case" "$performance")"; then
+                echo "ERROR: invalid profile selection use_case='$use_case' performance='${performance:-<default>}'" >&2
+                exit 1
+            fi
+            while IFS='=' read -r key value; do
+                [ -n "$key" ] || continue
+                env_vars+=("$key=$value")
+                if [ "$key" = "MODE" ]; then
+                    mode="$value"
+                fi
+            done <<< "$resolved"
 
-            log "Starting profile '$name' (compose profile: $compose_profile, service: $service)..."
+            if [ "${mode:-}" = "interactive" ]; then
+                compose_profile="interactive"
+                service="winebot-interactive"
+            else
+                compose_profile="headless"
+                service="winebot"
+            fi
+
+            log "Starting use-case '$use_case' (performance: ${performance:-default}, compose profile: $compose_profile, service: $service)..."
             env "${env_vars[@]}" docker compose -f "$REPO_ROOT/compose/docker-compose.yml" --profile "$compose_profile" up --force-recreate $build_flag $detach_flag "$service"
             ;;
         *)

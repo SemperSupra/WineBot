@@ -80,6 +80,8 @@ def main() -> int:
     )
     allow_headless_hybrid = truthy(merged.get("WINEBOT_ALLOW_HEADLESS_HYBRID", "0"))
     build_intent = merged.get("BUILD_INTENT", "rel")
+    use_case_profile = merged.get("WINEBOT_USE_CASE_PROFILE", "")
+    performance_profile = merged.get("WINEBOT_PERFORMANCE_PROFILE", "")
 
     errors: List[str] = validate_runtime_configuration(
         runtime_mode=runtime_mode,
@@ -89,6 +91,8 @@ def main() -> int:
         session_control_mode=session_control_mode,
         build_intent=build_intent,
         allow_headless_hybrid=allow_headless_hybrid,
+        use_case_profile=use_case_profile,
+        performance_profile=performance_profile,
     )
     effective_mode = compute_effective_control_mode(
         instance_control_mode, session_control_mode
@@ -104,6 +108,8 @@ def main() -> int:
         "effective_control_mode": effective_mode,
         "build_intent": build_intent,
         "allow_headless_hybrid": allow_headless_hybrid,
+        "use_case_profile": use_case_profile,
+        "performance_profile": performance_profile,
         "errors": errors,
     }
 
@@ -119,7 +125,9 @@ def main() -> int:
                 f"session={session_lifecycle_mode} "
                 f"instance_control={instance_control_mode} "
                 f"session_control={session_control_mode} "
-                f"effective_control={effective_mode}"
+                f"effective_control={effective_mode} "
+                f"use_case_profile={use_case_profile or '<unset>'} "
+                f"performance_profile={performance_profile or '<unset>'}"
             )
         else:
             print("WineBot config validation: FAILED")

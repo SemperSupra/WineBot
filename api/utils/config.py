@@ -44,6 +44,8 @@ class WineBotConfig(BaseModel):
     WINEBOT_SESSION_MODE: str = LIFECYCLE_MODE_PERSISTENT
     WINEBOT_INSTANCE_CONTROL_MODE: str = CONTROL_MODE_HYBRID
     WINEBOT_SESSION_CONTROL_MODE: str = CONTROL_MODE_HYBRID
+    WINEBOT_USE_CASE_PROFILE: str = ""
+    WINEBOT_PERFORMANCE_PROFILE: str = ""
     WINEBOT_ALLOW_HEADLESS_HYBRID: bool = False
     WINEBOT_MAX_LOG_SIZE_MB: int = 500
     WINEBOT_MAX_SCREENSHOTS_PER_SESSION: int = 1000
@@ -183,6 +185,10 @@ def validate_config() -> WineBotConfig:
             ),
             "WINEBOT_SESSION_CONTROL_MODE": os.getenv(
                 "WINEBOT_SESSION_CONTROL_MODE", runtime_default_control
+            ),
+            "WINEBOT_USE_CASE_PROFILE": os.getenv("WINEBOT_USE_CASE_PROFILE", ""),
+            "WINEBOT_PERFORMANCE_PROFILE": os.getenv(
+                "WINEBOT_PERFORMANCE_PROFILE", ""
             ),
             "WINEBOT_ALLOW_HEADLESS_HYBRID": _parse_bool(
                 "WINEBOT_ALLOW_HEADLESS_HYBRID", False

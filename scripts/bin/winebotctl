@@ -2,6 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROFILE_CATALOG="${REPO_ROOT}/scripts/internal/profile-catalog.sh"
+if [ -f "$PROFILE_CATALOG" ]; then
+  # shellcheck source=scripts/internal/profile-catalog.sh
+  source "$PROFILE_CATALOG"
+else
+  echo "ERROR: missing profile catalog: $PROFILE_CATALOG" >&2
+  exit 1
+fi
 BASE_URL="${WINEBOT_API_URL:-${WINEBOT_BASE_URL:-${API_URL:-http://localhost:8000}}}"
 API_TOKEN="${WINEBOT_API_TOKEN:-${API_TOKEN:-}}"
 if [ -z "$API_TOKEN" ] && [ -f /tmp/winebot_api_token ]; then
@@ -41,7 +50,7 @@ Commands:
   input trace start|stop|status|events [opts]
   perf summary [opts]
   config set|get|list|validate|apply [opts]
-  config profile list|set <name> [opts]
+  config profile list|set <use-case> [--performance <name>] [opts]
   diag bundle [opts]
   tail [source] [--follow] [--lines N]
   run ahk|autoit|python|winedbg [opts]
@@ -304,68 +313,23 @@ set_config_key_in_file() {
 }
 
 print_config_profile_values() {
-  local profile="$1"
-  case "$profile" in
-    human-desktop)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=human-only
-WINEBOT_SESSION_CONTROL_MODE=human-only
-EOF
-      ;;
-    assisted-desktop)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=hybrid
-WINEBOT_SESSION_CONTROL_MODE=hybrid
-EOF
-      ;;
-    unattended-runner)
-      cat <<'EOF'
-MODE=headless
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=agent-only
-WINEBOT_SESSION_CONTROL_MODE=agent-only
-EOF
-      ;;
-    ci-oneshot)
-      cat <<'EOF'
-MODE=headless
-WINEBOT_INSTANCE_MODE=oneshot
-WINEBOT_SESSION_MODE=oneshot
-WINEBOT_INSTANCE_CONTROL_MODE=agent-only
-WINEBOT_SESSION_CONTROL_MODE=agent-only
-APP_EXE=cmd.exe
-APP_ARGS=/c exit /b 0
-EOF
-      ;;
-    support-session)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=oneshot
-WINEBOT_INSTANCE_CONTROL_MODE=hybrid
-WINEBOT_SESSION_CONTROL_MODE=hybrid
-EOF
-      ;;
-    *)
-      die "Unknown profile: $profile"
-      ;;
-  esac
+  local use_case="$1"
+  local performance="${2:-}"
+  local rendered=""
+  if ! rendered="$(wb_profile_render_values "$use_case" "$performance")"; then
+    die "Unknown or invalid profile selection: use_case='${use_case}' performance='${performance:-<default>}'"
+  fi
+  printf '%s\n' "$rendered"
 }
 
 apply_config_profile_to_file() {
-  local profile="$1"
+  local use_case="$1"
   local config_file="$2"
+  local performance="${3:-}"
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     set_config_key_in_file "$config_file" "$key" "$value"
-  done < <(print_config_profile_values "$profile")
+  done < <(print_config_profile_values "$use_case" "$performance")
 }
 
 validate_config_files() {
@@ -1270,23 +1234,46 @@ PY
         shift || true
         case "$sub" in
           list)
+            use_cases="$(wb_profile_use_case_names)"
+            perf_profiles="$(wb_profile_performance_names)"
+            aliases="$(wb_profile_legacy_aliases)"
             cat <<'EOF'
-Available WineBot default profiles:
-- human-desktop
-- assisted-desktop
-- unattended-runner
-- ci-oneshot
-- support-session
-Use: scripts/winebotctl config profile set <name>
+Available WineBot use-case startup profiles:
+EOF
+            printf '%s\n' "$use_cases" | sed 's/^/- /'
+            cat <<'EOF'
+Available WineBot performance profiles:
+EOF
+            printf '%s\n' "$perf_profiles" | sed 's/^/- /'
+            cat <<'EOF'
+Legacy aliases:
+EOF
+            printf '%s\n' "$aliases" | sed 's/^/- /'
+            cat <<'EOF'
+Use: scripts/winebotctl config profile set <use-case> [--performance <name>]
 EOF
             ;;
           set)
-            profile="${1:-}"
-            if [ -z "$profile" ]; then
-              die "Usage: config profile set <name>"
+            use_case="${1:-}"
+            performance=""
+            shift || true
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --performance)
+                  performance="${2:-}"
+                  [ -n "$performance" ] || die "Usage: config profile set <use-case> [--performance <name>]"
+                  shift 2
+                  ;;
+                *)
+                  die "Unknown config profile set option: $1"
+                  ;;
+              esac
+            done
+            if [ -z "$use_case" ]; then
+              die "Usage: config profile set <use-case> [--performance <name>]"
             fi
-            apply_config_profile_to_file "$profile" "$config_file"
-            echo "Applied profile '$profile' to $config_file"
+            apply_config_profile_to_file "$use_case" "$config_file" "$performance"
+            echo "Applied use-case profile '$use_case' (performance: ${performance:-default}) to $config_file"
             ;;
           *)
             die "Unknown config profile action: $sub"
