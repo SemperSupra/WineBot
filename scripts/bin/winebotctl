@@ -1171,8 +1171,10 @@ PY
     action="${1:-list}"
     shift || true
     
-    global_config_file="/wineprefix/winebot.env"
-    instance_config_file="/wineprefix/winebot.${HOSTNAME}.env"
+    config_root="${WINEBOT_CONFIG_ROOT:-${HOME}/.config/winebot}"
+    global_config_file="${WINEBOT_CONFIG_FILE:-${config_root}/env}"
+    instance_suffix="${HOSTNAME:-local}"
+    instance_config_file="${WINEBOT_INSTANCE_CONFIG_FILE:-${config_root}/env.${instance_suffix}}"
     config_file="$global_config_file"
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -1186,8 +1188,8 @@ PY
       esac
     done
 
-    if ! touch "$config_file" 2>/dev/null; then
-      fallback_candidates=("${HOME}/.config/winebot/env" "/tmp/winebot/env")
+    if ! mkdir -p "$(dirname "$config_file")" 2>/dev/null || ! touch "$config_file" 2>/dev/null; then
+      fallback_candidates=("/tmp/winebot/env")
       configured="0"
       for candidate in "${fallback_candidates[@]}"; do
         if mkdir -p "$(dirname "$candidate")" 2>/dev/null && touch "$candidate" 2>/dev/null; then

@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, TypedDict
 from api.core.constants import (
     MODE_HEADLESS,
     MODE_INTERACTIVE,
@@ -23,7 +23,17 @@ VALID_PERFORMANCE_PROFILES = {
     PERFORMANCE_PROFILE_DIAGNOSTIC,
 }
 
-USE_CASE_PROFILE_CANONICAL = {
+class UseCaseProfile(TypedDict):
+    runtime_mode: str
+    instance_lifecycle_mode: str
+    session_lifecycle_mode: str
+    instance_control_mode: str
+    session_control_mode: str
+    default_performance_profile: str
+    allowed_performance_profiles: List[str]
+
+
+USE_CASE_PROFILE_CANONICAL: dict[str, UseCaseProfile] = {
     "human-interactive": {
         "runtime_mode": MODE_INTERACTIVE,
         "instance_lifecycle_mode": "persistent",
