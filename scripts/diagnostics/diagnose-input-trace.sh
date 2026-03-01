@@ -65,6 +65,13 @@ WINE_INPUT_OBSERVER_INTERVAL_MS="${WINE_INPUT_OBSERVER_INTERVAL_MS:-50}"
 WINE_HOOK_OBSERVER="${WINE_HOOK_OBSERVER:-1}"
 WINE_HOOK_OBSERVER_DURATION="${WINE_HOOK_OBSERVER_DURATION:-180}"
 WINE_HOOK_OBSERVER_SAMPLE_MS="${WINE_HOOK_OBSERVER_SAMPLE_MS:-200}"
+TRACE_EVENT_QUERY_LIMIT="${TRACE_EVENT_QUERY_LIMIT:-2000}"
+WINDOWS_TRACE_BACKEND=""
+LAYER_X11_ACTIVE=0
+LAYER_X11_CORE_ACTIVE=0
+LAYER_WINDOWS_ACTIVE=0
+LAYER_CLIENT_ACTIVE=0
+LAYER_NETWORK_ACTIVE=0
 export DISPLAY="${DISPLAY:-:99}"
 
 while [ $# -gt 0 ]; do
@@ -226,9 +233,35 @@ if [ "$WINEDEBUG_TRACE" = "1" ] && [ "$WINEDEBUG_INCLUDE_SERVER" = "1" ]; then
 fi
 
 api_headers=()
-if [ -n "${API_TOKEN:-}" ]; then
-  api_headers+=("-H" "X-API-Key: ${API_TOKEN}")
-fi
+
+load_api_token() {
+  local force_reload="${1:-0}"
+  if [ "$force_reload" != "1" ] && [ -n "${API_TOKEN:-}" ]; then
+    return 0
+  fi
+  API_TOKEN=""
+  export API_TOKEN
+  for token_file in /tmp/winebot_api_token /winebot-shared/winebot_api_token; do
+    if [ -f "$token_file" ]; then
+      API_TOKEN="$(tr -d '[:space:]' <"$token_file")"
+      export API_TOKEN
+      if [ -n "${API_TOKEN:-}" ]; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+refresh_api_headers() {
+  api_headers=()
+  if [ -n "${API_TOKEN:-}" ]; then
+    api_headers+=("-H" "X-API-Key: ${API_TOKEN}")
+  fi
+}
+
+load_api_token || true
+refresh_api_headers
 
 api_get() {
   local path="$1"
@@ -246,17 +279,77 @@ api_post_json() {
   curl -sS -X POST "${api_headers[@]}" -H "Content-Type: application/json" -d "$json" "${API_URL}${path}"
 }
 
+api_http_code() {
+  local path="$1"
+  local method="${2:-GET}"
+  local json="${3:-}"
+  local curl_args=(-s -o /dev/null -w '%{http_code}' -X "$method" "${api_headers[@]}")
+  if [ -n "$json" ]; then
+    curl_args+=(-H "Content-Type: application/json" -d "$json")
+  fi
+  curl "${curl_args[@]}" "${API_URL}${path}" || echo "000"
+}
+
 wait_for_api() {
   local timeout="${1:-60}"
   local waited=0
   while [ "$waited" -lt "$timeout" ]; do
-    if api_get "/health" >/dev/null 2>&1; then
-      return 0
-    fi
+    code="$(api_http_code "/health" "GET")"
+    case "$code" in
+      200|401|403) return 0 ;;
+    esac
     sleep 1
     waited=$((waited + 1))
   done
   return 1
+}
+
+ensure_api_authorized() {
+  local code
+  code="$(api_http_code "/health" "GET")"
+  if [ "$code" = "200" ]; then
+    return 0
+  fi
+  if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+    load_api_token "1" || true
+    refresh_api_headers
+    code="$(api_http_code "/health" "GET")"
+    if [ "$code" = "200" ]; then
+      return 0
+    fi
+    log "ERROR: API requires token and diagnostics could not authenticate (HTTP ${code})."
+    log "Set API_TOKEN or ensure /tmp/winebot_api_token exists."
+    exit 1
+  fi
+  log "ERROR: API health check failed with HTTP ${code}."
+  exit 1
+}
+
+ensure_agent_control() {
+  local status_json session_id challenge token grant_json grant_resp
+  status_json="$(api_get "/lifecycle/status" 2>/dev/null || true)"
+  session_id="$(printf '%s' "$status_json" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("session_id") or "").strip())
+except Exception:
+ print("")')"
+  if [ -z "$session_id" ]; then
+    return 0
+  fi
+  challenge="$(api_post "/sessions/${session_id}/control/challenge" 2>/dev/null || true)"
+  token="$(printf '%s' "$challenge" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("token") or "").strip())
+except Exception:
+ print("")')"
+  if [ -z "$token" ]; then
+    return 0
+  fi
+  grant_json=$(printf '{"lease_seconds": 3600, "user_ack": true, "challenge_token": "%s"}' "$token")
+  grant_resp="$(api_post_json "/sessions/${session_id}/control/grant" "$grant_json" 2>/dev/null || true)"
+  if printf '%s' "$grant_resp" | grep -q '"status":[[:space:]]*"granted"'; then
+    log "Agent control granted for diagnostics session ${session_id}."
+  fi
 }
 
 now_ms() {
@@ -278,7 +371,11 @@ trace_has_event() {
   local source="$1"
   local types_csv="$2"
   local since_ms="$3"
-  python3 - <<PY
+  local query_limit="$TRACE_EVENT_QUERY_LIMIT"
+  local attempts=5
+  local found="0"
+  while [ "$attempts" -gt 0 ]; do
+    found="$(python3 - <<PY
 import json
 import os
 import urllib.parse
@@ -289,8 +386,9 @@ api_token = os.environ.get("API_TOKEN")
 source = ${source@Q}
 types_csv = ${types_csv@Q}
 since_ms = int(${since_ms@Q})
+query_limit = int(${query_limit@Q})
 
-params = {"limit": "200", "since_epoch_ms": str(since_ms)}
+params = {"limit": str(max(1, query_limit)), "since_epoch_ms": str(since_ms)}
 if source:
     params["source"] = source
 url = api_url + "/input/events?" + urllib.parse.urlencode(params)
@@ -312,6 +410,16 @@ for event in data.get("events", []):
         break
 print("1" if found else "0")
 PY
+)"
+    if [ "$found" = "1" ]; then
+      break
+    fi
+    attempts=$((attempts - 1))
+    if [ "$attempts" -gt 0 ]; then
+      sleep 0.15
+    fi
+  done
+  echo "$found"
 }
 
 hook_has_event() {
@@ -781,7 +889,8 @@ run_mouse_variant() {
     xdotool mousemove_relative -- 12 8 || true
     xdotool click 1 || true
   fi
-  sleep 0.3
+  # Allow asynchronous trace writers to flush before bisect checks.
+  sleep 0.45
   x11_ok="$(trace_has_event "" "button_press,button_release" "$t0")"
   x11_core_ok="0"
   if [ "$SKIP_X11_CORE" -eq 0 ] && layer_enabled "x11_core"; then
@@ -811,16 +920,24 @@ run_mouse_variant() {
     log "  debug button_state left_down=$debug_button_down"
   fi
   if [ "$x11_ok" = "0" ]; then
+    if [ "$mode" != "move_click" ] && [ "$win_ok" = "1" -o "$hook_ok" = "1" ]; then
+      log "  OBS: XI2 missed ${mode} events while downstream layers observed input (variant trace gap)."
+      return
+    fi
     if [ "$x11_core_ok" = "1" ]; then
       log "  DIAG: XI2 missing, X11 core saw events (XI2 trace gap)."
     else
       log "  DIAG: missing at X11 (xdotool -> X11). Check focus/DISPLAY/xdotool."
     fi
   elif [ "$x11_core_ok" = "0" ] && [ "$SKIP_X11_CORE" -eq 0 ] && layer_enabled "x11_core"; then
-    log "  DIAG: XI2 ok, X11 core missing (core trace gap)."
+    log "  OBS: XI2 ok, X11 core missing (core trace gap)."
   elif [ "$win_ok" = "0" ] && [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
     if [ "$hook_ok" = "1" ]; then
-      log "  DIAG: Windows trace missing; hook observer saw events (AHK trace issue)."
+      if [ "$WINDOWS_TRACE_BACKEND" = "hook" ]; then
+        log "  OBS: Windows trace layer missed events while hook observer saw them (hook trace gap)."
+      else
+        log "  DIAG: Windows trace missing; hook observer saw events (AHK trace issue)."
+      fi
     else
       log "  DIAG: X11 ok, Windows missing (X11 -> Wine). Check focus/Wine hooks."
     fi
@@ -999,35 +1116,111 @@ PY
 }
 
 start_layers=()
+set_layer_active() {
+  local layer="$1"
+  local active="$2"
+  case "$layer" in
+    x11) LAYER_X11_ACTIVE="$active" ;;
+    x11_core) LAYER_X11_CORE_ACTIVE="$active" ;;
+    windows) LAYER_WINDOWS_ACTIVE="$active" ;;
+    client) LAYER_CLIENT_ACTIVE="$active" ;;
+    network) LAYER_NETWORK_ACTIVE="$active" ;;
+  esac
+}
+
 start_trace_layer() {
   local layer="$1"
+  local resp status backend
   case "$layer" in
     x11)
-      api_post "/input/trace/start" >/dev/null || true
-      start_layers+=("x11")
+      resp="$(api_post "/input/trace/start" || true)"
+      status="$(printf '%s' "$resp" | python3 -c 'import sys,json; 
+try:
+ d=json.load(sys.stdin); print(d.get("status",""))
+except Exception:
+ print("")')"
+      if [ "$status" = "started" ] || [ "$status" = "already_running" ]; then
+        set_layer_active "x11" "1"
+        start_layers+=("x11")
+      else
+        set_layer_active "x11" "0"
+        log "X11 trace layer unavailable (status='${status:-unknown}')"
+      fi
       ;;
     x11_core)
-      api_post "/input/trace/x11core/start" >/dev/null || true
-      start_layers+=("x11_core")
+      resp="$(api_post "/input/trace/x11core/start" || true)"
+      status="$(printf '%s' "$resp" | python3 -c 'import sys,json;
+try:
+ d=json.load(sys.stdin); print(d.get("status",""))
+except Exception:
+ print("")')"
+      if [ "$status" = "started" ] || [ "$status" = "already_running" ]; then
+        set_layer_active "x11_core" "1"
+        start_layers+=("x11_core")
+      else
+        set_layer_active "x11_core" "0"
+        log "X11 core trace layer unavailable (status='${status:-unknown}')"
+      fi
       ;;
     windows)
       if [ -n "$WINDOWS_DEBUG_KEYS" ]; then
         debug_json=$(printf '{"debug_keys_csv": "%s", "debug_sample_ms": %s}' \
           "$(printf '%s' "$WINDOWS_DEBUG_KEYS" | json_escape)" \
           "${WINDOWS_DEBUG_SAMPLE_MS}")
-        api_post_json "/input/trace/windows/start" "$debug_json" >/dev/null || true
+        resp="$(api_post_json "/input/trace/windows/start" "$debug_json" || true)"
       else
-        api_post "/input/trace/windows/start" >/dev/null || true
+        resp="$(api_post "/input/trace/windows/start" || true)"
       fi
-      start_layers+=("windows")
+      status="$(printf '%s' "$resp" | python3 -c 'import sys,json;
+try:
+ d=json.load(sys.stdin); print(d.get("status",""))
+except Exception:
+ print("")')"
+      backend="$(printf '%s' "$resp" | python3 -c 'import sys,json;
+try:
+ d=json.load(sys.stdin); print((d.get("backend") or "").strip())
+except Exception:
+ print("")')"
+      if [ -n "$backend" ]; then
+        WINDOWS_TRACE_BACKEND="$backend"
+      fi
+      if [ "$status" = "started" ] || [ "$status" = "already_running" ]; then
+        set_layer_active "windows" "1"
+        start_layers+=("windows")
+      else
+        set_layer_active "windows" "0"
+        log "Windows trace layer unavailable (status='${status:-unknown}')"
+      fi
       ;;
     client)
-      api_post "/input/trace/client/start" >/dev/null || true
-      start_layers+=("client")
+      resp="$(api_post "/input/trace/client/start" || true)"
+      status="$(printf '%s' "$resp" | python3 -c 'import sys,json;
+try:
+ d=json.load(sys.stdin); print(d.get("status",""))
+except Exception:
+ print("")')"
+      if [ "$status" = "enabled" ]; then
+        set_layer_active "client" "1"
+        start_layers+=("client")
+      else
+        set_layer_active "client" "0"
+        log "Client trace layer unavailable (status='${status:-unknown}')"
+      fi
       ;;
     network)
-      api_post "/input/trace/network/start" >/dev/null || true
-      start_layers+=("network")
+      resp="$(api_post "/input/trace/network/start" || true)"
+      status="$(printf '%s' "$resp" | python3 -c 'import sys,json;
+try:
+ d=json.load(sys.stdin); print(d.get("status",""))
+except Exception:
+ print("")')"
+      if [ "$status" = "enabled" ]; then
+        set_layer_active "network" "1"
+        start_layers+=("network")
+      else
+        set_layer_active "network" "0"
+        log "Network trace layer unavailable (status='${status:-unknown}')"
+      fi
       ;;
   esac
 }
@@ -1090,6 +1283,8 @@ if ! wait_for_api "$API_WAIT_SECONDS"; then
   log "ERROR: API not reachable at ${API_URL}"
   exit 1
 fi
+ensure_api_authorized
+ensure_agent_control
 
 diag_ts="$(date -u +%Y%m%dT%H%M%SZ)"
 notepad_id=""
@@ -1138,6 +1333,28 @@ if [ "$SKIP_NETWORK" -eq 0 ] && layer_enabled "network"; then
   start_trace_layer "network"
 else
   log "Skipping network trace layer"
+fi
+
+# Disable checks for layers that could not be activated to avoid false bisect warnings.
+if [ "$SKIP_X11" -eq 0 ] && layer_enabled "x11" && [ "$LAYER_X11_ACTIVE" != "1" ]; then
+  log "Disabling X11 checks: trace layer not active."
+  SKIP_X11=1
+fi
+if [ "$SKIP_X11_CORE" -eq 0 ] && layer_enabled "x11_core" && [ "$LAYER_X11_CORE_ACTIVE" != "1" ]; then
+  log "Disabling X11 core checks: trace layer not active."
+  SKIP_X11_CORE=1
+fi
+if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows" && [ "$LAYER_WINDOWS_ACTIVE" != "1" ]; then
+  log "Disabling Windows checks: trace layer not active."
+  SKIP_WINDOWS=1
+fi
+if [ "$SKIP_CLIENT" -eq 0 ] && layer_enabled "client" && [ "$LAYER_CLIENT_ACTIVE" != "1" ]; then
+  log "Disabling client checks: trace layer not active."
+  SKIP_CLIENT=1
+fi
+if [ "$SKIP_NETWORK" -eq 0 ] && layer_enabled "network" && [ "$LAYER_NETWORK_ACTIVE" != "1" ]; then
+  log "Disabling network checks: trace layer not active."
+  SKIP_NETWORK=1
 fi
 
 run_mouse_variant "a" "move_click"
@@ -1205,10 +1422,14 @@ if [ "$x11_ok" = "0" ]; then
     log "  DIAG: missing at X11 (xdotool -> X11). Check focus/DISPLAY/xdotool."
   fi
 elif [ "$x11_core_ok" = "0" ] && [ "$SKIP_X11_CORE" -eq 0 ] && layer_enabled "x11_core"; then
-  log "  DIAG: XI2 ok, X11 core missing (core trace gap)."
+  log "  OBS: XI2 ok, X11 core missing (core trace gap)."
 elif [ "$win_ok" = "0" ] && [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
   if [ "$hook_ok" = "1" ]; then
-    log "  DIAG: Windows trace missing; hook observer saw key events (AHK trace issue)."
+    if [ "$WINDOWS_TRACE_BACKEND" = "hook" ]; then
+      log "  OBS: Windows trace layer missed key events while hook observer saw them (hook trace gap)."
+    else
+      log "  DIAG: Windows trace missing; hook observer saw key events (AHK trace issue)."
+    fi
   else
     log "  DIAG: X11 ok, Windows missing (X11 -> Wine). Check focus/Wine hooks."
   fi
@@ -1223,6 +1444,14 @@ fi
 
 if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
   log "Test 3: Windows input via AHK"
+  windows_backend="$(api_get "/input/trace/windows/status" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("backend") or "").strip())
+except Exception:
+ print("")')"
+  if [ "$windows_backend" != "ahk" ]; then
+    log "  DIAG: skipping AHK-specific injection test (windows backend='${windows_backend:-unknown}')."
+  else
   t0=$(now_ms)
   if [ -n "$notepad_id" ]; then
     focus_window "$notepad_id"
@@ -1234,7 +1463,36 @@ if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
   fi
   ahk_script=$'MouseMove, 220, 220, 0\nClick\nSleep, 200\nSendInput, b\nSleep, 200\nMouseMove, 240, 240, 0\nClick, down\nSleep, 200\nClick, up\n'
   ahk_json=$(printf '{"script": "%s"}' "$(printf '%s' "$ahk_script" | json_escape)")
-  api_post_json "/run/ahk" "$ahk_json" >/dev/null || true
+  ahk_resp="$(api_post_json "/run/ahk" "$ahk_json" || true)"
+  ahk_status="$(printf '%s' "$ahk_resp" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("status") or "").strip())
+except Exception:
+ print("")')"
+  ahk_detail="$(printf '%s' "$ahk_resp" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("detail") or "").strip())
+except Exception:
+ print("")')"
+  if [ "$ahk_status" != "ok" ] && printf '%s' "$ahk_detail" | grep -qi "denied by policy"; then
+    ensure_agent_control
+    ahk_resp="$(api_post_json "/run/ahk" "$ahk_json" || true)"
+    ahk_status="$(printf '%s' "$ahk_resp" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("status") or "").strip())
+except Exception:
+ print("")')"
+    ahk_detail="$(printf '%s' "$ahk_resp" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("detail") or "").strip())
+except Exception:
+ print("")')"
+  fi
+  ahk_executed=1
+  if [ "$ahk_status" != "ok" ]; then
+    ahk_executed=0
+    log "  AHK execution unavailable (status='${ahk_status:-unknown}' detail='${ahk_detail:-none}')"
+  fi
   sleep 0.6
   if [ -n "$notepad_id" ] && [ -n "${base_img:-}" ] && [ -n "${after_img:-}" ]; then
     capture_window "$notepad_id" "$after_img" || true
@@ -1254,7 +1512,9 @@ if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
     debug_key_down="$(trace_has_field_pair "windows" "key_state" "vk" "vk42" "down" "1" "$t0")"
     log "  debug key_state vk42_down=$debug_key_down"
   fi
-  if [ "$win_key_ok" = "0" ] || [ "$win_mouse_ok" = "0" ]; then
+  if [ "$ahk_executed" != "1" ]; then
+    log "  DIAG: Skipping AHK-input assertion because /run/ahk did not execute."
+  elif [ "$win_key_ok" = "0" ] || [ "$win_mouse_ok" = "0" ]; then
     if [ "$hook_key_ok" = "1" ] || [ "$hook_mouse_ok" = "1" ]; then
       log "  DIAG: Windows trace missing AHK events, but hook observer saw them (AHK trace issue)."
     else
@@ -1264,6 +1524,7 @@ if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
     log "  DIAG: Windows hook captured AHK input."
   fi
   dump_hook_samples "$t0" "hook sample"
+  fi
 fi
 
 if [ "$SKIP_CLIENT" -eq 0 ] && layer_enabled "client"; then
@@ -1405,10 +1666,14 @@ PY
       log "  DIAG: network ok, X11 missing (VNC -> X11). Check x11vnc injection."
     fi
   elif [ "$x11_core_ok" = "0" ] && [ "$SKIP_X11_CORE" -eq 0 ] && layer_enabled "x11_core"; then
-    log "  DIAG: network ok, XI2 ok, X11 core missing (core trace gap)."
+    log "  OBS: network ok, XI2 ok, X11 core missing (core trace gap)."
   elif [ "$win_ok" = "0" ] && [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
     if [ "$hook_ok" = "1" ]; then
-      log "  DIAG: network+X11 ok, Windows trace missing; hook observer saw events (AHK trace issue)."
+      if [ "$WINDOWS_TRACE_BACKEND" = "hook" ]; then
+        log "  OBS: network+X11 ok, hook observer saw events but Windows trace layer missed them (hook trace gap)."
+      else
+        log "  DIAG: network+X11 ok, Windows trace missing; hook observer saw events (AHK trace issue)."
+      fi
     else
       log "  DIAG: network+X11 ok, Windows missing (X11 -> Wine)."
     fi

@@ -34,7 +34,7 @@ Checks performed (headless):
 `scripts/smoke-test.sh --full`
 
 Adds a Notepad automation round-trip. The test writes a file under
-`/wineprefix/drive_c/users/winebot/Temp/` for reliability in headless mode.
+`/tmp/` for reliable write permissions in headless mode.
 
 ## Interactive checks
 
@@ -154,6 +154,76 @@ This validates operator-visible recovery after injected Openbox faults.
 Telemetry contract and rate-limit tests:
 
 `pytest -q tests/test_telemetry_contract.py tests/test_command_substrate_telemetry.py tests/test_telemetry.py`
+
+## Conformance and Standards Validation
+
+WineBot includes explicit standards conformance suites for API, HTTP semantics, runtime policy, CLI contracts, and mDNS format:
+
+`pytest -q tests/test_conformance_openapi.py tests/test_conformance_http_semantics.py tests/test_conformance_runtime_policy.py tests/test_conformance_cli_contract.py tests/test_conformance_mdns.py`
+
+Reference:
+
+`docs/conformance.md`
+
+## Profile System Strategy
+
+Profile coverage is enforced at four layers:
+
+1. Matrix and admission unit tests:
+- `tests/test_profile_matrix.py`
+- `tests/test_config_guard.py`
+
+2. CLI contract tests for startup/config profile UX:
+- `tests/test_conformance_cli_contract.py`
+
+3. Config-file admission validation:
+- `scripts/internal/validate-winebot-config.py`
+
+4. Container runtime integration via smoke/e2e:
+- `scripts/bin/smoke-test.sh --full --include-interactive --cleanup --no-build`
+
+Required CI profile subset:
+- `human-interactive + low-latency`
+- `supervised-agent + balanced`
+- `agent-batch + balanced`
+- `ci-gate + balanced`
+
+Nightly/extended:
+- full use-case/performance matrix in isolated container runs.
+
+## Input Pipeline Conformance
+
+Policy reference:
+
+`policy/input-pipeline-conformance-policy.md`
+
+Run the baseline input conformance bundle:
+
+`pytest -q tests/test_policy.py tests/test_input_lifecycle_regression.py tests/e2e/test_input_quality.py tests/e2e/test_comprehensive_input.py tests/e2e/test_ux_keyboard_accessibility.py tests/test_ui_accessibility.py`
+
+Recommended stress and diagnostics:
+
+- `scripts/diagnostics/diagnose-input-trace.sh`
+- `tests/stress_input.sh`
+
+### Input Conformance Strategy (Tiered)
+
+- Tier 0 (Schema/Unit): input events are parsed and normalized correctly, including button/modifier fields.
+- Tier 1 (Policy/Arbitration): human input revokes agent control; agent actions require explicit grant.
+- Tier 2 (Pipeline Integration): client, X11, and optional Windows traces align for clicks, drags, wheel, and keyboard paths.
+- Tier 3 (E2E UX): noVNC canvas interactions reach focused Wine apps under both 1:1 and scaled viewport.
+- Tier 4 (Occlusion): dashboard overlays do not swallow input outside explicit control regions.
+- Tier 5 (Soak/Stress): prolonged sessions do not degrade delivery, drift coordinates, or leave stuck input state.
+
+## Invariant Validation
+
+Lifecycle/control/config invariants are codified and tested:
+
+`pytest -q tests/test_invariants.py tests/test_lifecycle_hardened.py tests/test_config_guard.py tests/test_config_strict_validation.py`
+
+Runtime invariant status is available at:
+
+`GET /health/invariants`
 
 ## UX and Accessibility
 

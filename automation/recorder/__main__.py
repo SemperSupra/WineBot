@@ -8,6 +8,7 @@ import logging
 import fcntl
 import datetime
 import subprocess
+import uuid
 from collections import deque
 from typing import Optional, Any
 
@@ -25,6 +26,7 @@ STATE_FILE = "recorder.state"
 SEGMENT_FILE = "segment.current"
 EVENTS_FILE = "events.current"
 PART_INDEX_FILE = "part_index.current"
+FINALIZATION_FILE = "recorder.finalization.json"
 
 
 def get_iso_time():
@@ -70,6 +72,50 @@ def load_events(session_dir: str, events_path: Optional[str] = None):
 
 def input_recording_enabled() -> bool:
     return os.getenv("WINEBOT_INPUT_TRACE_RECORD", "0") == "1"
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redacted_fields() -> set[str]:
+    raw = os.getenv(
+        "WINEBOT_RECORDING_REDACT_FIELDS",
+        "key,keycode,text,raw,password,token,secret,clipboard",
+    )
+    result: set[str] = set()
+    for item in raw.split(","):
+        field = item.strip().lower()
+        if field:
+            result.add(field)
+    return result
+
+
+def _redact_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    return "<redacted>"
+
+
+def redact_input_event(event: dict) -> dict:
+    if not _bool_env("WINEBOT_RECORDING_REDACT_SENSITIVE", True):
+        return event
+    redacted = dict(event)
+    redact_fields = _redacted_fields()
+    for key, value in list(redacted.items()):
+        key_l = str(key).lower()
+        if key_l in redact_fields:
+            redacted[key] = _redact_value(value)
+        elif any(token in key_l for token in ("password", "secret", "token", "key")):
+            redacted[key] = _redact_value(value)
+    return redacted
 
 
 def read_manifest_start_epoch_ms(session_dir: str) -> Optional[int]:
@@ -149,7 +195,9 @@ def input_event_message(event: dict) -> str:
 
 
 def load_input_trace_events(session_dir: str) -> list:
-    if not input_recording_enabled():
+    if not input_recording_enabled() or not _bool_env(
+        "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True
+    ):
         return []
 
     # Try to find start time from session.json
@@ -210,7 +258,8 @@ def load_input_trace_events(session_dir: str) -> list:
                     pos = None
                     if data.get("x") is not None and data.get("y") is not None:
                         pos = {"x": data.get("x"), "y": data.get("y")}
-                    msg = input_event_message(data)
+                    redacted = redact_input_event(data)
+                    msg = input_event_message(redacted)
                     event_buffer.append(
                         Event(
                             session_id=session_id,
@@ -222,12 +271,38 @@ def load_input_trace_events(session_dir: str) -> list:
                             pos=pos,
                             tags=["input", layer],
                             source=layer,
-                            extra=data,
+                            extra=redacted,
                         )
                     )
         except Exception:
             continue
     return list(event_buffer)
+
+
+def _finalization_path(session_dir: str) -> str:
+    return os.path.join(session_dir, FINALIZATION_FILE)
+
+
+def write_finalization_state(session_dir: str, phase: str, **extra: Any) -> None:
+    payload: dict[str, Any] = {
+        "phase": phase,
+        "updated_at_epoch_ms": int(time.time() * 1000),
+    }
+    payload.update(extra)
+    try:
+        with open(_finalization_path(session_dir), "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+    except Exception:
+        pass
+
+
+def clear_finalization_state(session_dir: str) -> None:
+    path = _finalization_path(session_dir)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
 
 
 def read_pid(path: str) -> Optional[int]:
@@ -400,6 +475,103 @@ def concat_parts(parts_file: str, output_file: str) -> bool:
         return False
 
 
+def cleanup_runtime_files(session_dir: str, pid_file: str) -> None:
+    if os.path.exists(pid_file):
+        os.remove(pid_file)
+    ffmpeg_pid_path = os.path.join(session_dir, FFMPEG_PID_FILE)
+    if os.path.exists(ffmpeg_pid_path):
+        os.remove(ffmpeg_pid_path)
+    state_path = os.path.join(session_dir, STATE_FILE)
+    if os.path.exists(state_path):
+        os.remove(state_path)
+    if os.path.exists(os.path.join(session_dir, SEGMENT_FILE)):
+        os.remove(os.path.join(session_dir, SEGMENT_FILE))
+    if os.path.exists(os.path.join(session_dir, EVENTS_FILE)):
+        os.remove(os.path.join(session_dir, EVENTS_FILE))
+    if os.path.exists(os.path.join(session_dir, PART_INDEX_FILE)):
+        os.remove(os.path.join(session_dir, PART_INDEX_FILE))
+    clear_finalization_state(session_dir)
+
+
+def _resolution_for_ass(resolution: str) -> tuple[int, int]:
+    cleaned = resolution.split("x")
+    if len(cleaned) < 2:
+        return 1920, 1080
+    try:
+        return int(cleaned[0]), int(cleaned[1])
+    except Exception:
+        return 1920, 1080
+
+
+def finalize_recording(
+    *,
+    session_dir: str,
+    manifest: SessionManifest,
+    display: str,
+    resolution: str,
+    fps: int,
+    output_file: str,
+    events_path: str,
+    vtt_path: str,
+    ass_path: str,
+    parts_file: Optional[str],
+    segment: Optional[int],
+) -> None:
+    write_finalization_state(
+        session_dir,
+        "subtitles",
+        segment=segment,
+        output_file=output_file,
+        events_file=events_path,
+    )
+    events = load_events(session_dir, events_path=events_path)
+    events = adjust_events_for_pauses(events)
+    input_events = load_input_trace_events(session_dir)
+    if input_events:
+        events.extend(input_events)
+        events.sort(key=lambda e: e.t_rel_ms)
+    gen = SubtitleGenerator(events)
+
+    with open(vtt_path, "w") as f:
+        f.write(gen.generate_vtt())
+
+    w, h = _resolution_for_ass(resolution)
+    with open(ass_path, "w") as f:
+        f.write(gen.generate_ass(w, h))
+
+    meta = {
+        "title": manifest.session_id,
+        "encoder": "WineBot Recorder",
+        "creation_time": get_iso_time(),
+        "WINEBOT_SESSION_ID": manifest.session_id,
+        "WINEBOT_GIT_SHA": manifest.git_sha,
+        "WINEBOT_HOSTNAME": manifest.hostname,
+        "WINEBOT_DISPLAY": display,
+    }
+    final_output = output_file
+    if segment is not None:
+        final_output = os.path.join(session_dir, f"video_{segment:03d}.mkv")
+        if parts_file and os.path.exists(parts_file):
+            write_finalization_state(
+                session_dir,
+                "concat_parts",
+                segment=segment,
+                parts_file=parts_file,
+                output_file=final_output,
+            )
+            concat_parts(parts_file, final_output)
+    write_finalization_state(
+        session_dir,
+        "mux",
+        segment=segment,
+        output_file=final_output,
+        ass_file=ass_path,
+        vtt_file=vtt_path,
+    )
+    muxer = FFMpegRecorder(display, resolution, fps, final_output)
+    muxer.mux_subtitles(ass_path, vtt_path, metadata=meta)
+
+
 def adjust_events_for_pauses(events):
     pauses = []
     pause_start = None
@@ -456,6 +628,7 @@ def cmd_start(args):
     if not os.path.exists(session_manifest_path):
         manifest = SessionManifest(
             session_id=os.path.basename(session_dir),
+            recording_timeline_id=f"timeline-{uuid.uuid4().hex}",
             start_time_epoch=start_time_epoch,
             start_time_iso=get_iso_time(),
             hostname=os.uname().nodename,
@@ -481,6 +654,7 @@ def cmd_start(args):
         segment_manifest = {
             "schema_version": manifest.schema_version,
             "session_id": manifest.session_id,
+            "recording_timeline_id": manifest.recording_timeline_id,
             "segment": segment,
             "start_time_epoch": start_time_epoch,
             "start_time_iso": get_iso_time(),
@@ -570,6 +744,14 @@ def cmd_start(args):
     def cleanup(signum, frame):
         nonlocal paused
         logger.info("Received stop signal. Cleaning up...")
+        write_finalization_state(
+            session_dir,
+            "begin",
+            signal=signum,
+            segment=segment,
+            events_file=events_path,
+            output_file=output_file,
+        )
         end_time_monotonic = time.monotonic() * 1000
         t_rel = int(end_time_monotonic - start_time_monotonic)
         t_epoch = int(time.time() * 1000)
@@ -589,58 +771,20 @@ def cmd_start(args):
 
         if not paused:
             stop_part()
-
-        # Generate Subtitles
-        logger.info("Generating subtitles...")
-        events = load_events(session_dir, events_path=events_path)
-        events = adjust_events_for_pauses(events)
-        input_events = load_input_trace_events(session_dir)
-        if input_events:
-            events.extend(input_events)
-            events.sort(key=lambda e: e.t_rel_ms)
-        gen = SubtitleGenerator(events)
-
-        with open(vtt_path, "w") as f:
-            f.write(gen.generate_vtt())
-
-        # Parse resolution for ASS
-        w, h = map(int, args.resolution.split("x"))
-        with open(ass_path, "w") as f:
-            f.write(gen.generate_ass(w, h))
-
-        # Mux into video with global metadata
-        meta = {
-            "title": manifest.session_id,
-            "encoder": "WineBot Recorder",
-            "creation_time": get_iso_time(),
-            "WINEBOT_SESSION_ID": manifest.session_id,
-            "WINEBOT_GIT_SHA": manifest.git_sha,
-            "WINEBOT_HOSTNAME": manifest.hostname,
-            "WINEBOT_DISPLAY": manifest.display,
-        }
-        final_output = output_file
-        if segment is not None:
-            final_output = os.path.join(session_dir, f"video_{segment:03d}.mkv")
-            if parts_file and os.path.exists(parts_file):
-                concat_parts(parts_file, final_output)
-        muxer = FFMpegRecorder(args.display, args.resolution, args.fps, final_output)
-        muxer.mux_subtitles(ass_path, vtt_path, metadata=meta)
-
-        # Remove PID file
-        if os.path.exists(pid_file):
-            os.remove(pid_file)
-        ffmpeg_pid_path = os.path.join(session_dir, FFMPEG_PID_FILE)
-        if os.path.exists(ffmpeg_pid_path):
-            os.remove(ffmpeg_pid_path)
-        state_path = os.path.join(session_dir, STATE_FILE)
-        if os.path.exists(state_path):
-            os.remove(state_path)
-        if os.path.exists(os.path.join(session_dir, SEGMENT_FILE)):
-            os.remove(os.path.join(session_dir, SEGMENT_FILE))
-        if os.path.exists(os.path.join(session_dir, EVENTS_FILE)):
-            os.remove(os.path.join(session_dir, EVENTS_FILE))
-        if os.path.exists(os.path.join(session_dir, PART_INDEX_FILE)):
-            os.remove(os.path.join(session_dir, PART_INDEX_FILE))
+        finalize_recording(
+            session_dir=session_dir,
+            manifest=manifest,
+            display=args.display,
+            resolution=args.resolution,
+            fps=args.fps,
+            output_file=output_file,
+            events_path=events_path,
+            vtt_path=vtt_path,
+            ass_path=ass_path,
+            parts_file=parts_file,
+            segment=segment,
+        )
+        cleanup_runtime_files(session_dir, pid_file)
 
         sys.exit(0)
 
@@ -698,6 +842,9 @@ def cmd_stop(args):
     pid_file = os.path.join(session_dir, "recorder.pid")
 
     if not os.path.exists(pid_file):
+        if attempt_recover_finalize(session_dir, reason="pid_file_missing"):
+            logger.info("Recovered recording artifacts without live recorder process.")
+            return
         logger.error(f"No PID file found at {pid_file}. Is recorder running?")
         sys.exit(1)
 
@@ -708,10 +855,10 @@ def cmd_stop(args):
         os.kill(pid, signal.SIGTERM)
         logger.info(f"Sent SIGTERM to recorder process {pid}")
     except ProcessLookupError:
-        logger.warning(f"Process {pid} not found. Cleaning up artifacts anyway?")
-        # Force generation if process died?
-        # For now, just exit. The recorder process logic handles generation on exit.
-        # If it crashed hard, we might need a 'recover' command.
+        logger.warning(f"Process {pid} not found; attempting recorder recovery.")
+        if attempt_recover_finalize(session_dir, reason="process_lookup_error"):
+            logger.info("Recorder recovery completed.")
+            return
 
     # Wait for it to vanish
     for _ in range(10):
@@ -720,7 +867,134 @@ def cmd_stop(args):
             break
         time.sleep(0.5)
     else:
-        logger.warning("Recorder PID file still exists after 5s.")
+        logger.warning("Recorder PID file still exists after 5s; forcing termination.")
+        forced_pid = read_pid(pid_file)
+        if forced_pid:
+            try:
+                os.kill(forced_pid, signal.SIGKILL)
+                logger.warning("Sent SIGKILL to recorder process %s", forced_pid)
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                logger.error("Failed to SIGKILL recorder process %s: %s", forced_pid, exc)
+        if attempt_recover_finalize(session_dir, reason="stop_timeout_forced"):
+            logger.info("Recorder forced-stop recovery completed.")
+            return
+        logger.error("Recorder did not stop cleanly and recovery failed.")
+        sys.exit(1)
+
+
+def _discover_recovery_segment(session_dir: str) -> Optional[int]:
+    current = read_current_segment(session_dir)
+    if current is not None:
+        return current
+    max_segment: Optional[int] = None
+    for name in os.listdir(session_dir):
+        if not name.startswith(("video_", "events_", "segment_", "parts_")):
+            continue
+        if len(name) < 9:
+            continue
+        try:
+            candidate = int(name.split("_", 1)[1][:3])
+        except Exception:
+            continue
+        if max_segment is None or candidate > max_segment:
+            max_segment = candidate
+    return max_segment
+
+
+def attempt_recover_finalize(session_dir: str, reason: str) -> bool:
+    if not os.path.isdir(session_dir):
+        return False
+    pid_file = os.path.join(session_dir, "recorder.pid")
+    recorder_pid = read_pid(pid_file)
+    if recorder_pid:
+        try:
+            os.kill(recorder_pid, 0)
+            logger.warning(
+                "Recovery skipped: recorder process is still alive (%s).", recorder_pid
+            )
+            return False
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return False
+
+    manifest_data = load_manifest(session_dir)
+    if not manifest_data:
+        logger.warning("Recovery skipped: manifest not found.")
+        return False
+    try:
+        manifest = SessionManifest(
+            session_id=str(manifest_data["session_id"]),
+            start_time_epoch=float(manifest_data["start_time_epoch"]),
+            start_time_iso=str(manifest_data["start_time_iso"]),
+            hostname=str(manifest_data.get("hostname", os.uname().nodename)),
+            display=str(manifest_data.get("display", ":99")),
+            resolution=str(manifest_data.get("resolution", "1920x1080")),
+            fps=int(manifest_data.get("fps", 30)),
+            git_sha=manifest_data.get("git_sha"),
+            recording_timeline_id=manifest_data.get("recording_timeline_id"),
+            schema_version=str(manifest_data.get("schema_version", "1.0")),
+        )
+    except Exception:
+        logger.exception("Recovery failed: invalid manifest payload.")
+        return False
+
+    segment = _discover_recovery_segment(session_dir)
+    output_file, events_path, vtt_path, ass_path, _ = segment_paths(session_dir, segment)
+    parts_file = parts_file_path(session_dir, segment) if segment is not None else None
+    if not os.path.exists(events_path):
+        logger.warning("Recovery skipped: events file missing (%s).", events_path)
+        return False
+
+    write_finalization_state(
+        session_dir,
+        "recovering",
+        reason=reason,
+        segment=segment,
+        events_file=events_path,
+        output_file=output_file,
+    )
+    events = load_events(session_dir, events_path=events_path)
+    if not any(ev.kind == "recorder_stop" for ev in events):
+        now_epoch = int(time.time() * 1000)
+        t_rel = max(0, now_epoch - int(manifest.start_time_epoch))
+        append_event(
+            session_dir,
+            Event(
+                session_id=manifest.session_id,
+                t_rel_ms=t_rel,
+                t_epoch_ms=now_epoch,
+                level="INFO",
+                kind="recorder_stop",
+                message="Recorder stopped (recovered)",
+            ),
+            events_path=events_path,
+        )
+
+    finalize_recording(
+        session_dir=session_dir,
+        manifest=manifest,
+        display=manifest.display,
+        resolution=manifest.resolution,
+        fps=manifest.fps,
+        output_file=output_file,
+        events_path=events_path,
+        vtt_path=vtt_path,
+        ass_path=ass_path,
+        parts_file=parts_file,
+        segment=segment,
+    )
+    cleanup_runtime_files(session_dir, pid_file)
+    return True
+
+
+def cmd_recover(args):
+    if not attempt_recover_finalize(args.session_dir, reason="manual_recover"):
+        logger.error("No recoverable recorder state was found.")
+        sys.exit(1)
+    logger.info("Recorder recovery completed.")
 
 
 def cmd_annotate(args):
@@ -803,6 +1077,10 @@ def main():
     p_stop = subparsers.add_parser("stop")
     p_stop.add_argument("--session-dir", required=True)
 
+    # Recover
+    p_recover = subparsers.add_parser("recover")
+    p_recover.add_argument("--session-dir", required=True)
+
     # Annotate
     p_ann = subparsers.add_parser("annotate")
     p_ann.add_argument("--session-dir", required=True)
@@ -832,6 +1110,8 @@ def main():
         cmd_pause(args)
     elif args.command == "resume":
         cmd_resume(args)
+    elif args.command == "recover":
+        cmd_recover(args)
 
 
 if __name__ == "__main__":

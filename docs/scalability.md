@@ -44,6 +44,8 @@ Resource guardrails for API retrieval and streaming are configurable:
 - `WINEBOT_LOG_FOLLOW_IDLE_TIMEOUT_SECONDS` (default `300`)
 - `WINEBOT_MAX_OPERATION_RECORDS` (default `500`)
 - `WINEBOT_OPERATION_RECORD_TTL_SECONDS` (default `86400`)
+- `WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS` (default `0.05`)
+- `WINEBOT_MAX_DETACHED_PROCESSES` (default `500`)
 
 When limits are exceeded, endpoints return explicit validation (`400`) or capacity (`429`) responses instead of allocating unbounded memory/streams.
 
@@ -60,6 +62,9 @@ Temporal budgets and long-action guardrails are configurable:
 - `WINEBOT_TIMEOUT_LIFECYCLE_SESSION_HANDOVER_SECONDS` (default `60`)
 - `WINEBOT_RECORDER_HEARTBEAT_STALE_SECONDS` (default `30`)
 - `WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS` (default `15`)
+- `WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS` (default `120`)
+- `WINEBOT_RESOURCE_MONITOR_INTERVAL_SECONDS` (default `5`)
+- `WINEBOT_SESSION_CLEANUP_INTERVAL_SECONDS` (default `60`)
 
 Long-running lifecycle actions expose operation status:
 - `GET /operations?limit=N`

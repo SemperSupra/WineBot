@@ -66,11 +66,20 @@ def activate_window(window_id, attempts=5, interval=0.2):
 
 
 def send_keys(window_id, *keys):
-    run_command(["xdotool", "key", "--window", window_id, *keys])
+    run_command(["xdotool", "key", "--window", window_id, "--clearmodifiers", *keys])
 
 
 def type_text(window_id, text, delay):
-    run_command(["xdotool", "type", "--window", window_id, "--delay", str(delay), text])
+    run_command(
+        ["xdotool", "type", "--window", window_id, "--clearmodifiers", "--delay", str(delay), text]
+    )
+
+
+def focus_text_area(window_id):
+    run_command(
+        ["xdotool", "mousemove", "--window", window_id, "120", "120", "click", "1"],
+        check=False,
+    )
 
 
 def to_windows_path(path_value):
@@ -93,6 +102,13 @@ def normalize_text(text_value):
     return text_value.replace("\r\n", "\n")
 
 
+def contents_match(actual_text, expected_text):
+    if actual_text == expected_text:
+        return True
+    # Notepad can leave trailing newline/whitespace artifacts; accept semantic match.
+    return actual_text.strip() == expected_text.strip()
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--text", required=True)
@@ -108,6 +124,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.launch:
+        # Ensure deterministic window discovery by removing stale Notepad instances.
+        run_command(["pkill", "-f", "notepad.exe"], check=False)
+        time.sleep(1)
 
     output_dir = os.path.dirname(args.output)
     if output_dir:
@@ -135,7 +156,10 @@ def main():
         )
         return 1
 
-    activate_window(window_id)
+    if not activate_window(window_id):
+        print(f"Could not activate target window {window_id}", file=sys.stderr)
+        return 1
+    focus_text_area(window_id)
     send_keys(window_id, "ctrl+a", "BackSpace")
     type_text(window_id, args.text, args.delay)
     send_keys(window_id, "ctrl+s")
@@ -158,7 +182,9 @@ def main():
         save_window = find_window("Save As", 5, args.retry_interval)
 
     if save_window is not None:
-        activate_window(save_window)
+        if not activate_window(save_window):
+            print(f"Could not activate Save As window {save_window}", file=sys.stderr)
+            return 1
         send_keys(save_window, "alt+n")
         send_keys(save_window, "ctrl+a")
         type_text(save_window, windows_path, args.delay)
@@ -168,7 +194,12 @@ def main():
         if confirm_window is None:
             confirm_window = find_window("Confirm Save", 5, args.retry_interval)
         if confirm_window is not None:
-            activate_window(confirm_window)
+            if not activate_window(confirm_window):
+                print(
+                    f"Could not activate confirm overwrite window {confirm_window}",
+                    file=sys.stderr,
+                )
+                return 1
             send_keys(confirm_window, "alt+y")
 
     expected = normalize_text(args.text)
@@ -179,7 +210,7 @@ def main():
             with open(args.output, "rb") as handle:
                 contents = handle.read()
             decoded = normalize_text(decode_contents(contents))
-            if decoded == expected:
+            if contents_match(decoded, expected):
                 print(f"File written and verified at {args.output}")
                 return 0
         time.sleep(args.retry_interval)
@@ -187,7 +218,14 @@ def main():
     if not os.path.exists(args.output):
         print("File was not created by Notepad", file=sys.stderr)
         return 1
-    print("File contents did not match expected text", file=sys.stderr)
+    print(
+        "File contents did not match expected text",
+        file=sys.stderr,
+    )
+    print(
+        f"Expected={expected!r} Actual={decoded!r}",
+        file=sys.stderr,
+    )
     return 2
 
 

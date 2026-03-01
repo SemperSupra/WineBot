@@ -13,7 +13,7 @@ Options:
   --host URL        Base URL (default: http://localhost:8000)
   --token TOKEN     API token (defaults to API_TOKEN env var if set)
   --all             Check all /health subendpoints
-  --timeout SEC     Curl timeout in seconds (default: 5)
+  --timeout SEC     Curl timeout in seconds (default: 20)
   -h, --help        Show this help
 EOF
 }
@@ -21,7 +21,7 @@ EOF
 host="http://localhost:8000"
 token="${API_TOKEN:-}"
 all="0"
-timeout="5"
+timeout="${WINEBOT_HEALTHCHECK_TIMEOUT_SECONDS:-20}"
 
 while [ $# -gt 0 ]; do
   case "$1" in

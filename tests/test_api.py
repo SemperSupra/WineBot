@@ -100,10 +100,16 @@ def test_recording_start(mock_popen, mock_read, mock_pid, tmp_path, auth_headers
     ):
         response = client.post("/recording/start", headers=auth_headers, json={})
         assert response.status_code == 200
+        body = response.json()
+        assert body["action"] == "start"
+        assert body["result"] == "converged"
+        assert body["converged"] is True
+        assert body.get("recording_timeline_id", "").startswith("timeline-")
+        assert os.path.exists(os.path.join(body["session_dir"], "recording_artifacts_manifest.json"))
 
 
 @patch("api.routers.recording.run_async_command", new_callable=AsyncMock)
-@patch("api.routers.recording.recorder_running", return_value=True)
+@patch("api.routers.recording.recorder_running", side_effect=[True, False])
 @patch("api.routers.recording.read_session_dir")
 @patch("api.routers.recording.recorder_state", return_value="recording")
 def test_recording_stop(
@@ -116,6 +122,14 @@ def test_recording_stop(
     with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
         response = client.post("/recording/stop", headers=auth_headers)
         assert response.status_code == 200
+        body = response.json()
+        assert body["action"] == "stop"
+        assert body["result"] == "converged"
+        assert body["converged"] is True
+        assert body.get("recording_timeline_id", "").startswith("timeline-")
+        assert os.path.exists(
+            os.path.join(str(session_dir), "recording_artifacts_manifest.json")
+        )
 
 
 @patch("api.routers.automation.safe_command")

@@ -5,8 +5,23 @@ import time
 import asyncio
 import datetime
 import platform
+import hashlib
+import uuid
+import tempfile
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
+from api.core.constants import (
+    MODE_HEADLESS,
+    CONTROL_MODE_AGENT_ONLY,
+    CONTROL_MODE_HYBRID,
+    VALID_CONTROL_POLICY_MODES,
+    LIFECYCLE_MODE_PERSISTENT,
+    LIFECYCLE_MODE_ONESHOT,
+    VALID_LIFECYCLE_MODES,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_ACTIVE,
+)
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.core.session_context import set_current_session_dir
 from api.utils.process import pid_running
@@ -24,6 +39,25 @@ ALLOWED_PREFIXES: Final[List[str]] = [
     "/opt/winebot",
     "/usr/bin",
 ]
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix="tmp-", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
+    _atomic_write_text(path, json.dumps(payload))
 
 
 def validate_path(path: str):
@@ -357,16 +391,29 @@ def ensure_user_profile(user_dir: str) -> None:
 
 
 def write_session_dir(path: str) -> None:
-    with open(SESSION_FILE, "w") as f:
-        f.write(path)
+    _atomic_write_text(SESSION_FILE, path)
     set_current_session_dir(path)
 
 
 def write_session_manifest(session_dir: str, session_id: str) -> None:
     try:
+        recording_timeline_id = None
+        existing_path = os.path.join(session_dir, "session.json")
+        if os.path.exists(existing_path):
+            try:
+                with open(existing_path, "r", encoding="utf-8") as existing_file:
+                    existing = json.load(existing_file)
+                raw_existing_timeline = existing.get("recording_timeline_id")
+                if raw_existing_timeline:
+                    recording_timeline_id = str(raw_existing_timeline)
+            except Exception:
+                recording_timeline_id = None
+        if not recording_timeline_id:
+            recording_timeline_id = f"timeline-{uuid.uuid4().hex}"
         manifest = {
             "schema_version": ARTIFACT_SCHEMA_VERSION,
             "session_id": session_id,
+            "recording_timeline_id": recording_timeline_id,
             "start_time_epoch": time.time(),
             "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "hostname": platform.node(),
@@ -382,6 +429,293 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
         os.rename(tmp_path, manifest_path)
     except Exception:
         pass
+
+
+def read_session_manifest(session_dir: str) -> Optional[Dict[str, Any]]:
+    manifest_path = os.path.join(session_dir, "session.json")
+    if not os.path.exists(manifest_path):
+        return None
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def get_recording_timeline_id(session_dir: str) -> Optional[str]:
+    manifest = read_session_manifest(session_dir)
+    if not manifest:
+        return None
+    raw_value = manifest.get("recording_timeline_id")
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    return value or None
+
+
+def ensure_recording_timeline_id(session_dir: str) -> str:
+    os.makedirs(session_dir, exist_ok=True)
+    manifest_path = os.path.join(session_dir, "session.json")
+    manifest = read_session_manifest(session_dir) or {}
+    timeline_id = str(manifest.get("recording_timeline_id") or "").strip()
+    if not timeline_id:
+        timeline_id = f"timeline-{uuid.uuid4().hex}"
+        manifest["recording_timeline_id"] = timeline_id
+    manifest.setdefault("schema_version", ARTIFACT_SCHEMA_VERSION)
+    manifest.setdefault("session_id", os.path.basename(session_dir))
+    manifest.setdefault("start_time_epoch", time.time())
+    manifest.setdefault(
+        "start_time_iso",
+        datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    )
+    manifest.setdefault("hostname", platform.node())
+    manifest.setdefault("display", os.getenv("DISPLAY", ":99"))
+    manifest.setdefault("resolution", "1280x720")
+    manifest.setdefault("fps", 30)
+    manifest.setdefault("git_sha", None)
+
+    tmp_path = f"{manifest_path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    os.replace(tmp_path, manifest_path)
+    return timeline_id
+
+
+def write_recording_artifact_manifest(
+    session_dir: str,
+    generated_by_action: str = "refresh",
+) -> Optional[str]:
+    if not os.path.isdir(session_dir):
+        return None
+    timeline_id = ensure_recording_timeline_id(session_dir)
+    session_manifest = read_session_manifest(session_dir) or {}
+    max_hash_bytes = max(
+        1,
+        int(getattr(config, "WINEBOT_ARTIFACT_MANIFEST_MAX_HASH_FILE_BYTES", 64 * 1024 * 1024)),
+    )
+
+    def _category_for(rel_path: str) -> str:
+        if rel_path.startswith("logs/input_events"):
+            return "input_trace"
+        if rel_path.startswith("logs/"):
+            return "log"
+        if rel_path.startswith("screenshots/"):
+            return "screenshot"
+        if rel_path.startswith("video_"):
+            return "video"
+        if rel_path.startswith("events_"):
+            return "events"
+        if rel_path.startswith("segment_"):
+            return "segment_manifest"
+        if rel_path.endswith(".vtt") or rel_path.endswith(".ass"):
+            return "subtitle"
+        if rel_path == "session.json":
+            return "session_manifest"
+        if rel_path.endswith(".json") and "health" in rel_path:
+            return "health"
+        return "other"
+
+    include_input_traces = bool(
+        getattr(config, "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True)
+    )
+    artifacts: List[Dict[str, Any]] = []
+    for root, _dirs, files in os.walk(session_dir):
+        for name in files:
+            if name == "recording_artifacts_manifest.json":
+                continue
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, session_dir)
+            if (not include_input_traces) and rel_path.startswith("logs/input_events"):
+                continue
+            try:
+                stat = os.stat(full_path)
+            except FileNotFoundError:
+                continue
+            entry: Dict[str, Any] = {
+                "path": rel_path,
+                "category": _category_for(rel_path),
+                "size_bytes": int(stat.st_size),
+                "mtime_epoch": float(stat.st_mtime),
+            }
+            if stat.st_size <= max_hash_bytes:
+                digest = hashlib.sha256()
+                try:
+                    with open(full_path, "rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    entry["sha256"] = digest.hexdigest()
+                    entry["sha256_status"] = "ok"
+                except Exception:
+                    entry["sha256_status"] = "error"
+            else:
+                entry["sha256_status"] = "skipped_too_large"
+            artifacts.append(entry)
+
+    artifacts.sort(key=lambda item: str(item.get("path", "")))
+    config_snapshot = {
+        "WINEBOT_RECORD": os.getenv("WINEBOT_RECORD", "0"),
+        "WINEBOT_SESSION_ROOT": os.getenv("WINEBOT_SESSION_ROOT", DEFAULT_SESSION_ROOT),
+        "WINEBOT_SESSION_MODE": os.getenv("WINEBOT_SESSION_MODE", LIFECYCLE_MODE_PERSISTENT),
+        "WINEBOT_SESSION_CONTROL_MODE": os.getenv("WINEBOT_SESSION_CONTROL_MODE", CONTROL_MODE_HYBRID),
+        "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS": os.getenv(
+            "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS", "3"
+        ),
+        "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES": str(
+            bool(getattr(config, "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True))
+        ).lower(),
+        "WINEBOT_RECORDING_REDACT_SENSITIVE": str(
+            bool(getattr(config, "WINEBOT_RECORDING_REDACT_SENSITIVE", True))
+        ).lower(),
+        "WINEBOT_RECORDING_REDACT_FIELDS": str(
+            getattr(
+                config,
+                "WINEBOT_RECORDING_REDACT_FIELDS",
+                "key,keycode,text,raw,password,token,secret,clipboard",
+            )
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0))
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0))
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_BYTES": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0))
+        ),
+    }
+    manifest_payload: Dict[str, Any] = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "manifest_type": "recording_artifacts",
+        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at_epoch_ms": int(time.time() * 1000),
+        "generated_by_action": generated_by_action,
+        "session_id": session_manifest.get("session_id", os.path.basename(session_dir)),
+        "recording_timeline_id": timeline_id,
+        "session_dir": session_dir,
+        "config_snapshot": config_snapshot,
+        "artifacts": artifacts,
+    }
+    output_path = os.path.join(session_dir, "recording_artifacts_manifest.json")
+    tmp_output_path = f"{output_path}.tmp"
+    with open(tmp_output_path, "w", encoding="utf-8") as f:
+        json.dump(manifest_payload, f, indent=2)
+    os.replace(tmp_output_path, output_path)
+    return output_path
+
+
+_SEGMENT_INDEX_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:video|events|segment|parts|part_index)_(\d{3})(?:_part\d{3})?.*"
+)
+
+
+def _segment_index_for_path(path: str) -> Optional[int]:
+    match = _SEGMENT_INDEX_RE.match(path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def _recording_artifact_files(session_dir: str) -> List[str]:
+    files: List[str] = []
+    for root, _dirs, names in os.walk(session_dir):
+        for name in names:
+            rel_path = os.path.relpath(os.path.join(root, name), session_dir)
+            if rel_path == "recording_artifacts_manifest.json":
+                continue
+            if rel_path.startswith(("video_", "events_", "segment_", "parts_", "part_index_")):
+                files.append(rel_path)
+            elif rel_path.startswith("logs/input_events"):
+                files.append(rel_path)
+    files.sort()
+    return files
+
+
+def enforce_recording_retention(session_dir: str) -> Dict[str, Any]:
+    if not os.path.isdir(session_dir):
+        return {"deleted": [], "errors": [], "bytes_freed": 0}
+    max_segments = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0)))
+    max_age_days = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0)))
+    max_bytes = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0)))
+    candidates = _recording_artifact_files(session_dir)
+    deleted: List[str] = []
+    errors: List[Dict[str, str]] = []
+    bytes_freed = 0
+
+    if max_segments > 0:
+        segment_ids = sorted(
+            {
+                idx
+                for idx in (_segment_index_for_path(path) for path in candidates)
+                if idx is not None
+            }
+        )
+        drop = set(segment_ids[:-max_segments]) if len(segment_ids) > max_segments else set()
+        for rel_path in list(candidates):
+            idx = _segment_index_for_path(rel_path)
+            if idx is None or idx not in drop:
+                continue
+            full = os.path.join(session_dir, rel_path)
+            try:
+                size = os.path.getsize(full) if os.path.exists(full) else 0
+                os.remove(full)
+                deleted.append(rel_path)
+                bytes_freed += int(size)
+                candidates.remove(rel_path)
+            except Exception as exc:
+                errors.append({"path": rel_path, "error": str(exc)})
+
+    if max_age_days > 0:
+        cutoff = time.time() - (max_age_days * 86400)
+        for rel_path in list(candidates):
+            full = os.path.join(session_dir, rel_path)
+            try:
+                stat = os.stat(full)
+            except FileNotFoundError:
+                continue
+            if stat.st_mtime >= cutoff:
+                continue
+            try:
+                os.remove(full)
+                deleted.append(rel_path)
+                bytes_freed += int(stat.st_size)
+                candidates.remove(rel_path)
+            except Exception as exc:
+                errors.append({"path": rel_path, "error": str(exc)})
+
+    if max_bytes > 0:
+        remaining: List[Dict[str, Any]] = []
+        total = 0
+        for rel_path in candidates:
+            full = os.path.join(session_dir, rel_path)
+            try:
+                st = os.stat(full)
+            except FileNotFoundError:
+                continue
+            total += int(st.st_size)
+            remaining.append(
+                {"path": rel_path, "size": int(st.st_size), "mtime": float(st.st_mtime)}
+            )
+        if total > max_bytes:
+            remaining.sort(key=lambda item: (item["mtime"], item["path"]))
+            for item in remaining:
+                if total <= max_bytes:
+                    break
+                full = os.path.join(session_dir, item["path"])
+                try:
+                    os.remove(full)
+                    deleted.append(str(item["path"]))
+                    total -= int(item["size"])
+                    bytes_freed += int(item["size"])
+                except Exception as exc:
+                    errors.append({"path": str(item["path"]), "error": str(exc)})
+
+    return {"deleted": sorted(set(deleted)), "errors": errors, "bytes_freed": bytes_freed}
 
 
 def link_wine_user_dir(user_dir: str) -> None:
@@ -403,23 +737,19 @@ def link_wine_user_dir(user_dir: str) -> None:
 
 
 def write_session_state(session_dir: str, state: str) -> None:
-    try:
-        with open(os.path.join(session_dir, "session.state"), "w") as f:
-            f.write(state)
-    except Exception:
-        pass
+    _atomic_write_text(os.path.join(session_dir, "session.state"), state)
 
 
 def get_instance_mode() -> str:
-    mode = (os.getenv("WINEBOT_INSTANCE_MODE") or "persistent").strip().lower()
-    if mode not in {"persistent", "oneshot"}:
-        return "persistent"
+    mode = (os.getenv("WINEBOT_INSTANCE_MODE") or LIFECYCLE_MODE_PERSISTENT).strip().lower()
+    if mode not in VALID_LIFECYCLE_MODES:
+        return LIFECYCLE_MODE_PERSISTENT
     return mode
 
 
 def get_instance_control_mode() -> str:
-    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
-    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    runtime_mode = (os.getenv("MODE") or MODE_HEADLESS).strip().lower()
+    default_mode = CONTROL_MODE_AGENT_ONLY if runtime_mode == MODE_HEADLESS else CONTROL_MODE_HYBRID
     mode = ""
     try:
         if os.path.exists(INSTANCE_CONTROL_MODE_FILE):
@@ -429,36 +759,31 @@ def get_instance_control_mode() -> str:
         mode = ""
     if not mode:
         mode = (os.getenv("WINEBOT_INSTANCE_CONTROL_MODE") or default_mode).strip().lower()
-    if mode not in {"human-only", "agent-only", "hybrid"}:
+    if mode not in VALID_CONTROL_POLICY_MODES:
         return default_mode
     return mode
 
 
 def write_instance_control_mode(mode: str) -> str:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"human-only", "agent-only", "hybrid"}:
-        normalized = "hybrid"
-    try:
-        os.makedirs(os.path.dirname(INSTANCE_CONTROL_MODE_FILE), exist_ok=True)
-        with open(INSTANCE_CONTROL_MODE_FILE, "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    if normalized not in VALID_CONTROL_POLICY_MODES:
+        normalized = CONTROL_MODE_HYBRID
+    _atomic_write_text(INSTANCE_CONTROL_MODE_FILE, normalized)
     return normalized
 
 
 def get_session_mode_default() -> str:
-    mode = (os.getenv("WINEBOT_SESSION_MODE") or "persistent").strip().lower()
-    if mode not in {"persistent", "oneshot"}:
-        return "persistent"
+    mode = (os.getenv("WINEBOT_SESSION_MODE") or LIFECYCLE_MODE_PERSISTENT).strip().lower()
+    if mode not in VALID_LIFECYCLE_MODES:
+        return LIFECYCLE_MODE_PERSISTENT
     return mode
 
 
 def get_session_control_mode_default() -> str:
-    runtime_mode = (os.getenv("MODE") or "headless").strip().lower()
-    default_mode = "agent-only" if runtime_mode == "headless" else "hybrid"
+    runtime_mode = (os.getenv("MODE") or MODE_HEADLESS).strip().lower()
+    default_mode = CONTROL_MODE_AGENT_ONLY if runtime_mode == MODE_HEADLESS else CONTROL_MODE_HYBRID
     mode = (os.getenv("WINEBOT_SESSION_CONTROL_MODE") or default_mode).strip().lower()
-    if mode not in {"human-only", "agent-only", "hybrid"}:
+    if mode not in VALID_CONTROL_POLICY_MODES:
         return default_mode
     return mode
 
@@ -476,7 +801,7 @@ def read_instance_state() -> Dict[str, Any]:
         if not isinstance(data, dict):
             return default_state
         mode = str(data.get("mode", get_instance_mode())).lower()
-        if mode not in {"persistent", "oneshot"}:
+        if mode not in VALID_LIFECYCLE_MODES:
             mode = get_instance_mode()
         state = str(data.get("state", "unknown"))
         return {
@@ -504,11 +829,7 @@ def write_instance_state(state: str, reason: str = "") -> Dict[str, Any]:
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
     }
-    try:
-        with open(INSTANCE_STATE_FILE, "w") as f:
-            json.dump(payload, f)
-    except Exception:
-        pass
+    _atomic_write_json(INSTANCE_STATE_FILE, payload)
     return payload
 
 
@@ -522,20 +843,16 @@ def _session_control_mode_path(session_dir: str) -> str:
 
 def write_session_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"persistent", "oneshot"}:
-        normalized = "persistent"
-    try:
-        with open(_session_mode_path(session_dir), "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    if normalized not in VALID_LIFECYCLE_MODES:
+        normalized = LIFECYCLE_MODE_PERSISTENT
+    _atomic_write_text(_session_mode_path(session_dir), normalized)
 
 
 def read_session_mode(session_dir: str) -> str:
     try:
         with open(_session_mode_path(session_dir), "r") as f:
             mode = f.read().strip().lower()
-        if mode in {"persistent", "oneshot"}:
+        if mode in VALID_LIFECYCLE_MODES:
             return mode
     except Exception:
         pass
@@ -544,20 +861,16 @@ def read_session_mode(session_dir: str) -> str:
 
 def write_session_control_mode(session_dir: str, mode: str) -> None:
     normalized = (mode or "").strip().lower()
-    if normalized not in {"human-only", "agent-only", "hybrid"}:
-        normalized = "hybrid"
-    try:
-        with open(_session_control_mode_path(session_dir), "w") as f:
-            f.write(normalized)
-    except Exception:
-        pass
+    if normalized not in VALID_CONTROL_POLICY_MODES:
+        normalized = CONTROL_MODE_HYBRID
+    _atomic_write_text(_session_control_mode_path(session_dir), normalized)
 
 
 def read_session_control_mode(session_dir: str) -> str:
     try:
         with open(_session_control_mode_path(session_dir), "r") as f:
             mode = f.read().strip().lower()
-        if mode in {"human-only", "agent-only", "hybrid"}:
+        if mode in VALID_CONTROL_POLICY_MODES:
             return mode
     except Exception:
         pass
@@ -576,7 +889,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
         if not os.path.exists(_session_control_mode_path(session_dir)):
             write_session_control_mode(session_dir, get_session_control_mode_default())
         # In one-shot mode, completed sessions are terminal and should not be reused.
-        if read_session_mode(session_dir) == "oneshot" and read_session_state(session_dir) == "completed":
+        if read_session_mode(session_dir) == LIFECYCLE_MODE_ONESHOT and read_session_state(session_dir) == SESSION_STATE_COMPLETED:
             session_dir = None
         else:
             return session_dir
@@ -598,7 +911,7 @@ def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
         write_session_manifest(temp_dir, session_id)
         write_session_mode(temp_dir, get_session_mode_default())
         write_session_control_mode(temp_dir, get_session_control_mode_default())
-        write_session_state(temp_dir, "active")
+        write_session_state(temp_dir, SESSION_STATE_ACTIVE)
 
         # Atomic commit
         os.rename(temp_dir, session_dir)

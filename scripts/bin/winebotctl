@@ -2,6 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROFILE_CATALOG="${REPO_ROOT}/scripts/internal/profile-catalog.sh"
+if [ -f "$PROFILE_CATALOG" ]; then
+  # shellcheck source=scripts/internal/profile-catalog.sh
+  source "$PROFILE_CATALOG"
+else
+  echo "ERROR: missing profile catalog: $PROFILE_CATALOG" >&2
+  exit 1
+fi
 BASE_URL="${WINEBOT_API_URL:-${WINEBOT_BASE_URL:-${API_URL:-http://localhost:8000}}}"
 API_TOKEN="${WINEBOT_API_TOKEN:-${API_TOKEN:-}}"
 if [ -z "$API_TOKEN" ] && [ -f /tmp/winebot_api_token ]; then
@@ -41,7 +50,7 @@ Commands:
   input trace start|stop|status|events [opts]
   perf summary [opts]
   config set|get|list|validate|apply [opts]
-  config profile list|set <name> [opts]
+  config profile list|set <use-case> [--performance <name>] [opts]
   diag bundle [opts]
   tail [source] [--follow] [--lines N]
   run ahk|autoit|python|winedbg [opts]
@@ -304,68 +313,25 @@ set_config_key_in_file() {
 }
 
 print_config_profile_values() {
-  local profile="$1"
-  case "$profile" in
-    human-desktop)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=human-only
-WINEBOT_SESSION_CONTROL_MODE=human-only
-EOF
-      ;;
-    assisted-desktop)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=hybrid
-WINEBOT_SESSION_CONTROL_MODE=hybrid
-EOF
-      ;;
-    unattended-runner)
-      cat <<'EOF'
-MODE=headless
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=persistent
-WINEBOT_INSTANCE_CONTROL_MODE=agent-only
-WINEBOT_SESSION_CONTROL_MODE=agent-only
-EOF
-      ;;
-    ci-oneshot)
-      cat <<'EOF'
-MODE=headless
-WINEBOT_INSTANCE_MODE=oneshot
-WINEBOT_SESSION_MODE=oneshot
-WINEBOT_INSTANCE_CONTROL_MODE=agent-only
-WINEBOT_SESSION_CONTROL_MODE=agent-only
-APP_EXE=cmd.exe
-APP_ARGS=/c exit /b 0
-EOF
-      ;;
-    support-session)
-      cat <<'EOF'
-MODE=interactive
-WINEBOT_INSTANCE_MODE=persistent
-WINEBOT_SESSION_MODE=oneshot
-WINEBOT_INSTANCE_CONTROL_MODE=hybrid
-WINEBOT_SESSION_CONTROL_MODE=hybrid
-EOF
-      ;;
-    *)
-      die "Unknown profile: $profile"
-      ;;
-  esac
+  local use_case="$1"
+  local performance="${2:-}"
+  local rendered=""
+  if ! rendered="$(wb_profile_render_values "$use_case" "$performance")"; then
+    die "Unknown or invalid profile selection: use_case='${use_case}' performance='${performance:-<default>}'"
+  fi
+  printf '%s\n' "$rendered"
 }
 
 apply_config_profile_to_file() {
-  local profile="$1"
+  local use_case="$1"
   local config_file="$2"
+  local performance="${3:-}"
+  local rendered=""
+  rendered="$(print_config_profile_values "$use_case" "$performance")" || return 1
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     set_config_key_in_file "$config_file" "$key" "$value"
-  done < <(print_config_profile_values "$profile")
+  done <<< "$rendered"
 }
 
 validate_config_files() {
@@ -676,6 +642,54 @@ else:
     print(data.get("state", ""))
 PY
     }
+    validate_recording_action_response() {
+      local action="$1"
+      local body="$2"
+      python3 - <<'PY' "$action" "$body"
+import json
+import sys
+
+action = sys.argv[1]
+raw = sys.argv[2]
+allowed = {
+    "start": {"started", "resumed", "already_recording"},
+    "pause": {"paused", "already_paused", "idle"},
+    "resume": {"resumed", "already_recording", "idle", "resume_requested"},
+    "stop": {"stopped", "already_stopped", "stop_requested"},
+}
+
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    print("Invalid JSON response for recording command", file=sys.stderr)
+    raise SystemExit(1)
+
+status = str(data.get("status", "") or "")
+if not status:
+    print("Recording response missing required 'status' field", file=sys.stderr)
+    raise SystemExit(1)
+
+if "result" in data or "converged" in data:
+    result = data.get("result")
+    converged = data.get("converged")
+    if result not in {"converged", "accepted"}:
+        print("Recording response has invalid 'result' field", file=sys.stderr)
+        raise SystemExit(1)
+    if not isinstance(converged, bool):
+        print("Recording response has non-boolean 'converged' field", file=sys.stderr)
+        raise SystemExit(1)
+    if converged and result != "converged":
+        print("Recording response mismatch: converged=true requires result=converged", file=sys.stderr)
+        raise SystemExit(1)
+    if not converged and result != "accepted":
+        print("Recording response mismatch: converged=false requires result=accepted", file=sys.stderr)
+        raise SystemExit(1)
+
+if status not in allowed.get(action, set()):
+    print(f"Unexpected recording status for {action}: {status}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    }
     case "$sub" in
       status)
         resp="$(api_request GET "/health/recording")"
@@ -770,6 +784,12 @@ PY
     if [ "$status" -ge 400 ]; then
       echo "$body" >&2
       exit 1
+    fi
+    if [ "$sub" != "status" ]; then
+      if ! validate_recording_action_response "$sub" "$body"; then
+        echo "$body" >&2
+        exit 1
+      fi
     fi
     printf '%s\n' "$body"
     ;;
@@ -1151,8 +1171,10 @@ PY
     action="${1:-list}"
     shift || true
     
-    global_config_file="/wineprefix/winebot.env"
-    instance_config_file="/wineprefix/winebot.${HOSTNAME}.env"
+    config_root="${WINEBOT_CONFIG_ROOT:-${HOME}/.config/winebot}"
+    global_config_file="${WINEBOT_CONFIG_FILE:-${config_root}/env}"
+    instance_suffix="${HOSTNAME:-local}"
+    instance_config_file="${WINEBOT_INSTANCE_CONFIG_FILE:-${config_root}/env.${instance_suffix}}"
     config_file="$global_config_file"
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -1166,8 +1188,8 @@ PY
       esac
     done
 
-    if ! touch "$config_file" 2>/dev/null; then
-      fallback_candidates=("${HOME}/.config/winebot/env" "/tmp/winebot/env")
+    if ! mkdir -p "$(dirname "$config_file")" 2>/dev/null || ! touch "$config_file" 2>/dev/null; then
+      fallback_candidates=("/tmp/winebot/env")
       configured="0"
       for candidate in "${fallback_candidates[@]}"; do
         if mkdir -p "$(dirname "$candidate")" 2>/dev/null && touch "$candidate" 2>/dev/null; then
@@ -1216,23 +1238,48 @@ PY
         shift || true
         case "$sub" in
           list)
+            use_cases="$(wb_profile_use_case_names)"
+            perf_profiles="$(wb_profile_performance_names)"
+            aliases="$(wb_profile_legacy_aliases)"
             cat <<'EOF'
-Available WineBot default profiles:
-- human-desktop
-- assisted-desktop
-- unattended-runner
-- ci-oneshot
-- support-session
-Use: scripts/winebotctl config profile set <name>
+Available WineBot use-case startup profiles:
+EOF
+            printf '%s\n' "$use_cases" | sed 's/^/- /'
+            cat <<'EOF'
+Available WineBot performance profiles:
+EOF
+            printf '%s\n' "$perf_profiles" | sed 's/^/- /'
+            cat <<'EOF'
+Legacy aliases:
+EOF
+            printf '%s\n' "$aliases" | sed 's/^/- /'
+            cat <<'EOF'
+Use: scripts/winebotctl config profile set <use-case> [--performance <name>]
 EOF
             ;;
           set)
-            profile="${1:-}"
-            if [ -z "$profile" ]; then
-              die "Usage: config profile set <name>"
+            use_case="${1:-}"
+            performance=""
+            shift || true
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --performance)
+                  performance="${2:-}"
+                  [ -n "$performance" ] || die "Usage: config profile set <use-case> [--performance <name>]"
+                  shift 2
+                  ;;
+                *)
+                  die "Unknown config profile set option: $1"
+                  ;;
+              esac
+            done
+            if [ -z "$use_case" ]; then
+              die "Usage: config profile set <use-case> [--performance <name>]"
             fi
-            apply_config_profile_to_file "$profile" "$config_file"
-            echo "Applied profile '$profile' to $config_file"
+            if ! apply_config_profile_to_file "$use_case" "$config_file" "$performance"; then
+              die "Failed to apply profile selection."
+            fi
+            echo "Applied use-case profile '$use_case' (performance: ${performance:-default}) to $config_file"
             ;;
           *)
             die "Unknown config profile action: $sub"

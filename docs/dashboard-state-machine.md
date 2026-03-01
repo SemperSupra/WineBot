@@ -94,4 +94,4 @@ stateDiagram-v2
     Recording --> Idle: Stop Clicked
     Paused --> Idle: Stop Clicked
 ```
-*Note: Transitions are validated by the backend. The UI optimistically assumes success but reverts if the next poll shows unchanged state.*
+*Note: Transitions are validated by the backend. The UI treats `status=resume_requested` or `status=stop_requested` as accepted asynchronous transitions and relies on polling to converge visual state.*

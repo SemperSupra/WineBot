@@ -18,6 +18,7 @@ class SessionManifest:
     display: str
     resolution: str
     fps: int
+    recording_timeline_id: Optional[str] = None
     git_sha: Optional[str] = None
     schema_version: str = ARTIFACT_SCHEMA_VERSION
 

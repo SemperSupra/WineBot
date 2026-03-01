@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from enum import Enum
 
@@ -8,6 +8,18 @@ class RecorderState(str, Enum):
     RECORDING = "recording"
     PAUSED = "paused"
     STOPPING = "stopping"
+
+
+class RecordingActionResult(str, Enum):
+    CONVERGED = "converged"
+    ACCEPTED = "accepted"
+
+
+class RecordingAction(str, Enum):
+    START = "start"
+    STOP = "stop"
+    PAUSE = "pause"
+    RESUME = "resume"
 
 
 class ControlMode(str, Enum):
@@ -48,7 +60,7 @@ class ControlState(BaseModel):
 
 
 class GrantControlModel(BaseModel):
-    lease_seconds: int
+    lease_seconds: int = Field(ge=1, le=86400)
     user_ack: bool = False
     challenge_token: Optional[str] = None
 
@@ -64,7 +76,7 @@ class ControlPolicyModeModel(BaseModel):
 class ClickModel(BaseModel):
     x: int
     y: int
-    button: int = 1
+    button: int = Field(default=1, ge=1, le=3)
     window_title: Optional[str] = None
     window_id: Optional[str] = None
     relative: bool = False
@@ -106,7 +118,7 @@ class InspectWindowModel(BaseModel):
     text: Optional[str] = ""
     handle: Optional[str] = None
     include_controls: bool = True
-    max_controls: int = 200
+    max_controls: int = Field(default=200, ge=1, le=2000)
     list_only: bool = False
     include_empty: bool = False
 
@@ -120,8 +132,30 @@ class RecordingStartModel(BaseModel):
     session_root: Optional[str] = None
     display: Optional[str] = None
     resolution: Optional[str] = None
-    fps: Optional[int] = 30
+    fps: Optional[int] = Field(default=30, ge=1, le=120)
     new_session: Optional[bool] = False
+
+
+class RecordingActionResponse(BaseModel):
+    action: RecordingAction
+    status: str
+    result: RecordingActionResult
+    converged: bool
+    recording_timeline_id: Optional[str] = None
+    session_dir: Optional[str] = None
+    operation_id: Optional[str] = None
+    warning: Optional[str] = None
+
+
+class RecordingStartResponse(RecordingActionResponse):
+    session_id: Optional[str] = None
+    segment: Optional[int] = None
+    output_file: Optional[str] = None
+    events_file: Optional[str] = None
+    display: Optional[str] = None
+    resolution: Optional[str] = None
+    fps: Optional[int] = None
+    recorder_pid: Optional[int] = None
 
 
 class SessionResumeModel(BaseModel):
@@ -145,14 +179,14 @@ class InputTraceStartModel(BaseModel):
     session_dir: Optional[str] = None
     session_root: Optional[str] = None
     include_raw: Optional[bool] = False
-    motion_sample_ms: Optional[int] = 0
+    motion_sample_ms: Optional[int] = Field(default=0, ge=0, le=5000)
 
 
 class InputTraceX11CoreStartModel(BaseModel):
     session_id: Optional[str] = None
     session_dir: Optional[str] = None
     session_root: Optional[str] = None
-    motion_sample_ms: Optional[int] = 0
+    motion_sample_ms: Optional[int] = Field(default=0, ge=0, le=5000)
 
 
 class InputTraceX11CoreStopModel(BaseModel):
@@ -183,10 +217,10 @@ class InputTraceWindowsStartModel(BaseModel):
     session_id: Optional[str] = None
     session_dir: Optional[str] = None
     session_root: Optional[str] = None
-    motion_sample_ms: Optional[int] = 10
+    motion_sample_ms: Optional[int] = Field(default=10, ge=0, le=5000)
     debug_keys: Optional[List[str]] = None
     debug_keys_csv: Optional[str] = None
-    debug_sample_ms: Optional[int] = 200
+    debug_sample_ms: Optional[int] = Field(default=200, ge=1, le=10000)
     backend: Optional[str] = None
 
 

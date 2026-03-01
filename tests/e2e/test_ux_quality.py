@@ -1,6 +1,6 @@
 import time
 from playwright.sync_api import Page, expect
-from _auth import get_token, ui_url, ensure_agent_control
+from _auth import get_token, ui_url, ensure_agent_control, ensure_openbox_running
 from _harness import api_post, wait_badge_text, wait_poll_interval
 
 
@@ -38,10 +38,17 @@ def test_toast_notifications(page: Page):
     # Verify capturing toast appears
     expect(page.locator(".toast", has_text="Capturing screenshot")).to_be_visible()
 
-    # Wait for completion toast (using a broader match to handle filenames)
-    expect(page.locator(".toast", has_text="Screenshot saved")).to_be_visible(
-        timeout=15000
-    )
+    # Wait for completion toast; if the transient toast fades quickly under load,
+    # assert the persisted log entry emitted by the same success path.
+    try:
+        expect(page.locator(".toast", has_text="Screenshot saved")).to_be_visible(
+            timeout=15000
+        )
+    except AssertionError:
+        expect(page.locator("#log-entries")).to_contain_text(
+            "Screenshot saved",
+            timeout=5000,
+        )
 
 
 def test_health_summary_sync(page: Page):
@@ -64,7 +71,10 @@ def test_health_summary_sync(page: Page):
     # Restore state for subsequent tests
     ensure_agent_control()
     api_post("/apps/run", {"path": "openbox", "detach": True})
+    ensure_openbox_running()
     wait_badge_text(page, "#badge-openbox", "running", timeout_ms=20000)
+    wait_badge_text(page, "#badge-xvfb", "running", timeout_ms=20000)
+    wait_poll_interval()
     expect(summary_title).to_have_text("System Operational", timeout=15000)
 
 

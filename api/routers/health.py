@@ -17,6 +17,8 @@ from api.utils.files import (
 )
 from api.core.recorder import recording_status
 from api.core.telemetry import emit_operation_timing
+from api.core.broker import broker
+from api.core.config_guard import validate_runtime_configuration
 
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -44,6 +46,57 @@ def _process_running(name: str, pid: Optional[int]) -> bool:
         if pid_running(pid):
             return True
     return len(find_processes(name)) > 0
+
+
+def _evaluate_invariants() -> dict:
+    violations = []
+    session_dir = read_session_dir()
+    state = broker.get_state()
+    runtime_mode = os.getenv("MODE", "headless")
+    validation_errors = validate_runtime_configuration(
+        runtime_mode=runtime_mode,
+        instance_lifecycle_mode=os.getenv("WINEBOT_INSTANCE_MODE", "persistent"),
+        session_lifecycle_mode=os.getenv("WINEBOT_SESSION_MODE", "persistent"),
+        instance_control_mode=state.instance_control_mode.value,
+        session_control_mode=state.session_control_mode.value,
+        build_intent=os.getenv("BUILD_INTENT", "rel"),
+        allow_headless_hybrid=(
+            (os.getenv("WINEBOT_ALLOW_HEADLESS_HYBRID") or "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        ),
+    )
+    for err in validation_errors:
+        violations.append({"code": "config_invalid", "detail": err})
+
+    if session_dir and not os.path.isdir(session_dir):
+        violations.append(
+            {
+                "code": "session_pointer_missing",
+                "detail": f"WINEBOT_SESSION_DIR points to missing path: {session_dir}",
+            }
+        )
+    if state.effective_control_mode.value == "human-only" and state.control_mode.value == "AGENT":
+        violations.append(
+            {
+                "code": "control_human_only_violated",
+                "detail": "Agent cannot be active while effective mode is human-only",
+            }
+        )
+    if state.effective_control_mode.value == "agent-only" and state.control_mode.value != "AGENT":
+        violations.append(
+            {
+                "code": "control_agent_only_violated",
+                "detail": "Agent-only mode requires AGENT as active controller",
+            }
+        )
+    if state.control_mode.value == "AGENT" and state.interactive and not state.lease_expiry:
+        violations.append(
+            {
+                "code": "interactive_agent_without_lease",
+                "detail": "Interactive AGENT control requires a lease expiry",
+            }
+        )
+    return {"ok": len(violations) == 0, "violations": violations}
 
 
 @router.get("")
@@ -149,6 +202,7 @@ def health_check():
     ):
         status = "degraded"
 
+    invariant_report = _evaluate_invariants()
     payload = {
         "status": status,
         "x11": "connected" if x11.get("ok") else "unavailable",
@@ -158,7 +212,11 @@ def health_check():
         "storage_ok": storage_ok,
         "security_warning": security_warning,
         "uptime_seconds": int(time.time() - START_TIME),
+        "invariants_ok": invariant_report["ok"],
     }
+    if not invariant_report["ok"]:
+        payload["status"] = "degraded"
+        payload["invariant_violations"] = invariant_report["violations"]
     emit_operation_timing(
         session_dir,
         feature="health",
@@ -171,6 +229,12 @@ def health_check():
         metric_name="health.check.latency",
     )
     return payload
+
+
+@router.get("/invariants")
+def health_invariants():
+    report = _evaluate_invariants()
+    return report
 
 
 @router.get("/environment")
@@ -281,8 +345,14 @@ async def health_x11():
 async def health_windows():
     """Window list and active window details."""
     op_started = time.perf_counter()
-    listing = await safe_async_command(["/automation/bin/x11.sh", "list-windows"])
-    active = await safe_async_command(["/automation/bin/x11.sh", "active-window"])
+    listing_timeout = int(os.getenv("WINEBOT_TIMEOUT_HEALTH_WINDOWS_LIST_SECONDS", "15"))
+    active_timeout = int(os.getenv("WINEBOT_TIMEOUT_HEALTH_WINDOWS_ACTIVE_SECONDS", "5"))
+    listing = await safe_async_command(
+        ["/automation/bin/x11.sh", "list-windows"], timeout=listing_timeout
+    )
+    active = await safe_async_command(
+        ["/automation/bin/x11.sh", "active-window"], timeout=active_timeout
+    )
     windows = []
     if listing.get("ok") and listing.get("stdout"):
         for line in listing["stdout"].splitlines():

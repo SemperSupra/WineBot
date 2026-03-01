@@ -38,6 +38,12 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL. |
 | `WINEBOT_COMMAND_TIMEOUT` | `5` | Subprocess execution limit in seconds. |
 | `WINEBOT_SESSION_ROOT` | `/artifacts/sessions` | Path to store session data. |
+| `WINEBOT_MAX_DETACHED_PROCESSES` | `500` | Cap for tracked detached subprocess records. |
+| `WINEBOT_RESOURCE_MONITOR_INTERVAL_SECONDS` | `5` | Background resource monitor tick interval. |
+| `WINEBOT_SESSION_CLEANUP_INTERVAL_SECONDS` | `60` | Session cleanup cadence. |
+| `WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS` | `0.05` | Max wait when acquiring a log-follow stream slot. |
+| `WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS` | `120` | Duplicate shutdown guard TTL window. |
+| `WINEBOT_ALLOW_HEADLESS_HYBRID` | `0` | Explicit override to allow headless `hybrid` control mode. |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS` | `180` | Auto-pause recording when idle (seconds). |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS_HUMAN` | (Unset) | Optional human-specific inactivity threshold override. |
 | `WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT` | (Unset) | Optional agent-specific inactivity threshold override. |
@@ -54,9 +60,10 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_TELEMETRY_SAMPLE_RATE` | `1.0` | Probability of event emission (0.0-1.0). |
 | `WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN` | `600` | Global telemetry emission cap per minute. |
 
-## Quickstart
+Invalid environment values now fail closed at startup with explicit validation errors.
+For full runtime/scalability controls, see `docs/scalability.md`.
 
-Headless:
+## Quickstart
 
 Headless:
 
@@ -87,6 +94,14 @@ Auto-generate a draft from recent commit subjects:
 Test capability coverage matrix:
 
 See [docs/test-capability-matrix.md](docs/test-capability-matrix.md).
+
+Standards and conformance coverage:
+
+See [docs/conformance.md](docs/conformance.md).
+
+Invariant registry and enforcement model:
+
+See [docs/invariants.md](docs/invariants.md).
 
 Generate release/CI trust evidence bundle:
 
@@ -254,6 +269,26 @@ Profile and config helpers:
 `scripts/winebotctl config apply`
 
 `scripts/winebotctl perf summary`
+
+## Recording API Quick Reference
+
+Recording action endpoints share a common response contract:
+- `action`: `start|pause|resume|stop`
+- `status`: legacy compatibility status string
+- `result`: `converged|accepted`
+- `converged`: boolean convergence signal
+
+Common `status` values:
+- `POST /recording/start`: `started`, `resumed`, `already_recording`
+- `POST /recording/pause`: `paused`, `already_paused`, `idle`
+- `POST /recording/resume`: `resumed`, `already_recording`, `resume_requested`
+- `POST /recording/stop`: `stopped`, `already_stopped`, `stop_requested`
+
+When `result=accepted` and `converged=false` (for example `stop_requested`), the action was accepted and is still converging; poll `GET /health/recording` until the target state is reached.
+
+See:
+- [docs/api.md](docs/api.md) (Recording Action Contract, transition guarantees, idempotency examples)
+- [docs/recording.md](docs/recording.md) (recording behavior and runtime knobs)
 
 ## Take a screenshot (headless)
 

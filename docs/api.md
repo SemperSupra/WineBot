@@ -47,6 +47,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 - `GET /version` returns the same values as JSON fields.
 - `session.json`, `segment_*.json`, and JSONL event streams include `schema_version`.
 - Readers default missing `schema_version` to `1.0` for backward compatibility with older artifacts.
+- Invalid configuration values fail closed at startup with explicit validation errors.
 
 ## Endpoints
 
@@ -61,6 +62,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 | GET | `/health/tools` | Tool availability |
 | GET | `/health/storage` | Storage stats |
 | GET | `/health/recording` | Recorder status |
+| GET | `/health/invariants` | Runtime invariant validation report |
 | GET | `/lifecycle/status` | Lifecycle status for core components |
 | GET | `/lifecycle/events` | Recent lifecycle events |
 | POST | `/lifecycle/shutdown` | Gracefully stop the container |
@@ -119,6 +121,10 @@ Disk space and writeability for `/wineprefix`, `/artifacts`, and `/tmp`.
 
 #### `GET /health/recording`
 Recorder status and current session info (if any).
+
+#### `GET /health/invariants`
+Runtime invariant report for lifecycle/control/config constraints.
+- **Response:** `{"ok": true|false, "violations": [{"code":"...", "detail":"..."}]}`
 
 #### `GET /lifecycle/status`
 Status for core WineBot components (Xvfb, Openbox, VNC/noVNC, recorder, etc).
@@ -224,17 +230,74 @@ Start a recording session.
 - **Response:** `{"status":"started","session_id":"...","session_dir":"...","segment":1,"output_file":"...","events_file":"..."}`
 If a session already exists and `new_session` is false, each start creates a new numbered segment in the same session directory.
 
+#### Recording Action Contract
+All recording action endpoints (`/recording/start`, `/recording/pause`, `/recording/resume`, `/recording/stop`) return a shared envelope:
+
+```json
+{
+  "action": "start|pause|resume|stop",
+  "status": "legacy_status_string",
+  "result": "converged|accepted",
+  "converged": true,
+  "recording_timeline_id": "timeline-...",
+  "session_dir": "/artifacts/sessions/session-...",
+  "operation_id": "uuid-when-available",
+  "warning": "optional warning text"
+}
+```
+
+- `status` is preserved for backward compatibility with existing scripts/UI.
+- `result` and `converged` are the canonical state-convergence signals:
+  - `result=converged` and `converged=true`: target state reached before response.
+  - `result=accepted` and `converged=false`: command accepted, convergence still in progress.
+- `recording_timeline_id` is stable for the full recording lifecycle and is written to `session.json`, `segment_*.json`, and `recording_artifacts_manifest.json`.
+
+#### Recording Transition Guarantees
+| Endpoint | Typical `status` values | Convergence guarantee |
+| --- | --- | --- |
+| `POST /recording/start` | `started`, `resumed`, `already_recording` | Converged on response |
+| `POST /recording/pause` | `paused`, `already_paused`, `idle` | Converged on response |
+| `POST /recording/resume` | `resumed`, `already_recording`, `idle`, `resume_requested` | `resume_requested` means accepted, not yet converged |
+| `POST /recording/stop` | `stopped`, `already_stopped`, `stop_requested` | `stop_requested` means accepted, not yet converged |
+
+#### Recording Idempotency Examples
+Example: repeated pause (safe no-op):
+```bash
+curl -s -X POST http://localhost:8000/recording/pause -H 'X-API-Key: TOKEN'
+curl -s -X POST http://localhost:8000/recording/pause -H 'X-API-Key: TOKEN'
+```
+Second call may return:
+```json
+{"action":"pause","status":"already_paused","result":"converged","converged":true}
+```
+
+Example: stop accepted but still finalizing:
+```bash
+curl -s -X POST http://localhost:8000/recording/stop -H 'X-API-Key: TOKEN'
+```
+Possible response:
+```json
+{
+  "action":"stop",
+  "status":"stop_requested",
+  "result":"accepted",
+  "converged":false,
+  "warning":"Recorder stop requested; finalization still in progress."
+}
+```
+Client behavior: treat as success-accepted, then poll `GET /health/recording` until `state=idle`.
+
 #### `POST /recording/pause`
 Pause the active recording session.
-- **Response:** `{"status":"paused","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `paused` or `already_paused`.
 
 #### `POST /recording/resume`
 Resume the active recording session.
-- **Response:** `{"status":"resumed","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `resumed`, `already_recording`, `resume_requested`.
 
 #### `POST /recording/stop`
 Stop the active recording session.
-- **Response:** `{"status":"stopped","session_dir":"..."}`
+- **Response:** Contract envelope above. Typical `status`: `stopped`, `already_stopped`, `stop_requested`.
 
 #### `GET /recording/perf/summary`
 Summarize metrics from `logs/perf_metrics.jsonl` for a session.

@@ -2,7 +2,11 @@ import json
 from types import SimpleNamespace
 
 from api.core.models import ControlMode
-from api.core.monitor import resolve_inactivity_pause_seconds
+from api.core.monitor import (
+    resolve_inactivity_pause_seconds,
+    manual_pause_locked,
+    set_manual_pause_lock,
+)
 from api.utils.files import append_performance_metric, performance_metrics_log_path
 
 
@@ -53,3 +57,12 @@ def test_append_performance_metric_writes_jsonl(tmp_path):
     assert payload["metric"] == "recording.api_pause.latency"
     assert payload["source"] == "test"
     assert payload["extra"]["ok"] is True
+
+
+def test_manual_pause_lock_roundtrip(tmp_path):
+    session_dir = str(tmp_path / "session-lock")
+    (tmp_path / "session-lock").mkdir(parents=True)
+    set_manual_pause_lock(session_dir, True)
+    assert manual_pause_locked(session_dir) is True
+    set_manual_pause_lock(session_dir, False)
+    assert manual_pause_locked(session_dir) is False

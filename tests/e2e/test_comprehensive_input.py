@@ -4,7 +4,7 @@ import time
 import json
 import glob
 import os
-from _auth import API_URL, auth_headers, ui_url, ensure_agent_control
+from _auth import API_URL, auth_headers, ui_url, ensure_agent_control, ensure_openbox_running
 
 
 class WineBotAPI:
@@ -15,7 +15,7 @@ class WineBotAPI:
     def get_windows(self):
         res = requests.get(f"{self.url}/health/windows", headers=self.headers)
         res.raise_for_status()
-        return res.json().get("windows", [])
+        return res.json()
 
     def run_app(self, path):
         res = requests.post(
@@ -53,8 +53,20 @@ def get_input_logs(session_id):
     return logs
 
 
+def wait_for_input_logs(api: WineBotAPI, timeout_seconds: int = 30):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        session_id = api.get_session_id()
+        logs = get_input_logs(session_id)
+        if logs:
+            return session_id, logs
+        time.sleep(1)
+    raise AssertionError("Input logs were not created before timeout")
+
+
 def test_comprehensive_input(page: Page):
     api = WineBotAPI(API_URL)
+    ensure_openbox_running()
 
     # 1. Setup Dashboard
     page.goto(ui_url())
@@ -101,13 +113,26 @@ def test_comprehensive_input(page: Page):
 
     # 4. Find Notepad Window
     notepad_win = None
-    for i in range(20): # Increased from 10
-        windows = api.get_windows()
+    max_attempts = 30
+    relaunch_count = 0
+    for i in range(max_attempts):
+        windows_payload = api.get_windows()
+        windows = windows_payload.get("windows", [])
         print(f"Windows found: {windows}")
+        if windows_payload.get("error"):
+            print(f"Window list error: {windows_payload.get('error')}")
         notepad_win = next((w for w in windows if "Notepad" in w["title"]), None)
         if notepad_win:
             break
-        time.sleep(2) # Increased from 1
+        # Recover from transient shell/app launch failures without hiding persistent errors.
+        if i in (6, 14, 22) and relaunch_count < 3:
+            relaunch_count += 1
+            print(f"Notepad not visible yet; attempting controlled relaunch ({relaunch_count}/3).")
+            ensure_openbox_running()
+            ensure_agent_control()
+            run_res = api.run_app("notepad.exe")
+            print(f"Relaunch result: {run_res}")
+        time.sleep(2)
 
     assert notepad_win, "Notepad window not found via API"
     print(f"Notepad Window: {notepad_win}")
@@ -156,9 +181,7 @@ def test_comprehensive_input(page: Page):
     page.screenshot(path="/output/notepad_typed.png")
 
     # 5. Verify Received Events
-    session_id = api.get_session_id()
-    log_files = get_input_logs(session_id)
-    assert log_files, f"No input logs found for session {session_id}"
+    session_id, log_files = wait_for_input_logs(api, timeout_seconds=30)
 
     found_clicks = 0
     found_keys = 0
@@ -188,6 +211,8 @@ def test_comprehensive_input(page: Page):
                     if (
                         event.get("event") == "keydown"
                         or event.get("event") == "key_press"
+                        or event.get("event") == "client_key_down"
+                        or event.get("event") == "key_down"
                     ):
                         found_keys += 1
                 except json.JSONDecodeError:

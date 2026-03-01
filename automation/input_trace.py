@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import threading
 from typing import Any, Dict, Optional
 
 TRACE_PID_FILE = "input_trace.pid"
@@ -130,41 +131,24 @@ def input_event_from_xi2(
     else:
         return None
 
-        payload: Dict[str, Any] = {
+    payload: Dict[str, Any] = {
+        "session_id": session_id,
+        "event_id": f"{session_id}-{seq}",
+        "seq": seq,
+        "source": "x11",
+        "layer": DEFAULT_LAYER,
+        "type": event_type,  # Canonical name
+        "event": event_type,  # Backwards compat
+        "origin": "unknown",
+        "tool": DEFAULT_TOOL,
+        "device": {
+            "id": current.get("device_id"),
+            "name": current.get("device_name"),
+        },
+        "detail": current.get("detail"),
+        "xi2_type": xi2_name,
+    }
 
-            "session_id": session_id,
-
-            "event_id": f"{session_id}-{seq}",
-
-            "seq": seq,
-
-            "source": "x11",
-
-            "layer": DEFAULT_LAYER,
-
-            "type": event_type, # Canonical name
-
-            "event": event_type, # Backwards compat
-
-            "origin": "unknown",
-
-            "tool": DEFAULT_TOOL,
-
-            "device": {
-
-                "id": current.get("device_id"),
-
-                "name": current.get("device_name"),
-
-            },
-
-            "detail": current.get("detail"),
-
-            "xi2_type": xi2_name,
-
-        }
-
-    
     if raw_event:
         payload["xi2_raw"] = True
 
@@ -305,17 +289,64 @@ def run_trace(session_dir: str, include_raw: bool, motion_sample_ms: int) -> int
         return 1
 
     with open(stderr_path, "a") as err:
-        proc = subprocess.Popen(
+        # Some X servers reject a root-level XI2 listener with BadAccess when
+        # another consumer is active. Fall back to device-scoped stream mode.
+        proc: Optional[subprocess.Popen[str]] = None
+        commands = [
             ["xinput", "test-xi2", "--root"],
-            stdout=subprocess.PIPE,
-            stderr=err,
-            text=True,
-            bufsize=1,
-        )
+            ["xinput", "test-xi2"],
+        ]
+        for cmd in commands:
+            err.write(f"input_trace: attempting {' '.join(cmd)}\n")
+            err.flush()
+            candidate = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            time.sleep(0.2)
+            if candidate.poll() is not None:
+                stderr_text = ""
+                try:
+                    if candidate.stderr is not None:
+                        stderr_text = candidate.stderr.read() or ""
+                except Exception:
+                    pass
+                err.write(
+                    f"input_trace: {' '.join(cmd)} exited early rc={candidate.returncode}\n"
+                )
+                if stderr_text:
+                    err.write(stderr_text.rstrip("\n") + "\n")
+                err.flush()
+                continue
+            proc = candidate
+            break
+
+        if proc is None:
+            err.write("input_trace: unable to start xinput trace process.\n")
+            err.flush()
+            return 1
 
         if proc.stdout is None:
             err.write("Failed to open xinput stdout.\n")
             return 1
+
+        stop_stderr = False
+
+        def pump_stderr() -> None:
+            if proc is None or proc.stderr is None:
+                return
+            while not stop_stderr:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                err.write(line)
+                err.flush()
+
+        stderr_thread = threading.Thread(target=pump_stderr, daemon=True)
+        stderr_thread.start()
 
         write_pid(session_dir, proc.pid)
         write_state(session_dir, "running")
@@ -343,12 +374,17 @@ def run_trace(session_dir: str, include_raw: bool, motion_sample_ms: int) -> int
                     logf.write(json.dumps(event) + "\n")
                     logf.flush()
         finally:
+            stop_stderr = True
             try:
                 proc.terminate()
             except Exception:
                 pass
             try:
                 proc.wait(timeout=2)
+            except Exception:
+                pass
+            try:
+                stderr_thread.join(timeout=1)
             except Exception:
                 pass
             write_state(session_dir, "stopped")

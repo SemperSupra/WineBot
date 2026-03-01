@@ -13,6 +13,8 @@ from api.utils.files import (
 )
 from api.utils.process import run_async_command
 
+_manual_pause_locks: dict[str, bool] = {}
+
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
     raw = os.getenv(name)
@@ -43,6 +45,33 @@ def resolve_inactivity_pause_seconds() -> int:
     if state.control_mode == ControlMode.AGENT:
         return _env_int("WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT", base, minimum=0)
     return base
+
+
+def set_manual_pause_lock(session_dir: str, locked: bool) -> None:
+    if not session_dir:
+        return
+    lock_path = os.path.join(session_dir, "recorder.manual_pause_lock")
+    if locked:
+        _manual_pause_locks[session_dir] = True
+        try:
+            with open(lock_path, "w", encoding="utf-8") as handle:
+                handle.write("1")
+        except Exception:
+            pass
+    else:
+        _manual_pause_locks.pop(session_dir, None)
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
+
+
+def manual_pause_locked(session_dir: str) -> bool:
+    if bool(_manual_pause_locks.get(session_dir, False)):
+        return True
+    lock_path = os.path.join(session_dir, "recorder.manual_pause_lock")
+    return os.path.exists(lock_path)
 
 
 async def inactivity_monitor_task():
@@ -174,6 +203,8 @@ async def inactivity_monitor_task():
 
                 pause_dwell_sec = now - paused_since
                 can_resume = (
+                    not manual_pause_locked(session_dir)
+                    and
                     idle_time <= resume_activity_window_sec
                     and pause_dwell_sec >= min_pause_dwell_sec
                     and (now - last_auto_pause_at) >= resume_cooldown_sec

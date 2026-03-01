@@ -21,6 +21,7 @@ from api.utils.files import (
     read_session_control_mode,
     append_lifecycle_event,
     cleanup_old_sessions,
+    ensure_user_profile,
     link_wine_user_dir,
     write_instance_state,
 )
@@ -62,13 +63,15 @@ async def resource_monitor_task():
     """Background task to reap zombies and monitor disk usage."""
     cleanup_counter = 0
     logger.info("Resource monitor task started.")
+    monitor_interval = max(1, int(config.WINEBOT_RESOURCE_MONITOR_INTERVAL_SECONDS))
+    cleanup_interval = max(1, int(config.WINEBOT_SESSION_CLEANUP_INTERVAL_SECONDS))
     while True:
         # Reap completed detached children under lock.
         reap_finished_tracked_processes()
 
         # Periodic session cleanup (every 60 seconds)
-        cleanup_counter += 5
-        if cleanup_counter >= 60:
+        cleanup_counter += monitor_interval
+        if cleanup_counter >= cleanup_interval:
             cleanup_counter = 0
             try:
                 cleanup_old_sessions(
@@ -78,7 +81,7 @@ async def resource_monitor_task():
             except Exception as e:
                 logger.error(f"Session cleanup failed: {e}")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(monitor_interval)
 
 
 @asynccontextmanager
@@ -98,6 +101,7 @@ async def lifespan(app: FastAPI):
     if session_dir and os.path.isdir(session_dir):
         user_dir = os.path.join(session_dir, "user")
         os.makedirs(user_dir, exist_ok=True)
+        ensure_user_profile(user_dir)
         link_wine_user_dir(user_dir)
         interactive = os.getenv("MODE", "headless") == "interactive"
         session_control_mode = ControlPolicyMode(read_session_control_mode(session_dir))
@@ -144,7 +148,31 @@ app = FastAPI(
 
 @app.middleware("http")
 async def add_security_and_version_headers(request: Request, call_next):
-    session_token = set_current_session_dir(read_session_dir())
+    active_session_dir = read_session_dir()
+    session_token = set_current_session_dir(active_session_dir)
+    if active_session_dir and not os.getenv("PYTEST_CURRENT_TEST"):
+        try:
+            broker_state = broker.get_state()
+            broker_session_id = (
+                broker_state.session_id if hasattr(broker_state, "session_id") else None
+            )
+            active_session_id = os.path.basename(active_session_dir)
+            if broker_session_id != active_session_id:
+                interactive = os.getenv("MODE", "headless") == "interactive"
+                try:
+                    session_control_mode = ControlPolicyMode(
+                        read_session_control_mode(active_session_dir)
+                    )
+                except Exception:
+                    session_control_mode = ControlPolicyMode.HYBRID
+                await broker.update_session(
+                    active_session_id,
+                    interactive,
+                    session_control_mode=session_control_mode,
+                )
+        except Exception:
+            # Keep request path resilient; control state will self-heal on next request.
+            pass
     # Phase 1: Version Negotiation
     min_version = request.headers.get("X-WineBot-Min-Version")
     if min_version:
@@ -315,7 +343,10 @@ async def tail_logs(
         return {"source": source, "lines": content}
 
     try:
-        await asyncio.wait_for(_follow_stream_semaphore.acquire(), timeout=0.05)
+        await asyncio.wait_for(
+            _follow_stream_semaphore.acquire(),
+            timeout=max(0.001, float(config.WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS)),
+        )
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=429,

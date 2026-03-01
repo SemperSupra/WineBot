@@ -35,6 +35,12 @@ from api.core.broker import broker
 from api.core.models import SessionSuspendModel, SessionResumeModel
 from api.core.models import ControlPolicyMode
 from api.core.telemetry import emit_operation_timing
+from api.core.constants import (
+    LIFECYCLE_MODE_ONESHOT,
+    SESSION_STATE_ACTIVE,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_SUSPENDED,
+)
 from api.core.operations import (
     create_operation,
     heartbeat_operation,
@@ -51,22 +57,29 @@ shutdown_transition_lock = asyncio.Lock()
 _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
-_SHUTDOWN_GUARD_TTL_SEC = 120.0
+_TRANSITION_MARKER_FILE = "session.transition.json"
+_process_state_lock = threading.Lock()
+_process_pid_snapshot: Dict[str, set[int]] = {}
+_process_incident_until: Dict[str, float] = {}
+_process_incident_reason: Dict[str, str] = {}
+_PROCESS_INCIDENT_WINDOW_SECONDS = float(
+    os.getenv("WINEBOT_PROCESS_INCIDENT_WINDOW_SECONDS", "6")
+)
 
 
 # --- Lifecycle Logic ---
 def _validate_session_transition(
     current_state: Optional[str], target: str, session_mode: str
 ) -> None:
-    state = (current_state or "active").strip().lower()
+    state = (current_state or SESSION_STATE_ACTIVE).strip().lower()
     if target == "suspend":
-        if state in {"completed"}:
+        if state in {SESSION_STATE_COMPLETED}:
             raise HTTPException(
                 status_code=409,
                 detail="Cannot suspend a completed session",
             )
     elif target == "resume":
-        if session_mode == "oneshot" and state == "completed":
+        if session_mode == LIFECYCLE_MODE_ONESHOT and state == SESSION_STATE_COMPLETED:
             raise HTTPException(
                 status_code=409,
                 detail="One-shot session is completed and cannot be resumed",
@@ -165,6 +178,33 @@ def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     return results
 
 
+def _tracked_process_status(name: str, pattern: str, exact: bool = True) -> Dict[str, Any]:
+    """Track process PID transitions to surface recent instability after auto-restarts."""
+    now = time.time()
+    current_pids = set(find_processes(pattern, exact=exact))
+    with _process_state_lock:
+        previous_pids = _process_pid_snapshot.get(name, set())
+        incident_until = _process_incident_until.get(name, 0.0)
+        incident_active = incident_until > now
+        if previous_pids and not current_pids and not incident_active:
+            _process_incident_until[name] = now + _PROCESS_INCIDENT_WINDOW_SECONDS
+            _process_incident_reason[name] = "missing"
+        elif previous_pids and current_pids and previous_pids != current_pids and not incident_active:
+            _process_incident_until[name] = now + _PROCESS_INCIDENT_WINDOW_SECONDS
+            _process_incident_reason[name] = "restarted"
+        _process_pid_snapshot[name] = current_pids
+        incident_until = _process_incident_until.get(name, 0.0)
+        degraded = incident_until > now
+        if not degraded:
+            _process_incident_reason.pop(name, None)
+        incident_reason = _process_incident_reason.get(name, "")
+    return {
+        "ok": len(current_pids) > 0,
+        "degraded": degraded,
+        "incident_reason": incident_reason if degraded else "",
+    }
+
+
 def _shutdown_process(
     session_dir: Optional[str], delay: float, sig: int = signal.SIGTERM
 ) -> None:
@@ -214,14 +254,15 @@ async def lifecycle_status():
 
     # Process details
     processes = {
-        "xvfb": {"ok": len(find_processes("Xvfb", exact=False)) > 0},
-        "openbox": {"ok": len(find_processes("openbox", exact=False)) > 0},
-        "x11vnc": {"ok": len(find_processes("x11vnc", exact=False)) > 0},
-        "novnc": {
-            "ok": len(find_processes("websockify")) > 0
-        },  # Check websockify as proxy
-        "wine_explorer": {"ok": len(find_processes("explorer.exe")) > 0},
-        "wineserver": {"ok": len(find_processes("wineserver")) > 0},
+        "xvfb": _tracked_process_status("xvfb", "Xvfb", exact=True),
+        "openbox": _tracked_process_status("openbox", "openbox", exact=True),
+        "x11vnc": _tracked_process_status("x11vnc", "x11vnc", exact=True),
+        "novnc": _tracked_process_status("novnc", "websockify", exact=True),
+        "wine_explorer": _tracked_process_status(
+            "wine_explorer", "explorer.exe", exact=False
+        ),
+        # Wine 10+ commonly runs `wineserver64`; use non-exact matching.
+        "wineserver": _tracked_process_status("wineserver", "wineserver", exact=False),
     }
 
     session_dir = read_session_dir()
@@ -261,6 +302,25 @@ async def lifecycle_status():
         metric_name="lifecycle.status.latency",
     )
     return payload
+
+
+@router.post("/lifecycle/openbox/menu")
+async def lifecycle_openbox_menu():
+    """Open the Openbox root menu via keyboard shortcut fallback."""
+    session_dir = read_session_dir()
+    result = safe_command(["xdotool", "key", "ctrl+alt+m"], timeout=2.0)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=500,
+            detail=(result.get("stderr") or result.get("error") or "Failed to open Openbox menu"),
+        )
+    append_lifecycle_event(
+        session_dir,
+        "openbox_menu_requested",
+        "Openbox menu requested via API fallback",
+        source="api",
+    )
+    return {"status": "ok", "method": "ctrl+alt+m"}
 
 
 @router.post("/openbox/reconfigure")
@@ -355,6 +415,37 @@ def _restore_resume_state(
             write_session_state(previous_session_dir, previous_current_state)
 
 
+def _transition_marker_path(session_dir: str) -> str:
+    return os.path.join(session_dir, _TRANSITION_MARKER_FILE)
+
+
+def _write_transition_marker(session_dir: str, phase: str, extra: Optional[Dict[str, Any]] = None) -> None:
+    payload: Dict[str, Any] = {
+        "phase": phase,
+        "timestamp_epoch_ms": int(time.time() * 1000),
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    if extra:
+        payload["extra"] = extra
+    tmp_path = f"{_transition_marker_path(session_dir)}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, _transition_marker_path(session_dir))
+
+
+def _clear_transition_marker(session_dir: Optional[str]) -> None:
+    if not session_dir:
+        return
+    path = _transition_marker_path(session_dir)
+    try:
+        if os.path.exists(path):
+            os.unlink(path)
+    except Exception:
+        pass
+
+
 @router.get("/operations/{operation_id}")
 async def operation_status(operation_id: str):
     item = await get_operation(operation_id)
@@ -393,7 +484,9 @@ async def lifecycle_shutdown(
     )
     async with shutdown_transition_lock:
         now = time.time()
-        if _shutdown_in_progress and (now - _shutdown_started_at) <= _SHUTDOWN_GUARD_TTL_SEC:
+        if _shutdown_in_progress and (
+            now - _shutdown_started_at
+        ) <= float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS):
             payload = {
                 "status": "already_shutting_down",
                 "mode": _shutdown_mode or "unknown",
@@ -619,12 +712,18 @@ async def suspend_session(
                         f"Failed steps: {', '.join(failing_steps)}"
                     ),
                 )
-        new_state = "completed" if session_mode == "oneshot" else "suspended"
+        new_state = (
+            SESSION_STATE_COMPLETED
+            if session_mode == LIFECYCLE_MODE_ONESHOT
+            else SESSION_STATE_SUSPENDED
+        )
         write_session_state(session_dir, new_state)
         append_lifecycle_event(
             session_dir,
-            "session_suspended" if new_state == "suspended" else "session_completed",
-            "Session suspended via API" if new_state == "suspended" else "One-shot session completed",
+            "session_suspended" if new_state == SESSION_STATE_SUSPENDED else "session_completed",
+            "Session suspended via API"
+            if new_state == SESSION_STATE_SUSPENDED
+            else "One-shot session completed",
             source="api",
         )
         payload: Dict[str, Any] = {
@@ -765,6 +864,17 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         previous_current_state = (
             read_session_state(current_session) if current_session else None
         )
+        _write_transition_marker(
+            target_dir,
+            "resume_target_prepare",
+            extra={"operation_id": operation_id, "previous_session": current_session},
+        )
+        if current_session and current_session != target_dir:
+            _write_transition_marker(
+                current_session,
+                "resume_handover_out",
+                extra={"operation_id": operation_id, "target_session": target_dir},
+            )
         try:
             await heartbeat_operation(
                 operation_id,
@@ -777,7 +887,7 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
             os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
             os.environ["WINEBOT_USER_DIR"] = user_dir
             link_wine_user_dir(user_dir)
-            write_session_state(target_dir, "active")
+            write_session_state(target_dir, SESSION_STATE_ACTIVE)
             append_lifecycle_event(
                 target_dir, "session_resumed", "Session resumed via API", source="api"
             )
@@ -800,6 +910,9 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                 interactive,
                 session_control_mode=session_control_mode,
             )
+            _clear_transition_marker(target_dir)
+            if current_session and current_session != target_dir:
+                _clear_transition_marker(current_session)
         except Exception as exc:
             _restore_resume_state(
                 previous_session_dir=current_session,
@@ -807,6 +920,9 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                 previous_target_state=previous_target_state,
                 previous_current_state=previous_current_state,
             )
+            _clear_transition_marker(target_dir)
+            if current_session and current_session != target_dir:
+                _clear_transition_marker(current_session)
             append_lifecycle_event(
                 target_dir,
                 "session_resume_rollback",

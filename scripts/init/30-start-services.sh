@@ -158,6 +158,17 @@ if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
         fi
 
         # Ensure windows are managed (silent)
+        if [ "${MODE:-headless}" = "interactive" ] && ! pgrep -x "openbox" > /dev/null; then
+          echo "--> Supervisor: Restarting openbox." >> "$SESSION_DIR/logs/openbox_supervisor.log"
+          if command -v setsid >/dev/null 2>&1; then
+            setsid openbox >"$SESSION_DIR/logs/openbox_supervisor.log" 2>&1 &
+          else
+            nohup openbox >"$SESSION_DIR/logs/openbox_supervisor.log" 2>&1 &
+          fi
+          sleep 2
+        fi
+
+        # Ensure windows are managed (silent)
         for title in "Desktop" "Wine Desktop"; do
           wid=$(xdotool search --name "$title" 2>/dev/null | tail -n 1 || true)
           if [ -n "$wid" ]; then

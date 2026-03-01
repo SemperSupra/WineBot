@@ -195,7 +195,14 @@ async def run_ahk(data: AHKModel):
         source="api",
         metric_name="automation.run_ahk.latency",
     )
-    return {"status": "ok", "stdout": result.get("stdout")}
+    if not result.get("ok"):
+        return {
+            "status": "failed",
+            "exit_code": result.get("exit_code"),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", "") or result.get("error", "AHK failed"),
+        }
+    return {"status": "ok", "stdout": result.get("stdout", ""), "stderr": result.get("stderr", "")}
 
 
 @router.post("/run/autoit")
@@ -227,7 +234,14 @@ async def run_autoit(data: AutoItModel):
         source="api",
         metric_name="automation.run_autoit.latency",
     )
-    return {"status": "ok", "stdout": result.get("stdout")}
+    if not result.get("ok"):
+        return {
+            "status": "failed",
+            "exit_code": result.get("exit_code"),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", "") or result.get("error", "AutoIt failed"),
+        }
+    return {"status": "ok", "stdout": result.get("stdout", ""), "stderr": result.get("stderr", "")}
 
 
 @router.post("/run/python")
@@ -259,7 +273,14 @@ async def run_python(data: PythonScriptModel):
         source="api",
         metric_name="automation.run_python.latency",
     )
-    return {"status": "ok", "stdout": result.get("stdout")}
+    if not result.get("ok"):
+        return {
+            "status": "failed",
+            "exit_code": result.get("exit_code"),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", "") or result.get("error", "Python script failed"),
+        }
+    return {"status": "ok", "stdout": result.get("stdout", ""), "stderr": result.get("stderr", "")}
 
 
 @router.get("/screenshot")
@@ -287,7 +308,11 @@ async def take_screenshot(output_dir: Optional[str] = None):
     filename = f"screenshot_{int(time.time())}.png"
     filepath = os.path.join(target_dir, filename)
 
-    safe_command(["/automation/bin/screenshot.sh", filepath])
+    capture = safe_command(["/automation/bin/screenshot.sh", filepath])
+    if (not capture.get("ok")) or (not os.path.exists(filepath)):
+        # Retry once for transient X11/ImageMagick race conditions under load.
+        time.sleep(0.3)
+        capture = safe_command(["/automation/bin/screenshot.sh", filepath])
 
     if not os.path.exists(filepath):
         raise HTTPException(status_code=500, detail="Screenshot failed")

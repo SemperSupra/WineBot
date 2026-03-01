@@ -834,6 +834,7 @@
         <div class="vnc-toolbar" data-playwright-ignore>
           <button id="toolbar-reconnect" title="Reconnect VNC">🔄</button>
           <div class="separator"></div>
+          <button id="toolbar-openbox-menu" title="Open Openbox Menu">☰</button>
           <button id="toolbar-scale" title="Toggle Scaling">⤧</button>
           <button id="toolbar-viewonly" title="Toggle View Only">👁</button>
           <div class="separator"></div>
@@ -935,6 +936,7 @@
           <div class="button-row" style="margin-top: 10px;">
             <button id="btn-vnc-reconnect" class="secondary">Reconnect VNC</button>
             <button id="btn-force-focus" class="secondary">Force App Focus</button>
+            <button id="btn-openbox-menu" class="secondary">Open Openbox Menu</button>
             <button id="btn-reset-workspace" class="secondary">Reset Workspace</button>
             <button id="btn-inject-click" class="secondary" disabled>Inject Last Click</button>
           </div>
@@ -1120,6 +1122,7 @@
     const vncTraceToggle = document.getElementById("vnc-trace-input");
     const vncReconnectBtn = document.getElementById("btn-vnc-reconnect");
     const vncForceFocusBtn = document.getElementById("btn-force-focus");
+    const vncOpenboxMenuBtn = document.getElementById("btn-openbox-menu");
     const vncInjectBtn = document.getElementById("btn-inject-click");
     const inputDebugStats = document.getElementById("input-debug-stats");
     const inputDebugLog = document.getElementById("input-debug-log");
@@ -1179,6 +1182,7 @@
 
     // Toolbar logic
     document.getElementById("toolbar-reconnect").onclick = () => { showToast("Reconnecting VNC..."); restartVnc(); };
+    document.getElementById("toolbar-openbox-menu").onclick = () => requestOpenboxMenu("toolbar");
     document.getElementById("toolbar-scale").onclick = () => { vncScaleToggle.click(); showToast(`Scaling ${vncScaleToggle.checked ? "enabled" : "disabled"}`); };
     document.getElementById("toolbar-viewonly").onclick = () => { vncViewOnlyToggle.click(); showToast(`View-only ${vncViewOnlyToggle.checked ? "enabled" : "disabled"}`); };
     document.getElementById("toolbar-focus").onclick = () => forceAppFocus();
@@ -1250,6 +1254,22 @@
       }
     }
 
+    function describeMouseButton(button) {
+      if (button === 0) return "left";
+      if (button === 1) return "middle";
+      if (button === 2) return "right";
+      return `button-${button}`;
+    }
+
+    function describeMouseModifiers(evt) {
+      const modifiers = [];
+      if (evt.ctrlKey) modifiers.push("Ctrl");
+      if (evt.altKey) modifiers.push("Alt");
+      if (evt.shiftKey) modifiers.push("Shift");
+      if (evt.metaKey) modifiers.push("Meta");
+      return modifiers.length > 0 ? modifiers.join("+") : "none";
+    }
+
     async function forceAppFocus() {
       updateInputDebug("Requesting app focus...");
       try {
@@ -1315,6 +1335,7 @@
     let vncTraceCanvas = null;
     let vncTraceLastMoveTs = 0;
     let vncKeyListenersAttached = false;
+    let lastOpenboxMenuRequestTs = 0;
     let pollTimer = null;
     let pollStopped = false;
     let pollMode = "normal";
@@ -1340,8 +1361,36 @@
     const statusSnapshot = {
       sessionId: null,
       recordingState: null,
-      recordingEnabled: null
+      recordingEnabled: null,
+      windows: []
     };
+
+    function hasOnlyDesktopShellWindows() {
+      const windows = Array.isArray(statusSnapshot.windows) ? statusSnapshot.windows : [];
+      if (windows.length === 0) return true;
+      const nonShell = windows.filter((w) => {
+        const t = String((w && w.title) || "").trim().toLowerCase();
+        return t && t !== "openbox" && t !== "tint2";
+      });
+      return nonShell.length === 0;
+    }
+
+    async function requestOpenboxMenu(reason = "manual") {
+      const now = Date.now();
+      if (now - lastOpenboxMenuRequestTs < 250) {
+        return;
+      }
+      lastOpenboxMenuRequestTs = now;
+      try {
+        const response = await apiFetch("/lifecycle/openbox/menu", { method: "POST" });
+        if (!response.ok) {
+          throw new Error(`openbox menu request failed: ${response.status}`);
+        }
+        updateInputDebug(`Openbox menu requested (${reason})`);
+      } catch (err) {
+        logMessage("error", `Openbox menu fallback failed: ${err.message}`);
+      }
+    }
 
     // Auto-consume token from query parameters (for E2E tests and easy sharing)
     function consumeUrlToken() {
@@ -1475,12 +1524,22 @@
       if (vncKeyListenersAttached) {
         return;
       }
+      const shouldCaptureKeyTrace = () => {
+        if (!canTraceClientEvent()) return false;
+        const active = document.activeElement;
+        if (!active) return true;
+        if (vncTraceCanvas && active === vncTraceCanvas) return true;
+        if (active === document.body || active === document.documentElement) return true;
+        const tag = (active.tagName || "").toLowerCase();
+        const isTextTarget = tag === "input" || tag === "textarea" || tag === "select";
+        if (isTextTarget || active.isContentEditable) {
+          return false;
+        }
+        return true;
+      };
       vncKeyListenersAttached = true;
       window.addEventListener("keydown", (e) => {
-        if (!canTraceClientEvent()) return;
-        if (document.activeElement && vncTraceCanvas && document.activeElement !== vncTraceCanvas) {
-          return;
-        }
+        if (!shouldCaptureKeyTrace()) return;
         postClientTraceEvent({
           event: "client_key_down",
           key: e.key,
@@ -1494,10 +1553,7 @@
         });
       }, true);
       window.addEventListener("keyup", (e) => {
-        if (!canTraceClientEvent()) return;
-        if (document.activeElement && vncTraceCanvas && document.activeElement !== vncTraceCanvas) {
-          return;
-        }
+        if (!shouldCaptureKeyTrace()) return;
         postClientTraceEvent({
           event: "client_key_up",
           key: e.key,
@@ -1827,16 +1883,21 @@
         
         const isHealthy = healthData?.status === "ok";
         const processes = lifecycleData?.processes || {};
-        const criticalDown = Object.entries(processes).filter(([name, proc]) => 
-            ["xvfb", "openbox", "x11vnc", "novnc", "wineserver"].includes(name) && !proc.ok
-        );
+        const criticalIssues = Object.entries(processes).filter(([name, proc]) => {
+            if (!["xvfb", "openbox"].includes(name)) return false;
+            if (proc.ok === false) return true;
+            if (name !== "openbox") return false;
+            if (proc.degraded !== true) return false;
+            const reason = String(proc.incident_reason || "").toLowerCase();
+            return reason === "missing" || reason === "restarted";
+        });
         
-        if (criticalDown.length > 0) {
+        if (criticalIssues.length > 0) {
             card.classList.add("issues");
             icon.textContent = "⚠️";
             icon.style.color = "var(--danger)";
             title.textContent = "System Issues Detected";
-            detail.textContent = `Critical processes down: ${criticalDown.map(d => d[0]).join(", ")}`;
+            detail.textContent = `Critical process issues: ${criticalIssues.map(d => d[0]).join(", ")}`;
         } else if (!isHealthy) {
             card.classList.add("issues");
             icon.textContent = "●";
@@ -1968,11 +2029,14 @@
 
         if (windowsRes && windowsRes.ok && windowsData) {
           const data = windowsData;
+          statusSnapshot.windows = Array.isArray(data.windows) ? data.windows : [];
           setBadge(badgeWindows, `/health/windows: ${data.count} windows`, data.count > 0 ? "ok" : "warn");
         } else if (windowsRes) {
+          statusSnapshot.windows = [];
           const label = windowsRes.status === 403 ? "auth required" : windowsRes.status;
           setBadge(badgeWindows, `/health/windows: ${label}`, windowsRes.status === 403 ? "warn" : "error");
         } else {
+          statusSnapshot.windows = [];
           setBadge(badgeWindows, `/health/windows: error`, "error");
         }
 
@@ -2223,7 +2287,7 @@
         const savedPath = response.headers.get("X-Screenshot-Path");
         const message = savedPath
           ? `Screenshot saved: ${savedPath.split('/').pop()}`
-          : "Screenshot captured.";
+          : "Screenshot saved.";
         
         showToast(message, "ok");
         
@@ -2365,6 +2429,9 @@
       });
       vncForceFocusBtn.addEventListener("click", () => {
         forceAppFocus();
+      });
+      vncOpenboxMenuBtn.addEventListener("click", () => {
+        requestOpenboxMenu("button");
       });
       document.getElementById("btn-reset-workspace").addEventListener("click", async () => {
         logMessage("info", "Resetting workspace (desktop resolution/decorations)...");
@@ -2576,11 +2643,16 @@
               const y = e.clientY - rect.top;
               const vncX = Math.floor(x * (canvas.width / rect.width));
               const vncY = Math.floor(y * (canvas.height / rect.height));
+              const buttonLabel = describeMouseButton(e.button);
+              const modifierLabel = describeMouseModifiers(e);
               lastVncClick = { x: vncX, y: vncY };
               vncInjectBtn.disabled = false;
               document.getElementById("toolbar-inject").disabled = false;
-              updateInputDebug(`Mousedown: client(${Math.round(x)},${Math.round(y)}) -> VNC(${vncX},${vncY})`);
-              logMessage("info", `Mouse down at client(${Math.round(x)}, ${Math.round(y)}) -> VNC(${vncX}, ${vncY})`);
+              updateInputDebug(`Mousedown [${buttonLabel}, mods:${modifierLabel}]: client(${Math.round(x)},${Math.round(y)}) -> VNC(${vncX},${vncY})`);
+              logMessage("info", `Mouse down [${buttonLabel}, modifiers:${modifierLabel}] at client(${Math.round(x)}, ${Math.round(y)}) -> VNC(${vncX}, ${vncY})`);
+              if (e.button === 2 && hasOnlyDesktopShellWindows()) {
+                requestOpenboxMenu("right_click_desktop_fallback");
+              }
             });
             canvas.addEventListener("mousedown", (e) => {
               if (!canTraceClientEvent()) return;
@@ -2599,7 +2671,10 @@
             canvas.addEventListener("mouseup", (e) => {
               if (!canTraceClientEvent()) return;
               const coords = getCanvasCoords(canvas, e);
-              updateInputDebug(`Mouseup: client(${coords.client_x},${coords.client_y}) -> VNC(${coords.vnc_x},${coords.vnc_y})`);
+              const buttonLabel = describeMouseButton(e.button);
+              const modifierLabel = describeMouseModifiers(e);
+              updateInputDebug(`Mouseup [${buttonLabel}, mods:${modifierLabel}]: client(${coords.client_x},${coords.client_y}) -> VNC(${coords.vnc_x},${coords.vnc_y})`);
+              logMessage("info", `Mouse up [${buttonLabel}, modifiers:${modifierLabel}] at client(${coords.client_x}, ${coords.client_y}) -> VNC(${coords.vnc_x}, ${coords.vnc_y})`);
               postClientTraceEvent({
                 event: "client_mouse_up",
                 button: e.button,
