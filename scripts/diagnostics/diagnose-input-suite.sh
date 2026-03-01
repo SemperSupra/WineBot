@@ -9,6 +9,7 @@ LOG_DIR="/artifacts/diagnostics_suite"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/suite.log") 2>&1
 SUMMARY_JSON="$LOG_DIR/summary.json"
+CV_MATCH_THRESHOLD="${CV_MATCH_THRESHOLD:-0.90}"
 
 log() {
   echo "[$(date +'%H:%M:%S')] $*"
@@ -106,7 +107,7 @@ test_cv_click() {
   hook_before="$(count_hook_mouse_events "$hook_log")"
   
   log "CV: Attempting visual find & click..."
-  if python3 /automation/examples/find_and_click.py --template "$template" --retries 3 --threshold 0.7 --click-count "$click_count" --button "$button" --window-id "$win_id"; then
+  if python3 /automation/examples/find_and_click.py --template "$template" --retries 3 --threshold "$CV_MATCH_THRESHOLD" --click-count "$click_count" --button "$button" --window-id "$win_id"; then
       log "CV SUCCESS: Found and clicked '$label'."
   else
       log "CV FAILURE: Could not find '$label'."
@@ -224,8 +225,8 @@ test_notepad() {
   sleep 1
   
   # 1. Mouse (CV)
-  # File menu: approx 40x20 at 10,35 (below titlebar)
-  if test_cv_click "$win_id" "40x20+10+35" "notepad_file" 1; then
+  # File/Edit menu band: wider region avoids ambiguous low-information matches.
+  if test_cv_click "$win_id" "160x24+8+34" "notepad_file" 1; then
       log "Notepad Mouse: PASS"
   else
       log "Notepad Mouse: FAIL"
