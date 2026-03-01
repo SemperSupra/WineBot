@@ -4,7 +4,7 @@
     <separator label="Wine apps" />
     <item label="Windows Explorer">
       <action name="Execute">
-        <command>/scripts/internal/openbox-run-wine.sh "Windows Explorer" wine explorer</command>
+        <command>/scripts/internal/openbox-focus-desktop.sh</command>
       </action>
     </item>
     <item label="Command Prompt">

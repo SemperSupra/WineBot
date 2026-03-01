@@ -21,6 +21,7 @@ from api.utils.files import (
     read_session_control_mode,
     append_lifecycle_event,
     cleanup_old_sessions,
+    ensure_user_profile,
     link_wine_user_dir,
     write_instance_state,
 )
@@ -100,6 +101,7 @@ async def lifespan(app: FastAPI):
     if session_dir and os.path.isdir(session_dir):
         user_dir = os.path.join(session_dir, "user")
         os.makedirs(user_dir, exist_ok=True)
+        ensure_user_profile(user_dir)
         link_wine_user_dir(user_dir)
         interactive = os.getenv("MODE", "headless") == "interactive"
         session_control_mode = ControlPolicyMode(read_session_control_mode(session_dir))
