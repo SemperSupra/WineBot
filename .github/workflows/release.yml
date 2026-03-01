@@ -171,6 +171,12 @@ jobs:
         run: |
           TARGET_INTENT=rel-runner scripts/ci/check-rel-forbidden.sh
 
+      - name: Normalize artifact directory ownership
+        run: |
+          mkdir -p artifacts
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+          chmod -R u+rwX artifacts || true
+
       - name: Generate trust pack artifact
         run: |
           scripts/ci/generate-trust-pack.sh artifacts/trust-pack-release
