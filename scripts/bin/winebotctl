@@ -326,10 +326,12 @@ apply_config_profile_to_file() {
   local use_case="$1"
   local config_file="$2"
   local performance="${3:-}"
+  local rendered=""
+  rendered="$(print_config_profile_values "$use_case" "$performance")" || return 1
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     set_config_key_in_file "$config_file" "$key" "$value"
-  done < <(print_config_profile_values "$use_case" "$performance")
+  done <<< "$rendered"
 }
 
 validate_config_files() {
@@ -1272,7 +1274,9 @@ EOF
             if [ -z "$use_case" ]; then
               die "Usage: config profile set <use-case> [--performance <name>]"
             fi
-            apply_config_profile_to_file "$use_case" "$config_file" "$performance"
+            if ! apply_config_profile_to_file "$use_case" "$config_file" "$performance"; then
+              die "Failed to apply profile selection."
+            fi
             echo "Applied use-case profile '$use_case' (performance: ${performance:-default}) to $config_file"
             ;;
           *)

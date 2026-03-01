@@ -1,6 +1,9 @@
 import pytest
 
-from api.core.config_guard import validate_runtime_configuration
+from api.core.config_guard import (
+    USE_CASE_PROFILE_CANONICAL,
+    validate_runtime_configuration,
+)
 
 
 @pytest.mark.parametrize(
@@ -236,3 +239,35 @@ from api.core.config_guard import validate_runtime_configuration
 def test_profile_matrix(profile, params, expected_ok):
     errors = validate_runtime_configuration(**params)
     assert (len(errors) == 0) is expected_ok, f"{profile}: {errors}"
+
+
+def _base_params_for_use_case(use_case: str, performance: str) -> dict:
+    profile = USE_CASE_PROFILE_CANONICAL[use_case]
+    return dict(
+        runtime_mode=profile["runtime_mode"],
+        instance_lifecycle_mode=profile["instance_lifecycle_mode"],
+        session_lifecycle_mode=profile["session_lifecycle_mode"],
+        instance_control_mode=profile["instance_control_mode"],
+        session_control_mode=profile["session_control_mode"],
+        build_intent="rel",
+        allow_headless_hybrid=False,
+        use_case_profile=use_case,
+        performance_profile=performance,
+    )
+
+
+def test_all_use_case_default_performance_combinations_are_allowed():
+    for use_case, profile in USE_CASE_PROFILE_CANONICAL.items():
+        params = _base_params_for_use_case(
+            use_case, profile["default_performance_profile"]
+        )
+        errors = validate_runtime_configuration(**params)
+        assert not errors, f"{use_case} default failed: {errors}"
+
+
+def test_all_declared_allowed_performance_combinations_are_allowed():
+    for use_case, profile in USE_CASE_PROFILE_CANONICAL.items():
+        for performance in profile["allowed_performance_profiles"]:
+            params = _base_params_for_use_case(use_case, performance)
+            errors = validate_runtime_configuration(**params)
+            assert not errors, f"{use_case}+{performance} failed: {errors}"

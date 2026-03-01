@@ -34,7 +34,7 @@ Checks performed (headless):
 `scripts/smoke-test.sh --full`
 
 Adds a Notepad automation round-trip. The test writes a file under
-`/wineprefix/drive_c/users/winebot/Temp/` for reliability in headless mode.
+`/tmp/` for reliable write permissions in headless mode.
 
 ## Interactive checks
 
@@ -164,6 +164,32 @@ WineBot includes explicit standards conformance suites for API, HTTP semantics, 
 Reference:
 
 `docs/conformance.md`
+
+## Profile System Strategy
+
+Profile coverage is enforced at four layers:
+
+1. Matrix and admission unit tests:
+- `tests/test_profile_matrix.py`
+- `tests/test_config_guard.py`
+
+2. CLI contract tests for startup/config profile UX:
+- `tests/test_conformance_cli_contract.py`
+
+3. Config-file admission validation:
+- `scripts/internal/validate-winebot-config.py`
+
+4. Container runtime integration via smoke/e2e:
+- `scripts/bin/smoke-test.sh --full --include-interactive --cleanup --no-build`
+
+Required CI profile subset:
+- `human-interactive + low-latency`
+- `supervised-agent + balanced`
+- `agent-batch + balanced`
+- `ci-gate + balanced`
+
+Nightly/extended:
+- full use-case/performance matrix in isolated container runs.
 
 ## Input Pipeline Conformance
 

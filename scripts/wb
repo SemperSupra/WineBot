@@ -111,7 +111,7 @@ Legacy aliases:
 $(printf '%s\n' "$aliases" | sed 's/^/  /')
 
 Usage:
-  ./scripts/wb profile up <use-case> [--performance <name>] [--build] [--detach]
+  ./scripts/wb profile up <use-case> [--performance <name>] [--build] [--detach] [--dry-run]
 EOF
             ;;
         up)
@@ -125,6 +125,7 @@ EOF
 
             build_flag=""
             detach_flag=""
+            dry_run="0"
             performance=""
             while [ $# -gt 0 ]; do
                 case "$1" in
@@ -135,6 +136,7 @@ EOF
                         ;;
                     --build) build_flag="--build"; shift ;;
                     --detach) detach_flag="-d"; shift ;;
+                    --dry-run) dry_run="1"; shift ;;
                     *) echo "ERROR: Unknown profile option: $1"; exit 1 ;;
                 esac
             done
@@ -160,6 +162,12 @@ EOF
             else
                 compose_profile="headless"
                 service="winebot"
+            fi
+
+            if [ "$dry_run" = "1" ]; then
+                log "Dry-run resolved use-case '$use_case' (performance: ${performance:-default}, compose profile: $compose_profile, service: $service)"
+                printf '%s\n' "$resolved"
+                return 0
             fi
 
             log "Starting use-case '$use_case' (performance: ${performance:-default}, compose profile: $compose_profile, service: $service)..."
