@@ -147,20 +147,21 @@ jobs:
           rm -rf /tmp/trivy-* || true
           df -h
 
-      - name: Prepare Trivy temp dir
-        run: mkdir -p "${GITHUB_WORKSPACE}/.trivy-tmp"
+      - name: Prepare Trivy cache
+        run: mkdir -p "${GITHUB_WORKSPACE}/.cache/trivy"
 
       - name: Scan image (Trivy)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
-        env:
-          TRIVY_TEMP_DIR: ${{ github.workspace }}/.trivy-tmp
-        with:
-          image-ref: winebot:verify-test-final-test
-          scanners: vuln
-          format: table
-          exit-code: 1
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${GITHUB_WORKSPACE}/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:0.65.0 image \
+            --scanners vuln \
+            --format table \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            winebot:verify-test-final-test
 
       - name: Validate REL forbidden patterns
         run: |
