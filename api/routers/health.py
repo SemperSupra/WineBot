@@ -345,8 +345,14 @@ async def health_x11():
 async def health_windows():
     """Window list and active window details."""
     op_started = time.perf_counter()
-    listing = await safe_async_command(["/automation/bin/x11.sh", "list-windows"])
-    active = await safe_async_command(["/automation/bin/x11.sh", "active-window"])
+    listing_timeout = int(os.getenv("WINEBOT_TIMEOUT_HEALTH_WINDOWS_LIST_SECONDS", "15"))
+    active_timeout = int(os.getenv("WINEBOT_TIMEOUT_HEALTH_WINDOWS_ACTIVE_SECONDS", "5"))
+    listing = await safe_async_command(
+        ["/automation/bin/x11.sh", "list-windows"], timeout=listing_timeout
+    )
+    active = await safe_async_command(
+        ["/automation/bin/x11.sh", "active-window"], timeout=active_timeout
+    )
     windows = []
     if listing.get("ok") and listing.get("stdout"):
         for line in listing["stdout"].splitlines():

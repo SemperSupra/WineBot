@@ -14,6 +14,7 @@ Rules:
 | Control policy and grants | human/agent/hybrid mode correctness | `tests/test_config_guard.py`, `tests/test_profile_matrix.py` |
 | Input APIs and validation | input boundaries and safety invariants | `tests/test_input_validation.py`, `tests/test_input_lifecycle_regression.py` |
 | Input tracing layers | x11/windows/client/network trace operability | `scripts/diagnostics/diagnose-input-trace.sh`, `tests/e2e/test_input_quality.py` |
+| Input pipeline conformance | mouse gestures, keyboard modifiers, human/agent arbitration, and non-occluded delivery | `policy/input-pipeline-conformance-policy.md`, `tests/e2e/test_comprehensive_input.py`, `tests/e2e/test_input_quality.py`, `tests/e2e/test_input_occlusion_conformance.py`, `tests/test_policy.py`, `tests/test_input_lifecycle_regression.py`, `tests/e2e/test_ux_keyboard_accessibility.py`, `tests/test_ui_accessibility.py` |
 | Automation execution | app launch/script execution behavior | `tests/e2e/test_comprehensive_input.py`, `tests/test_api.py` |
 | Recording lifecycle + artifacts | start/pause/resume/stop and artifact integrity | `tests/test_recorder_unit.py`, `scripts/internal/recording-smoke-test.sh` |
 | Telemetry correctness | schema, sampling, rate limits, attribution | `tests/test_telemetry.py`, `tests/test_command_substrate_telemetry.py`, `tests/test_telemetry_contract.py` |

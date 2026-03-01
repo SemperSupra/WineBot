@@ -59,6 +59,9 @@
       <mousebind button="Right" action="Press">
         <action name="Focus"/>
         <action name="Raise"/>
+        <action name="ShowMenu">
+          <menu>root-menu</menu>
+        </action>
       </mousebind>
       <!-- Allow Alt+RightClick to show Openbox menu on any window -->
       <mousebind button="A-Right" action="Press">
@@ -68,6 +71,13 @@
       </mousebind>
     </context>
     <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu">
+          <menu>root-menu</menu>
+        </action>
+      </mousebind>
+    </context>
+    <context name="Desktop">
       <mousebind button="Right" action="Press">
         <action name="ShowMenu">
           <menu>root-menu</menu>

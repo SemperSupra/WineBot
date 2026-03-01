@@ -71,7 +71,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "TOKEN=$$(cat /winebot-shared/winebot_api_token 2>/dev/null || cat /tmp/winebot_api_token 2>/dev/null || true); if [ -n \"$$TOKEN\" ]; then curl -fsS -H \"X-API-Key: $$TOKEN\" http://localhost:8000/health || exit 1; else curl -fsS http://localhost:8000/health || exit 1; fi",
+          "TOKENS=\"$$(cat /tmp/winebot_api_token 2>/dev/null || true) $$(cat /winebot-shared/winebot_api_token 2>/dev/null || true)\"; for TOKEN in $$TOKENS; do [ -z \"$$TOKEN\" ] && continue; curl -fsS -H \"X-API-Key: $$TOKEN\" http://localhost:8000/health >/dev/null && exit 0; done; curl -fsS http://localhost:8000/health >/dev/null || exit 1",
         ]
       interval: 5s
       timeout: 5s
@@ -100,7 +100,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "TOKEN=$$(cat /winebot-shared/winebot_api_token 2>/dev/null || cat /tmp/winebot_api_token 2>/dev/null || true); if [ -n \"$$TOKEN\" ]; then curl -fsS -H \"X-API-Key: $$TOKEN\" http://127.0.0.1:8000/health || exit 1; else curl -fsS http://127.0.0.1:8000/health || exit 1; fi",
+          "TOKENS=\"$$(cat /tmp/winebot_api_token 2>/dev/null || true) $$(cat /winebot-shared/winebot_api_token 2>/dev/null || true)\"; for TOKEN in $$TOKENS; do [ -z \"$$TOKEN\" ] && continue; curl -fsS -H \"X-API-Key: $$TOKEN\" http://127.0.0.1:8000/health >/dev/null && exit 0; done; curl -fsS http://127.0.0.1:8000/health >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 10s

@@ -146,7 +146,31 @@ app = FastAPI(
 
 @app.middleware("http")
 async def add_security_and_version_headers(request: Request, call_next):
-    session_token = set_current_session_dir(read_session_dir())
+    active_session_dir = read_session_dir()
+    session_token = set_current_session_dir(active_session_dir)
+    if active_session_dir and not os.getenv("PYTEST_CURRENT_TEST"):
+        try:
+            broker_state = broker.get_state()
+            broker_session_id = (
+                broker_state.session_id if hasattr(broker_state, "session_id") else None
+            )
+            active_session_id = os.path.basename(active_session_dir)
+            if broker_session_id != active_session_id:
+                interactive = os.getenv("MODE", "headless") == "interactive"
+                try:
+                    session_control_mode = ControlPolicyMode(
+                        read_session_control_mode(active_session_dir)
+                    )
+                except Exception:
+                    session_control_mode = ControlPolicyMode.HYBRID
+                await broker.update_session(
+                    active_session_id,
+                    interactive,
+                    session_control_mode=session_control_mode,
+                )
+        except Exception:
+            # Keep request path resilient; control state will self-heal on next request.
+            pass
     # Phase 1: Version Negotiation
     min_version = request.headers.get("X-WineBot-Min-Version")
     if min_version:

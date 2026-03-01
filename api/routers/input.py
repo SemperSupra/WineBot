@@ -275,7 +275,7 @@ async def click_at(data: ClickModel):
         "source": "windows",
         "x": data.x,
         "y": data.y,
-        "button": 1,
+        "button": data.button,
         "trace_id": trace_id,
         "timestamp_epoch_ms": int(time.time() * 1000),
     }

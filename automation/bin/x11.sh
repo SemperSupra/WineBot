@@ -18,8 +18,17 @@ shift || true
 case "$CMD" in
     list-windows)
         # IDs + Titles
+        title_timeout="${WINEBOT_X11_WINDOW_TITLE_TIMEOUT_SEC:-0.25}"
+        title_retry_timeout="${WINEBOT_X11_WINDOW_TITLE_RETRY_TIMEOUT_SEC:-1.0}"
         xdotool search --onlyvisible --name ".*" 2>/dev/null | while read -r id; do
-            title=$(xdotool getwindowname "$id" 2>/dev/null || echo "N/A")
+            title="$(timeout "$title_timeout" xdotool getwindowname "$id" 2>/dev/null || true)"
+            if [ -z "${title:-}" ]; then
+                # One bounded retry reduces false negatives for short-lived/transient windows.
+                title="$(timeout "$title_retry_timeout" xdotool getwindowname "$id" 2>/dev/null || true)"
+                if [ -z "${title:-}" ]; then
+                    title="N/A"
+                fi
+            fi
             echo "$id $title"
         done
         ;;

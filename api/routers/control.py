@@ -2,7 +2,12 @@ from fastapi import APIRouter, HTTPException
 import os
 import time
 from api.core.broker import broker
-from api.core.models import GrantControlModel, UserIntentModel, ControlPolicyModeModel
+from api.core.models import (
+    GrantControlModel,
+    UserIntentModel,
+    ControlPolicyModeModel,
+    ControlPolicyMode,
+)
 from api.core.config_guard import validate_runtime_configuration
 from api.core.telemetry import emit_operation_timing
 from api.utils.files import (
@@ -27,11 +32,26 @@ def _require_active_session_id(session_id: str) -> None:
 
 
 @router.get("/{session_id}/control")
-def get_control_state(session_id: str):
+async def get_control_state(session_id: str):
     """Get the current interactive control state."""
     _require_active_session_id(session_id)
     state = broker.get_state()
-    # Simple validation that session matches if strict
+    # Self-heal stale broker snapshots after session handover/new-session events.
+    if hasattr(state, "session_id") and state.session_id != session_id:
+        session_dir = read_session_dir()
+        interactive = os.getenv("MODE", "headless") == "interactive"
+        try:
+            session_control_mode = ControlPolicyMode(
+                read_session_control_mode(session_dir) if session_dir else "hybrid"
+            )
+        except Exception:
+            session_control_mode = ControlPolicyMode.HYBRID
+        await broker.update_session(
+            session_id,
+            interactive,
+            session_control_mode=session_control_mode,
+        )
+        state = broker.get_state()
     return state
 
 

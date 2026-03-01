@@ -11,10 +11,10 @@ This file tracks in-flight and planned work items that are not yet fully deliver
 - `OPEN` Phase 2: Markerized timeline and markers API.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/41
 
-- `OPEN` Phase 3: Segmented rotation and retention policy.
+- `DONE` Phase 3: Segmented rotation and retention policy.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/39
 
-- `OPEN` Phase 4: Privacy controls for recording and traces.
+- `DONE` Phase 4: Privacy controls for recording and traces.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/38
 
 - `OPEN` Phase 5: Timeline-correlated playback and diagnostic UX.
@@ -29,7 +29,7 @@ This file tracks in-flight and planned work items that are not yet fully deliver
 - `OPEN` Advanced API conformance fuzzing.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/43
 
-- `OPEN` SBOM schema and license-policy conformance gates.
+- `DONE` SBOM schema and license-policy conformance gates.
   - GitHub issue: https://github.com/SemperSupra/WineBot/issues/44
 
 - `OPEN` Real-network DNS-SD/mDNS integration conformance.

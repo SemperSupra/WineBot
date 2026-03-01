@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 
 
@@ -6,11 +7,14 @@ API_URL = "http://winebot-interactive:8000"
 
 
 def get_token() -> str:
+    env_token = os.getenv("API_TOKEN", "").strip()
+    if env_token:
+        return env_token
     for token_path in ("/winebot-shared/winebot_api_token", "/tmp/winebot_api_token"):
         if os.path.exists(token_path):
             with open(token_path, "r") as f:
                 return f.read().strip()
-    return os.getenv("API_TOKEN", "").strip()
+    return ""
 
 
 def auth_headers() -> dict[str, str]:
@@ -59,3 +63,47 @@ def ensure_agent_control(lease_seconds: int = 300) -> None:
         timeout=10,
     )
     grant_res.raise_for_status()
+
+
+def ensure_openbox_running(stable_checks: int = 3, check_interval_s: float = 0.5) -> None:
+    headers = auth_headers()
+    def _critical_processes_ok() -> bool:
+        try:
+            status = requests.get(f"{API_URL}/lifecycle/status", headers=headers, timeout=10)
+            status.raise_for_status()
+            processes = status.json().get("processes", {})
+            return bool(processes.get("openbox", {}).get("ok")) and bool(
+                processes.get("xvfb", {}).get("ok")
+            )
+        except Exception:
+            return False
+
+    stable = 0
+    for _ in range(max(stable_checks, 1)):
+        if _critical_processes_ok():
+            stable += 1
+            time.sleep(check_interval_s)
+        else:
+            stable = 0
+            break
+    if stable >= max(stable_checks, 1):
+        return
+
+    ensure_agent_control()
+    requests.post(
+        f"{API_URL}/apps/run",
+        json={"path": "openbox", "detach": True},
+        headers=headers,
+        timeout=10,
+    )
+    stable = 0
+    for _ in range(40):
+        if _critical_processes_ok():
+            stable += 1
+            if stable >= max(stable_checks, 1):
+                return
+        else:
+            stable = 0
+        time.sleep(check_interval_s)
+
+    raise RuntimeError("Openbox/Xvfb did not become healthy and stable before timeout")

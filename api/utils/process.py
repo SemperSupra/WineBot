@@ -217,11 +217,25 @@ def find_processes(pattern: str, exact: bool = False) -> List[int]:
             pid = int(pid_str)
             try:
                 if exact:
+                    matched = False
                     with open(f"/proc/{pid}/comm", "r") as f:
                         comm = f.read().strip()
                         if comm == pattern:
-                            pids.append(pid)
-                            continue
+                            matched = True
+                    if not matched:
+                        with open(f"/proc/{pid}/cmdline", "rb") as f:
+                            cmd_bytes = f.read()
+                            argv0 = (
+                                cmd_bytes.split(b"\0", 1)[0]
+                                .decode("utf-8", errors="ignore")
+                                .strip()
+                            )
+                            if os.path.basename(argv0) == pattern:
+                                matched = True
+                    if matched:
+                        pids.append(pid)
+                    # exact mode should not fallback to broad substring matching.
+                    continue
                 with open(f"/proc/{pid}/cmdline", "rb") as f:
                     cmd_bytes = f.read()
                     cmd = (

@@ -91,6 +91,14 @@ class WineBotConfig(BaseModel):
     WINEBOT_TIMEOUT_LIFECYCLE_SESSION_HANDOVER_SECONDS: int = 60
     WINEBOT_RECORDER_HEARTBEAT_STALE_SECONDS: int = 30
     WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS: int = 15
+    WINEBOT_RECORDING_INCLUDE_INPUT_TRACES: bool = True
+    WINEBOT_RECORDING_REDACT_SENSITIVE: bool = True
+    WINEBOT_RECORDING_REDACT_FIELDS: str = (
+        "key,keycode,text,raw,password,token,secret,clipboard"
+    )
+    WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS: int = 0
+    WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS: int = 0
+    WINEBOT_RECORDING_RETENTION_MAX_BYTES: int = 0
 
     # Recorder (FFmpeg)
     RECORDER_PRESET: str = "ultrafast"
@@ -284,6 +292,25 @@ def validate_config() -> WineBotConfig:
             ),
             "WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS": _parse_int(
                 "WINEBOT_RECORDER_HEARTBEAT_GRACE_SECONDS", 15
+            ),
+            "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES": _parse_bool(
+                "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True
+            ),
+            "WINEBOT_RECORDING_REDACT_SENSITIVE": _parse_bool(
+                "WINEBOT_RECORDING_REDACT_SENSITIVE", True
+            ),
+            "WINEBOT_RECORDING_REDACT_FIELDS": os.getenv(
+                "WINEBOT_RECORDING_REDACT_FIELDS",
+                "key,keycode,text,raw,password,token,secret,clipboard",
+            ),
+            "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS": _parse_int(
+                "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0
+            ),
+            "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS": _parse_int(
+                "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0
+            ),
+            "WINEBOT_RECORDING_RETENTION_MAX_BYTES": _parse_int(
+                "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0
             ),
             "DISPLAY": os.getenv("DISPLAY", ":99"),
             "SCREEN_RESOLUTION": os.getenv("SCREEN", "1280x720x24"),

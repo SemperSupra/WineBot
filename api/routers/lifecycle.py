@@ -58,6 +58,13 @@ _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
 _TRANSITION_MARKER_FILE = "session.transition.json"
+_process_state_lock = threading.Lock()
+_process_pid_snapshot: Dict[str, set[int]] = {}
+_process_incident_until: Dict[str, float] = {}
+_process_incident_reason: Dict[str, str] = {}
+_PROCESS_INCIDENT_WINDOW_SECONDS = float(
+    os.getenv("WINEBOT_PROCESS_INCIDENT_WINDOW_SECONDS", "6")
+)
 
 
 # --- Lifecycle Logic ---
@@ -171,6 +178,33 @@ def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     return results
 
 
+def _tracked_process_status(name: str, pattern: str, exact: bool = True) -> Dict[str, Any]:
+    """Track process PID transitions to surface recent instability after auto-restarts."""
+    now = time.time()
+    current_pids = set(find_processes(pattern, exact=exact))
+    with _process_state_lock:
+        previous_pids = _process_pid_snapshot.get(name, set())
+        incident_until = _process_incident_until.get(name, 0.0)
+        incident_active = incident_until > now
+        if previous_pids and not current_pids and not incident_active:
+            _process_incident_until[name] = now + _PROCESS_INCIDENT_WINDOW_SECONDS
+            _process_incident_reason[name] = "missing"
+        elif previous_pids and current_pids and previous_pids != current_pids and not incident_active:
+            _process_incident_until[name] = now + _PROCESS_INCIDENT_WINDOW_SECONDS
+            _process_incident_reason[name] = "restarted"
+        _process_pid_snapshot[name] = current_pids
+        incident_until = _process_incident_until.get(name, 0.0)
+        degraded = incident_until > now
+        if not degraded:
+            _process_incident_reason.pop(name, None)
+        incident_reason = _process_incident_reason.get(name, "")
+    return {
+        "ok": len(current_pids) > 0,
+        "degraded": degraded,
+        "incident_reason": incident_reason if degraded else "",
+    }
+
+
 def _shutdown_process(
     session_dir: Optional[str], delay: float, sig: int = signal.SIGTERM
 ) -> None:
@@ -220,14 +254,15 @@ async def lifecycle_status():
 
     # Process details
     processes = {
-        "xvfb": {"ok": len(find_processes("Xvfb", exact=False)) > 0},
-        "openbox": {"ok": len(find_processes("openbox", exact=False)) > 0},
-        "x11vnc": {"ok": len(find_processes("x11vnc", exact=False)) > 0},
-        "novnc": {
-            "ok": len(find_processes("websockify")) > 0
-        },  # Check websockify as proxy
-        "wine_explorer": {"ok": len(find_processes("explorer.exe")) > 0},
-        "wineserver": {"ok": len(find_processes("wineserver")) > 0},
+        "xvfb": _tracked_process_status("xvfb", "Xvfb", exact=True),
+        "openbox": _tracked_process_status("openbox", "openbox", exact=True),
+        "x11vnc": _tracked_process_status("x11vnc", "x11vnc", exact=True),
+        "novnc": _tracked_process_status("novnc", "websockify", exact=True),
+        "wine_explorer": _tracked_process_status(
+            "wine_explorer", "explorer.exe", exact=False
+        ),
+        # Wine 10+ commonly runs `wineserver64`; use non-exact matching.
+        "wineserver": _tracked_process_status("wineserver", "wineserver", exact=False),
     }
 
     session_dir = read_session_dir()
@@ -267,6 +302,25 @@ async def lifecycle_status():
         metric_name="lifecycle.status.latency",
     )
     return payload
+
+
+@router.post("/lifecycle/openbox/menu")
+async def lifecycle_openbox_menu():
+    """Open the Openbox root menu via keyboard shortcut fallback."""
+    session_dir = read_session_dir()
+    result = safe_command(["xdotool", "key", "ctrl+alt+m"], timeout=2.0)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=500,
+            detail=(result.get("stderr") or result.get("error") or "Failed to open Openbox menu"),
+        )
+    append_lifecycle_event(
+        session_dir,
+        "openbox_menu_requested",
+        "Openbox menu requested via API fallback",
+        source="api",
+    )
+    return {"status": "ok", "method": "ctrl+alt+m"}
 
 
 @router.post("/openbox/reconfigure")

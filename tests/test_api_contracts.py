@@ -123,6 +123,32 @@ def test_recording_stop_requested_contract():
     assert body.get("recording_timeline_id", "").startswith("timeline-")
 
 
+def test_recording_stop_timeout_returns_async_contract_without_long_grace():
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
+        with patch("api.routers.recording.read_session_dir", return_value="/tmp/s1"):
+            with patch("api.routers.recording.recorder_running", return_value=True):
+                with patch(
+                    "api.routers.recording.run_async_command",
+                    new_callable=AsyncMock,
+                ) as mock_run:
+                    mock_run.return_value = {
+                        "ok": False,
+                        "error": "command timed out after 8s",
+                        "stderr": "",
+                    }
+                    response = client.post("/recording/stop", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "stop_requested"
+    assert body["action"] == "stop"
+    assert body["result"] == "accepted"
+    assert body["converged"] is False
+    warning = str(body.get("warning", "")).lower()
+    assert "timeout" in warning or "timed out" in warning
+    assert body.get("recording_timeline_id", "").startswith("timeline-")
+
+
 def test_recording_openapi_response_models():
     with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
         response = client.get("/openapi.json")

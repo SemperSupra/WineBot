@@ -101,6 +101,14 @@ This file summarizes the main policies currently used by WineBot and where each 
 - Reference:
   - `policy/visual-style-and-ux-policy.md`
 
+### 12. Input Pipeline Conformance Policy
+- Defines required behavior for mouse/keyboard delivery across noVNC/X11/Wine, including:
+  - click/drag semantics,
+  - human-priority arbitration,
+  - UI non-occlusion requirements.
+- Reference:
+  - `policy/input-pipeline-conformance-policy.md`
+
 ### 11. Discoverability & Internet Exposure Policy
 - Limits service discovery to local mDNS and explicitly forbids public internet discovery for security.
 - Reference:

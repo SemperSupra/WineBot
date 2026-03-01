@@ -16,6 +16,11 @@ if [ "${ENABLE_VNC:-0}" = "1" ] || [ "${MODE:-headless}" = "interactive" ]; then
     echo "--> Starting VNC/noVNC services..."
     VNC_PORT="${VNC_PORT:-5900}"
     X11VNC_PORT="$VNC_PORT"
+
+    # Ensure we do not leave duplicate bridges around after restarts/re-entry.
+    pkill -TERM -x x11vnc >/dev/null 2>&1 || true
+    pkill -TERM -f "/usr/local/bin/websockify --web /usr/share/novnc" >/dev/null 2>&1 || true
+    sleep 1
     
     # Input Proxy logic would go here, simplified for modularity
     if [ "${WINEBOT_INPUT_TRACE_NETWORK:-0}" = "1" ]; then

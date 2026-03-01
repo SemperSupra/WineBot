@@ -88,11 +88,34 @@ find_root() {
   return 1
 }
 
-repo_root="$(find_root)" || fail "Could not find repo root (VERSION file missing)"
+repo_root="$(find_root)" || {
+  echo "ERROR: Could not find repo root (VERSION file missing)" >&2
+  exit 1
+}
 compose_file="$repo_root/compose/docker-compose.yml"
 export BUILD_INTENT="${BUILD_INTENT:-rel}"
 if [ "$BUILD_INTENT" = "test" ]; then
     export WINEBOT_IMAGE_VERSION="${WINEBOT_IMAGE_VERSION:-verify-test-final}"
+fi
+
+# Stabilize auth across headless/interactive/test-runner during a smoke run.
+# Reuse previously generated local token when available.
+if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then
+  API_TOKEN="$(tr -d '[:space:]' < /tmp/winebot_api_token)"
+  export API_TOKEN
+  echo "Using cached API_TOKEN from /tmp/winebot_api_token."
+fi
+if [ -z "${API_TOKEN:-}" ]; then
+  API_TOKEN="$(python3 - <<'PY'
+import secrets
+import string
+alphabet = string.ascii_letters + string.digits
+print(''.join(secrets.choice(alphabet) for _ in range(24)))
+PY
+)"
+  export API_TOKEN
+  printf '%s\n' "$API_TOKEN" > /tmp/winebot_api_token
+  echo "Using generated API_TOKEN for this smoke-test run."
 fi
 
 if docker compose version >/dev/null 2>&1; then
@@ -137,6 +160,17 @@ compose_up() {
   "${args[@]}"
 }
 
+compose_recreate_service() {
+  local profile="$1"
+  local service="$2"
+  local args=("${compose_cmd[@]}" -f "$compose_file" --profile "$profile" up -d --force-recreate)
+  if [ "$build" = "1" ]; then
+    args+=(--build)
+  fi
+  args+=("$service")
+  "${args[@]}"
+}
+
 compose_exec() {
   local profile="$1"
   local service="$2"
@@ -171,6 +205,40 @@ wait_for_windows() {
   fail "No windows detected on DISPLAY=:99 for $service after ${attempts} attempts"
 }
 
+wait_for_api_ready() {
+  local profile="$1"
+  local service="$2"
+  local attempts="${WINEBOT_WAIT_FOR_API_ATTEMPTS:-120}"
+  local delay_s="${WINEBOT_WAIT_FOR_API_DELAY_S:-1}"
+  local attempt
+  log "Waiting for API readiness on $service..."
+  for attempt in $(seq 1 "$attempts"); do
+    set +e
+    "${compose_cmd[@]}" -f "$compose_file" --profile "$profile" exec -T --user winebot "$service" bash -lc '
+      set -euo pipefail
+      TOKEN="$(tr -d "[:space:]" < /tmp/winebot_api_token 2>/dev/null || true)"
+      if [ -n "${TOKEN:-}" ]; then
+        curl -fsS -H "X-API-Key: ${TOKEN}" http://127.0.0.1:8000/health >/dev/null
+      else
+        curl -fsS http://127.0.0.1:8000/health >/dev/null
+      fi
+    ' >/dev/null 2>&1
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      log "API ready after ${attempt} attempts."
+      return 0
+    fi
+    if [ $((attempt % 20)) -eq 0 ]; then
+      log "Still waiting for API readiness on $service (attempt ${attempt}/${attempts})..."
+    fi
+    sleep "$delay_s"
+  done
+  log "Timed out waiting for API readiness on $service; showing recent service logs."
+  "${compose_cmd[@]}" -f "$compose_file" --profile "$profile" logs --tail 200 "$service" || true
+  fail "API did not become ready on $service after ${attempts} attempts"
+}
+
 started_headless="0"
 started_interactive="0"
 debug_proxy_container=""
@@ -193,6 +261,23 @@ cleanup_services() {
 
 if [ "$cleanup" = "1" ]; then
   trap cleanup_services EXIT
+fi
+
+# If interactive service is already running, prefer its configured API token
+# to avoid auth mismatches during E2E.
+if service_running interactive winebot-interactive; then
+  running_token="$(compose_exec interactive winebot-interactive "printf '%s' \"\${API_TOKEN:-}\"" 2>/dev/null || true)"
+  running_token="$(printf '%s' "${running_token:-}" | tr -d '[:space:]')"
+  if [ -z "$running_token" ]; then
+    running_token="$(compose_exec interactive winebot-interactive "tr -d '[:space:]' < /tmp/winebot_api_token 2>/dev/null || true" 2>/dev/null || true)"
+    running_token="$(printf '%s' "${running_token:-}" | tr -d '[:space:]')"
+  fi
+  if [ -n "$running_token" ] && [ "${API_TOKEN:-}" != "$running_token" ]; then
+    API_TOKEN="$running_token"
+    export API_TOKEN
+    printf '%s\n' "$API_TOKEN" > /tmp/winebot_api_token
+    log "Using API_TOKEN from running interactive service."
+  fi
 fi
 
 if service_running headless winebot; then
@@ -261,7 +346,7 @@ if [ "$skip_base_checks" != "1" ]; then
 
   if [ "$full" = "1" ]; then
     log "Running Notepad automation..."
-    notepad_output="/wineprefix/drive_c/users/winebot/Temp/winebot_smoke_test.txt"
+    notepad_output="/tmp/winebot_smoke_test_$(date +%s).txt"
     compose_exec headless winebot "pkill -f '[n]otepad.exe' >/dev/null 2>&1 || true"
     compose_exec headless winebot "python3 automation/notepad_create_and_verify.py --text 'WineBot smoke test' --output '$notepad_output' --launch --timeout 120 --save-timeout 60 --retry-interval 2 --delay 100"
   fi
@@ -282,20 +367,37 @@ fi
 
 if [ "$include_tests" = "1" ] || [ "$full" = "1" ]; then
   log "Running containerized unit and E2E tests..."
-  # Ensure the interactive stack is up for E2E tests
-  if ! service_running interactive winebot-interactive; then
-    compose_up interactive winebot-interactive
-    wait_for_windows interactive winebot-interactive
+  # Ensure a clean interactive baseline for deterministic E2E behavior.
+  interactive_was_running="0"
+  if service_running interactive winebot-interactive; then
+    interactive_was_running="1"
+    log "Recreating interactive service for clean E2E baseline..."
+  else
+    log "Starting interactive service for E2E..."
   fi
-  # Auto-discover token if generated
-  TOKEN_ARG=()
-  if [ -z "${API_TOKEN:-}" ] && [ -f /tmp/winebot_api_token ]; then
-      export API_TOKEN=$(cat /tmp/winebot_api_token | tr -d '[:space:]')
+  compose_recreate_service interactive winebot-interactive
+  if [ "$interactive_was_running" = "0" ]; then
+    started_interactive="1"
   fi
+  wait_for_api_ready interactive winebot-interactive
+  wait_for_windows interactive winebot-interactive
+  # Sync API token from the active interactive container (entrypoint may generate one).
+  interactive_token="$(compose_exec interactive winebot-interactive "tr -d '[:space:]' < /tmp/winebot_api_token 2>/dev/null || printf '%s' \"\${API_TOKEN:-}\"" 2>/dev/null || true)"
+  interactive_token="$(printf '%s' "${interactive_token:-}" | tr -d '[:space:]')"
+  if [ -n "$interactive_token" ]; then
+    API_TOKEN="$interactive_token"
+    export API_TOKEN
+    printf '%s\n' "$API_TOKEN" > /tmp/winebot_api_token
+    log "Synced API_TOKEN from active interactive service."
+  fi
+  # Run unit/integration tests without forcing API_TOKEN into process env.
+  "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm --no-deps test-runner bash -lc "/work/scripts/ci/test.sh"
+  # Run E2E with explicit API token so browser/API auth is deterministic.
   if [ -n "${API_TOKEN:-}" ]; then
-      TOKEN_ARG=(-e "API_TOKEN=$API_TOKEN")
+    "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm --no-deps -e "API_TOKEN=$API_TOKEN" test-runner bash -lc "pytest -v -s /work/tests/e2e"
+  else
+    "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm --no-deps test-runner bash -lc "pytest -v -s /work/tests/e2e"
   fi
-  "${compose_cmd[@]}" -f "$compose_file" --profile test --profile interactive run --rm "${TOKEN_ARG[@]}" test-runner
 fi
 
 if [ "$full" = "1" ] || [ -n "$phase" ]; then

@@ -24,6 +24,12 @@ Set `WINEBOT_RECORD=1` when starting the container.
 | `WINEBOT_USER_DIR` | Override the session user directory (Wine user home) | (empty) |
 | `WINEBOT_RECORD_FORMAT` | Video format (currently MKV is canonical) | `mkv` |
 | `WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS` | Max synchronous API wait before returning `stop_requested` while finalization continues | `3` |
+| `WINEBOT_RECORDING_INCLUDE_INPUT_TRACES` | Include `logs/input_events*` in subtitle synthesis and artifact manifests | `true` |
+| `WINEBOT_RECORDING_REDACT_SENSITIVE` | Redact sensitive input-event fields before embedding recorder events | `true` |
+| `WINEBOT_RECORDING_REDACT_FIELDS` | Comma-separated input-event keys to redact | `key,keycode,text,raw,password,token,secret,clipboard` |
+| `WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS` | Keep newest N recording segments on stop (0 disables) | `0` |
+| `WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS` | Delete recording artifacts older than N days on stop (0 disables) | `0` |
+| `WINEBOT_RECORDING_RETENTION_MAX_BYTES` | Enforce total recording artifact byte cap by pruning oldest files (0 disables) | `0` |
 
 ## Sessions and Artifacts
 
@@ -92,3 +98,9 @@ If `WINEBOT_INPUT_TRACE_RECORD=1` is set, input trace events (clicks/keys) are i
 2. **Lifecycle Hooks**: `docker/entrypoint.sh` starts the recorder after Xvfb is ready and stops it on exit.
 3. **Event Log**: All annotations and lifecycle events are written to `events.jsonl` with monotonic timestamps.
 4. **Post-processing**: When the session stops, the recorder generates `.vtt` and `.ass` files from the event log.
+
+If recorder stop is interrupted, recover finalization explicitly:
+
+```bash
+python3 -m automation.recorder recover --session-dir /artifacts/sessions/<session-id>
+```

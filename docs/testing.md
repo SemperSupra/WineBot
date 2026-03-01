@@ -165,6 +165,30 @@ Reference:
 
 `docs/conformance.md`
 
+## Input Pipeline Conformance
+
+Policy reference:
+
+`policy/input-pipeline-conformance-policy.md`
+
+Run the baseline input conformance bundle:
+
+`pytest -q tests/test_policy.py tests/test_input_lifecycle_regression.py tests/e2e/test_input_quality.py tests/e2e/test_comprehensive_input.py tests/e2e/test_ux_keyboard_accessibility.py tests/test_ui_accessibility.py`
+
+Recommended stress and diagnostics:
+
+- `scripts/diagnostics/diagnose-input-trace.sh`
+- `tests/stress_input.sh`
+
+### Input Conformance Strategy (Tiered)
+
+- Tier 0 (Schema/Unit): input events are parsed and normalized correctly, including button/modifier fields.
+- Tier 1 (Policy/Arbitration): human input revokes agent control; agent actions require explicit grant.
+- Tier 2 (Pipeline Integration): client, X11, and optional Windows traces align for clicks, drags, wheel, and keyboard paths.
+- Tier 3 (E2E UX): noVNC canvas interactions reach focused Wine apps under both 1:1 and scaled viewport.
+- Tier 4 (Occlusion): dashboard overlays do not swallow input outside explicit control regions.
+- Tier 5 (Soak/Stress): prolonged sessions do not degrade delivery, drift coordinates, or leave stuck input state.
+
 ## Invariant Validation
 
 Lifecycle/control/config invariants are codified and tested:

@@ -8,6 +8,7 @@ import platform
 import hashlib
 import uuid
 import tempfile
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Final
 from api.core.constants import (
@@ -517,6 +518,9 @@ def write_recording_artifact_manifest(
             return "health"
         return "other"
 
+    include_input_traces = bool(
+        getattr(config, "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True)
+    )
     artifacts: List[Dict[str, Any]] = []
     for root, _dirs, files in os.walk(session_dir):
         for name in files:
@@ -524,6 +528,8 @@ def write_recording_artifact_manifest(
                 continue
             full_path = os.path.join(root, name)
             rel_path = os.path.relpath(full_path, session_dir)
+            if (not include_input_traces) and rel_path.startswith("logs/input_events"):
+                continue
             try:
                 stat = os.stat(full_path)
             except FileNotFoundError:
@@ -557,6 +563,28 @@ def write_recording_artifact_manifest(
         "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS": os.getenv(
             "WINEBOT_RECORDING_STOP_SYNC_WAIT_SECONDS", "3"
         ),
+        "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES": str(
+            bool(getattr(config, "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True))
+        ).lower(),
+        "WINEBOT_RECORDING_REDACT_SENSITIVE": str(
+            bool(getattr(config, "WINEBOT_RECORDING_REDACT_SENSITIVE", True))
+        ).lower(),
+        "WINEBOT_RECORDING_REDACT_FIELDS": str(
+            getattr(
+                config,
+                "WINEBOT_RECORDING_REDACT_FIELDS",
+                "key,keycode,text,raw,password,token,secret,clipboard",
+            )
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0))
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0))
+        ),
+        "WINEBOT_RECORDING_RETENTION_MAX_BYTES": str(
+            int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0))
+        ),
     }
     manifest_payload: Dict[str, Any] = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -576,6 +604,118 @@ def write_recording_artifact_manifest(
         json.dump(manifest_payload, f, indent=2)
     os.replace(tmp_output_path, output_path)
     return output_path
+
+
+_SEGMENT_INDEX_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:video|events|segment|parts|part_index)_(\d{3})(?:_part\d{3})?.*"
+)
+
+
+def _segment_index_for_path(path: str) -> Optional[int]:
+    match = _SEGMENT_INDEX_RE.match(path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def _recording_artifact_files(session_dir: str) -> List[str]:
+    files: List[str] = []
+    for root, _dirs, names in os.walk(session_dir):
+        for name in names:
+            rel_path = os.path.relpath(os.path.join(root, name), session_dir)
+            if rel_path == "recording_artifacts_manifest.json":
+                continue
+            if rel_path.startswith(("video_", "events_", "segment_", "parts_", "part_index_")):
+                files.append(rel_path)
+            elif rel_path.startswith("logs/input_events"):
+                files.append(rel_path)
+    files.sort()
+    return files
+
+
+def enforce_recording_retention(session_dir: str) -> Dict[str, Any]:
+    if not os.path.isdir(session_dir):
+        return {"deleted": [], "errors": [], "bytes_freed": 0}
+    max_segments = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0)))
+    max_age_days = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0)))
+    max_bytes = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0)))
+    candidates = _recording_artifact_files(session_dir)
+    deleted: List[str] = []
+    errors: List[Dict[str, str]] = []
+    bytes_freed = 0
+
+    if max_segments > 0:
+        segment_ids = sorted(
+            {
+                idx
+                for idx in (_segment_index_for_path(path) for path in candidates)
+                if idx is not None
+            }
+        )
+        drop = set(segment_ids[:-max_segments]) if len(segment_ids) > max_segments else set()
+        for rel_path in list(candidates):
+            idx = _segment_index_for_path(rel_path)
+            if idx is None or idx not in drop:
+                continue
+            full = os.path.join(session_dir, rel_path)
+            try:
+                size = os.path.getsize(full) if os.path.exists(full) else 0
+                os.remove(full)
+                deleted.append(rel_path)
+                bytes_freed += int(size)
+                candidates.remove(rel_path)
+            except Exception as exc:
+                errors.append({"path": rel_path, "error": str(exc)})
+
+    if max_age_days > 0:
+        cutoff = time.time() - (max_age_days * 86400)
+        for rel_path in list(candidates):
+            full = os.path.join(session_dir, rel_path)
+            try:
+                stat = os.stat(full)
+            except FileNotFoundError:
+                continue
+            if stat.st_mtime >= cutoff:
+                continue
+            try:
+                os.remove(full)
+                deleted.append(rel_path)
+                bytes_freed += int(stat.st_size)
+                candidates.remove(rel_path)
+            except Exception as exc:
+                errors.append({"path": rel_path, "error": str(exc)})
+
+    if max_bytes > 0:
+        remaining: List[Dict[str, Any]] = []
+        total = 0
+        for rel_path in candidates:
+            full = os.path.join(session_dir, rel_path)
+            try:
+                st = os.stat(full)
+            except FileNotFoundError:
+                continue
+            total += int(st.st_size)
+            remaining.append(
+                {"path": rel_path, "size": int(st.st_size), "mtime": float(st.st_mtime)}
+            )
+        if total > max_bytes:
+            remaining.sort(key=lambda item: (item["mtime"], item["path"]))
+            for item in remaining:
+                if total <= max_bytes:
+                    break
+                full = os.path.join(session_dir, item["path"])
+                try:
+                    os.remove(full)
+                    deleted.append(str(item["path"]))
+                    total -= int(item["size"])
+                    bytes_freed += int(item["size"])
+                except Exception as exc:
+                    errors.append({"path": str(item["path"]), "error": str(exc)})
+
+    return {"deleted": sorted(set(deleted)), "errors": errors, "bytes_freed": bytes_freed}
 
 
 def link_wine_user_dir(user_dir: str) -> None:

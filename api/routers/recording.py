@@ -28,6 +28,7 @@ from api.utils.files import (
     write_session_manifest,
     ensure_recording_timeline_id,
     write_recording_artifact_manifest,
+    enforce_recording_retention,
     write_session_mode,
     write_session_control_mode,
     write_session_state,
@@ -328,6 +329,7 @@ async def stop_recording_endpoint():
             return payload
         if not recorder_running(session_dir):
             write_recorder_state(session_dir, RecorderState.IDLE.value)
+            retention_report = enforce_recording_retention(session_dir)
             result = _action_response(
                 action="stop",
                 status="already_stopped",
@@ -336,6 +338,8 @@ async def stop_recording_endpoint():
                 operation_id=operation_id,
                 converged=True,
             )
+            if retention_report.get("deleted"):
+                result["retention"] = retention_report
             set_manual_pause_lock(session_dir, False)
             emit_operation_timing(
                 session_dir,
@@ -361,15 +365,127 @@ async def stop_recording_endpoint():
             "--session-dir",
             session_dir,
         ]
-        result = await run_async_command(
-            cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS
+        stop_cmd_timeout_sec = _int_env(
+            "WINEBOT_TIMEOUT_RECORDING_STOP_COMMAND_SECONDS",
+            default=min(8, int(config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS)),
+            minimum=1,
+            maximum=max(1, int(config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS)),
         )
+        result = await run_async_command(cmd, timeout=stop_cmd_timeout_sec)
         if not result["ok"]:
+            error_text = (result.get("stderr") or result.get("error") or "").strip()
+            lower_error = error_text.lower()
+            if "timed out" in lower_error or "timeout" in lower_error:
+                # Keep API stop responsive when ffmpeg finalization is still draining.
+                if not recorder_running(session_dir):
+                    write_recorder_state(session_dir, RecorderState.IDLE.value)
+                    retention_report = enforce_recording_retention(session_dir)
+                    payload = _action_response(
+                        action="stop",
+                        status="stopped",
+                        recording_timeline_id=recording_timeline_id,
+                        session_dir=session_dir,
+                        operation_id=operation_id,
+                        converged=True,
+                        warning=(
+                            error_text
+                            or "Stop command timed out, but recorder was already down; state reconciled."
+                        ),
+                    )
+                    if retention_report.get("deleted"):
+                        payload["retention"] = retention_report
+                    set_manual_pause_lock(session_dir, False)
+                    write_recording_artifact_manifest(
+                        session_dir, generated_by_action="stop_reconciled"
+                    )
+                    await complete_operation(operation_id, result=payload)
+                    return payload
+                payload = _action_response(
+                    action="stop",
+                    status="stop_requested",
+                    recording_timeline_id=recording_timeline_id,
+                    session_dir=session_dir,
+                    operation_id=operation_id,
+                    converged=False,
+                    warning=(
+                        error_text
+                        or "Stop command timed out; recorder shutdown still in progress."
+                    ),
+                )
+                write_recording_artifact_manifest(
+                    session_dir, generated_by_action="stop_requested"
+                )
+                await complete_operation(operation_id, result=payload)
+                return payload
+
+            failure_grace_sec = _int_env(
+                "WINEBOT_RECORDING_STOP_FAILURE_GRACE_SECONDS",
+                default=max(2, int(config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS)),
+                minimum=1,
+                maximum=max(2, int(config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS) * 4),
+            )
+            grace_iters = max(1, int(failure_grace_sec * 5))
+            for _ in range(grace_iters):
+                if not recorder_running(session_dir):
+                    break
+                await asyncio.sleep(0.2)
+
+            # Reconcile against process truth to avoid wedging state at "stopping"
+            # when stop command times out after signaling recorder shutdown.
+            if not recorder_running(session_dir):
+                recover_result = await run_async_command(
+                    [
+                        "python3",
+                        "-m",
+                        "automation.recorder",
+                        "recover",
+                        "--session-dir",
+                        session_dir,
+                    ],
+                    timeout=config.WINEBOT_TIMEOUT_RECORDING_STOP_SECONDS,
+                )
+                write_recorder_state(session_dir, RecorderState.IDLE.value)
+                retention_report = enforce_recording_retention(session_dir)
+                payload = _action_response(
+                    action="stop",
+                    status="stopped",
+                    recording_timeline_id=recording_timeline_id,
+                    session_dir=session_dir,
+                    operation_id=operation_id,
+                    converged=True,
+                    warning=(
+                        error_text
+                        or recover_result.get("stderr")
+                        or recover_result.get("error")
+                        or "Stop command failed but recorder was already down; state reconciled."
+                    ),
+                )
+                if retention_report.get("deleted"):
+                    payload["retention"] = retention_report
+                set_manual_pause_lock(session_dir, False)
+                write_recording_artifact_manifest(
+                    session_dir, generated_by_action="stop_reconciled"
+                )
+                emit_operation_timing(
+                    session_dir,
+                    feature="recording",
+                    capability="start_stop",
+                    feature_set="recording_and_artifacts",
+                    operation="api_stop",
+                    duration_ms=(time.perf_counter() - op_started) * 1000.0,
+                    result="ok",
+                    source="api",
+                    metric_name="recording.api_stop.latency",
+                    tags={"status": "stopped_reconciled"},
+                )
+                await complete_operation(operation_id, result=payload)
+                return payload
+
             await fail_operation(
-                operation_id, error=(result.get("stderr") or "Failed to stop recorder")
+                operation_id, error=(error_text or "Failed to stop recorder")
             )
             raise HTTPException(
-                status_code=500, detail=(result["stderr"] or "Failed to stop recorder")
+                status_code=500, detail=(error_text or "Failed to stop recorder")
             )
 
         # Keep API stop responsive; finalization can continue asynchronously.
@@ -403,6 +519,7 @@ async def stop_recording_endpoint():
             await complete_operation(operation_id, result=result)
             return result
 
+        retention_report = enforce_recording_retention(session_dir)
         result = _action_response(
             action="stop",
             status="stopped",
@@ -411,6 +528,8 @@ async def stop_recording_endpoint():
             operation_id=operation_id,
             converged=True,
         )
+        if retention_report.get("deleted"):
+            result["retention"] = retention_report
         set_manual_pause_lock(session_dir, False)
         write_recording_artifact_manifest(session_dir, generated_by_action="stop")
         emit_operation_timing(
@@ -500,6 +619,8 @@ async def pause_recording():
             "--session-dir",
             session_dir,
         ]
+        # Acquire manual pause lock before signaling pause to prevent monitor auto-resume races.
+        set_manual_pause_lock(session_dir, True)
         result = await run_async_command(
             cmd, timeout=config.WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS
         )
@@ -544,8 +665,8 @@ async def pause_recording():
             session_dir=session_dir,
             converged=True,
         )
-        set_manual_pause_lock(session_dir, True)
         if not paused:
+            set_manual_pause_lock(session_dir, False)
             raise HTTPException(
                 status_code=504,
                 detail="Recorder did not enter paused state before timeout",
