@@ -36,6 +36,27 @@ def click_coordinates(x_coord, y_coord, click_count, button, display_value):
     subprocess.run(cmd, check=True, env=env)
 
 
+def click_coordinates_in_window(window_id, rel_x, rel_y, click_count, button, display_value):
+    env = dict(os.environ)
+    env["DISPLAY"] = display_value
+    subprocess.run(
+        ["xdotool", "windowactivate", "--sync", str(window_id)],
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["xdotool", "mousemove", "--window", str(window_id), str(rel_x), str(rel_y)],
+        check=True,
+        env=env,
+    )
+    for _ in range(max(1, int(click_count))):
+        subprocess.run(
+            ["xdotool", "click", "--window", str(window_id), str(button)],
+            check=True,
+            env=env,
+        )
+
+
 def get_window_origin(window_id, display_value):
     env = dict(os.environ)
     env["DISPLAY"] = display_value
@@ -87,8 +108,20 @@ def find_and_click(
                 center_y = max_location[1] + template_height // 2
                 if window_id is not None:
                     origin_x, origin_y = get_window_origin(window_id, display_value)
-                    center_x += origin_x
-                    center_y += origin_y
+                    absolute_x = center_x + origin_x
+                    absolute_y = center_y + origin_y
+                    print(
+                        f"match={max_value:.3f} click=({absolute_x},{absolute_y}) rel=({center_x},{center_y}) window_id={window_id}"
+                    )
+                    click_coordinates_in_window(
+                        window_id=window_id,
+                        rel_x=center_x,
+                        rel_y=center_y,
+                        click_count=click_count,
+                        button=button,
+                        display_value=display_value,
+                    )
+                    return True
                 print(
                     f"match={max_value:.3f} click=({center_x},{center_y}) window_id={window_id or 'root'}"
                 )

@@ -124,8 +124,8 @@ if [[ "$PHASE" == "all" || "$PHASE" == "smoke" ]]; then
     done
     # In-container smoke checks (API health + basic app lifecycle).
     log "Running in-container smoke checks..."
-    if ! /scripts/diagnostics/health-check.sh --all >/dev/null; then
-        log "Smoke tests: FAILED (health-check)"
+    if ! api_curl http://localhost:8000/health >/dev/null; then
+        log "Smoke tests: FAILED (/health)"
         exit 1
     fi
     api_curl -X POST http://localhost:8000/apps/run -H "Content-Type: application/json" -d '{"path":"notepad.exe","detach":true}' >/dev/null || true

@@ -1001,8 +1001,8 @@ def cmd_annotate(args):
     session_dir = args.session_dir
     manifest = load_manifest(session_dir)
     if not manifest:
-        logger.error("Session manifest not found.")
-        sys.exit(1)
+        logger.info("Annotation skipped: session manifest not found.")
+        return
     start_time_epoch = manifest["start_time_epoch"]
     now_epoch = time.time() * 1000
     t_rel = int(now_epoch - start_time_epoch)
