@@ -9,6 +9,18 @@ MAX_LOG_MB="${MAX_LOG_MB:-512}"
 MAX_SESSION_MB="${MAX_SESSION_MB:-4096}"
 MAX_PID1_RSS_MB="${MAX_PID1_RSS_MB:-2048}"
 
+if [ -z "$API_TOKEN" ]; then
+  for token_file in /tmp/winebot_api_token /winebot-shared/winebot_api_token; do
+    if [ -f "$token_file" ]; then
+      token_value="$(tr -d '[:space:]' < "$token_file" || true)"
+      if [ -n "$token_value" ]; then
+        API_TOKEN="$token_value"
+        break
+      fi
+    fi
+  done
+fi
+
 api_get() {
   local path="$1"
   if [ -n "$API_TOKEN" ]; then
