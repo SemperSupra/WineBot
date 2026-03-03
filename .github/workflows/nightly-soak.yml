@@ -46,8 +46,8 @@ jobs:
         run: |
           docker compose -f compose/docker-compose.yml --profile interactive up -d winebot-interactive
 
-      - name: Wait for API readiness
-        run: scripts/ci/wait-for-health.sh http://localhost:8000/health 90 1
+      - name: Wait for service health
+        run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2
 
       - name: Run soak test
         env:
@@ -82,12 +82,17 @@ jobs:
 
       - name: Collect diagnostics on failure
         if: failure()
+        continue-on-error: true
         run: |
+          set +e
           mkdir -p artifacts/nightly-failure
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > artifacts/nightly-failure/collected-at-utc.txt
           docker compose -f compose/docker-compose.yml --profile interactive ps > artifacts/nightly-failure/compose-ps.txt || true
+          docker inspect "$(docker compose -f compose/docker-compose.yml --profile interactive ps -q winebot-interactive)" \
+            > artifacts/nightly-failure/container-inspect.json || true
           docker compose -f compose/docker-compose.yml logs > artifacts/nightly-failure/compose-logs.txt || true
           scripts/winebotctl diag bundle --max-mb 200 || true
-          cp -f logs/diagnostic_bundle_*.tar.gz artifacts/nightly-failure/ 2>/dev/null || true
+          find logs -maxdepth 1 -name 'diagnostic_bundle_*.tar.gz' -exec cp -f {} artifacts/nightly-failure/ \; 2>/dev/null || true
 
       - name: Upload failure diagnostics
         if: failure()
