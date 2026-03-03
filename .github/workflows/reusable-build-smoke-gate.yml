@@ -137,7 +137,7 @@ jobs:
         if: ${{ inputs.run_trivy }}
         run: |
           docker system df || true
-          docker image prune -af || true
+          # Keep the freshly built target image available for local Trivy scan.
           docker builder prune -af || true
           rm -rf /tmp/trivy-* || true
           df -h
