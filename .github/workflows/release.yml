@@ -63,129 +63,22 @@ jobs:
 
   smoke-test:
     needs: release-guards
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      BUILD_INTENT: test
-    steps:
-      - name: Maximize disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf /usr/share/swift
-          df -h
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Verify capability matrix references
-        run: python3 scripts/ci/verify-capability-matrix.py
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - name: Build image for tests
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: intent-test
-          build-args: |
-            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13' }}
-            BUILD_INTENT=test
-            VCS_REF=${{ github.sha }}
-            BUILD_DATE=${{ github.run_id }}
-            SOURCE_REPO=https://github.com/${{ github.repository }}
-          load: true
-          push: false
-          tags: winebot:verify-test-final-test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Capability Check - Environment & API
-        run: |
-          scripts/smoke-test.sh --phase health --no-build
-        timeout-minutes: 10
-
-      - name: Capability Check - Automation (AHK/AutoIt)
-        run: |
-          scripts/smoke-test.sh --phase smoke --no-build --skip-base-checks
-        timeout-minutes: 10
-
-      - name: Capability Check - Input Tracing & CV
-        run: |
-          scripts/smoke-test.sh --phase cv --no-build --skip-base-checks
-        timeout-minutes: 10
-
-      - name: Capability Check - Trace Verification
-        run: |
-          scripts/smoke-test.sh --phase trace --no-build --skip-base-checks
-        timeout-minutes: 10
-
-      - name: Capability Check - Recording & Artifacts
-        run: |
-          scripts/smoke-test.sh --phase recording --no-build --skip-base-checks
-        timeout-minutes: 10
-
-      - name: UI/UX Policy Enforcement
-        env:
-          WINEBOT_IMAGE_VERSION: verify-test-final
-        run: |
-          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
-            pytest -v /work/tests/e2e/test_ux_quality.py
-        timeout-minutes: 15
-
-      - name: Keyboard UX accessibility checks
-        env:
-          WINEBOT_IMAGE_VERSION: verify-test-final
-        run: |
-          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
-            pytest -v /work/tests/e2e/test_ux_keyboard_accessibility.py
-        timeout-minutes: 10
-
-      - name: Free disk before scan
-        run: |
-          docker system df || true
-          docker image prune -af || true
-          docker builder prune -af || true
-          rm -rf /tmp/trivy-* || true
-          df -h
-
-      - name: Prepare Trivy cache
-        run: mkdir -p "${GITHUB_WORKSPACE}/.cache/trivy"
-
-      - name: Scan image (Trivy)
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${GITHUB_WORKSPACE}/.cache/trivy:/root/.cache/trivy" \
-            aquasec/trivy:0.65.0 image \
-            --scanners vuln \
-            --format table \
-            --exit-code 1 \
-            --ignore-unfixed \
-            --severity CRITICAL,HIGH \
-            winebot:verify-test-final-test
-
-      - name: Validate REL forbidden patterns
-        run: |
-          scripts/ci/check-rel-forbidden.sh
-
-      - name: Validate REL-RUNNER forbidden patterns
-        run: |
-          TARGET_INTENT=rel-runner scripts/ci/check-rel-forbidden.sh
-
-      - name: Normalize artifact directory ownership
-        run: |
-          mkdir -p artifacts
-          sudo chown -R "$(id -u):$(id -g)" artifacts || true
-          chmod -R u+rwX artifacts || true
-
-      - name: Generate trust pack artifact
-        run: |
-          scripts/ci/generate-trust-pack.sh artifacts/trust-pack-release
-
-      - name: Upload trust pack
-        uses: actions/upload-artifact@v4
-        with:
-          name: trust-pack-release
-          path: artifacts/trust-pack-release
+    uses: ./.github/workflows/reusable-build-smoke-gate.yml
+    with:
+      image_target: intent-test
+      build_intent: test
+      image_tag: winebot:verify-test-final-test
+      image_version: verify-test-final
+      smoke_phases: health smoke cv trace recording
+      verify_capability_matrix: true
+      run_ui_policy: true
+      run_keyboard_accessibility: true
+      run_trivy: true
+      run_rel_forbidden: true
+      run_rel_runner_forbidden: true
+      generate_trust_pack: true
+      trust_pack_dir: artifacts/trust-pack-release
+      trust_pack_artifact_name: trust-pack-release
 
   publish:
     runs-on: ubuntu-latest

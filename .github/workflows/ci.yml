@@ -2,8 +2,16 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'archive/**'
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'archive/**'
 
 permissions:
   contents: read
@@ -12,12 +20,16 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pre-flight:
     name: Pre-flight (Lint & Unit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Verify capability matrix references
         run: python3 scripts/ci/verify-capability-matrix.py
       - name: Build lint runner
@@ -37,57 +49,13 @@ jobs:
   integration:
     name: Integration (Smoke Test)
     needs: pre-flight
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Maximize disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          df -h
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build SLIM image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          target: intent-slim
-          build-args: |
-            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13' }}
-            BUILD_INTENT=slim
-            VCS_REF=${{ github.sha }}
-            BUILD_DATE=${{ github.run_id }}
-            SOURCE_REPO=https://github.com/${{ github.repository }}
-          load: true
-          push: false
-          tags: winebot:slim
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke health phase (SLIM intent)
-        env:
-          BUILD_INTENT: slim
-        run: |
-          scripts/smoke-test.sh --phase health --skip-base-checks --no-build --cleanup
-
-      - name: Validate REL forbidden patterns
-        run: |
-          scripts/ci/check-rel-forbidden.sh
-
-      - name: Normalize artifact ownership
-        run: |
-          mkdir -p artifacts
-          sudo chown -R "$(id -u):$(id -g)" artifacts
-
-      - name: Generate trust pack artifact
-        run: |
-          scripts/ci/generate-trust-pack.sh artifacts/trust-pack
-
-      - name: Upload trust pack
-        uses: actions/upload-artifact@v4
-        with:
-          name: trust-pack-ci
-          path: artifacts/trust-pack
+    uses: ./.github/workflows/reusable-build-smoke-gate.yml
+    with:
+      image_target: intent-slim
+      build_intent: slim
+      image_tag: winebot:slim
+      smoke_phases: health
+      run_rel_forbidden: true
+      generate_trust_pack: true
+      trust_pack_dir: artifacts/trust-pack
+      trust_pack_artifact_name: trust-pack-ci

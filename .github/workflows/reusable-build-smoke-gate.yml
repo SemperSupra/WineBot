@@ -1,0 +1,187 @@
+name: Reusable Build Smoke Gate
+
+on:
+  workflow_call:
+    inputs:
+      image_target:
+        required: true
+        type: string
+      build_intent:
+        required: true
+        type: string
+      image_tag:
+        required: true
+        type: string
+      image_version:
+        required: false
+        type: string
+        default: ""
+      smoke_phases:
+        required: false
+        type: string
+        default: "health"
+      verify_capability_matrix:
+        required: false
+        type: boolean
+        default: false
+      run_ui_policy:
+        required: false
+        type: boolean
+        default: false
+      run_keyboard_accessibility:
+        required: false
+        type: boolean
+        default: false
+      run_trivy:
+        required: false
+        type: boolean
+        default: false
+      run_rel_forbidden:
+        required: false
+        type: boolean
+        default: false
+      run_rel_runner_forbidden:
+        required: false
+        type: boolean
+        default: false
+      generate_trust_pack:
+        required: false
+        type: boolean
+        default: false
+      trust_pack_dir:
+        required: false
+        type: string
+        default: artifacts/trust-pack
+      trust_pack_artifact_name:
+        required: false
+        type: string
+        default: trust-pack
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  build-smoke-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Maximize disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf /usr/share/swift
+          df -h
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Verify capability matrix references
+        if: ${{ inputs.verify_capability_matrix }}
+        run: python3 scripts/ci/verify-capability-matrix.py
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build image for validation
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ inputs.image_target }}
+          build-args: |
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13' }}
+            BUILD_INTENT=${{ inputs.build_intent }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.run_id }}
+            SOURCE_REPO=https://github.com/${{ github.repository }}
+          load: true
+          push: false
+          tags: ${{ inputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run smoke phases
+        if: ${{ inputs.smoke_phases != '' }}
+        run: |
+          read -r -a phases <<<"${{ inputs.smoke_phases }}"
+          for phase in "${phases[@]}"; do
+            echo "Running smoke phase: ${phase}"
+            if [ "$phase" = "health" ]; then
+              scripts/smoke-test.sh --phase health --no-build
+            else
+              scripts/smoke-test.sh --phase "$phase" --no-build --skip-base-checks
+            fi
+          done
+
+      - name: UI/UX Policy Enforcement
+        if: ${{ inputs.run_ui_policy }}
+        env:
+          WINEBOT_IMAGE_VERSION: ${{ inputs.image_version }}
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+            pytest -v /work/tests/e2e/test_ux_quality.py
+
+      - name: Keyboard UX accessibility checks
+        if: ${{ inputs.run_keyboard_accessibility }}
+        env:
+          WINEBOT_IMAGE_VERSION: ${{ inputs.image_version }}
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+            pytest -v /work/tests/e2e/test_ux_keyboard_accessibility.py
+
+      - name: Free disk before scan
+        if: ${{ inputs.run_trivy }}
+        run: |
+          docker system df || true
+          docker image prune -af || true
+          docker builder prune -af || true
+          rm -rf /tmp/trivy-* || true
+          df -h
+
+      - name: Prepare Trivy cache
+        if: ${{ inputs.run_trivy }}
+        run: mkdir -p "${GITHUB_WORKSPACE}/.cache/trivy"
+
+      - name: Scan image (Trivy)
+        if: ${{ inputs.run_trivy }}
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${GITHUB_WORKSPACE}/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:0.65.0 image \
+            --scanners vuln \
+            --format table \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            "${{ inputs.image_tag }}"
+
+      - name: Validate REL forbidden patterns
+        if: ${{ inputs.run_rel_forbidden }}
+        run: scripts/ci/check-rel-forbidden.sh
+
+      - name: Validate REL-RUNNER forbidden patterns
+        if: ${{ inputs.run_rel_runner_forbidden }}
+        run: TARGET_INTENT=rel-runner scripts/ci/check-rel-forbidden.sh
+
+      - name: Normalize artifact directory ownership
+        if: ${{ inputs.generate_trust_pack }}
+        run: |
+          mkdir -p artifacts
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+          chmod -R u+rwX artifacts || true
+
+      - name: Generate trust pack artifact
+        if: ${{ inputs.generate_trust_pack }}
+        run: scripts/ci/generate-trust-pack.sh "${{ inputs.trust_pack_dir }}"
+
+      - name: Upload trust pack
+        if: ${{ inputs.generate_trust_pack }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.trust_pack_artifact_name }}
+          path: ${{ inputs.trust_pack_dir }}

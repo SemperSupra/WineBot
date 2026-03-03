@@ -12,6 +12,10 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+concurrency:
+  group: nightly-soak-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   soak-test:
     runs-on: ubuntu-latest
@@ -42,6 +46,9 @@ jobs:
         run: |
           docker compose -f compose/docker-compose.yml --profile interactive up -d winebot-interactive
 
+      - name: Wait for API readiness
+        run: scripts/ci/wait-for-health.sh http://localhost:8000/health 90 1
+
       - name: Run soak test
         env:
           DURATION_SECONDS: 3600 # 60 minutes for nightly soak
@@ -49,25 +56,6 @@ jobs:
           MAX_LOG_MB: 1024
           MAX_SESSION_MB: 8192
         run: |
-          # Wait for API to be ready
-          ready=0
-          for i in {1..90}; do
-            if curl -s http://localhost:8000/health >/dev/null; then
-              echo "API is ready"
-              ready=1
-              break
-            fi
-            echo "Waiting for API..."
-            sleep 1
-          done
-
-          if [ "$ready" -ne 1 ]; then
-            echo "ERROR: API failed to become ready in allotted time"
-            docker compose -f compose/docker-compose.yml --profile interactive ps
-            docker compose -f compose/docker-compose.yml --profile interactive logs --tail 200 winebot-interactive || true
-            exit 1
-          fi
-
           # Run the soak diagnostic script inside the container
           docker compose -f compose/docker-compose.yml exec -T --user winebot \
             winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
@@ -95,9 +83,19 @@ jobs:
       - name: Collect diagnostics on failure
         if: failure()
         run: |
-          docker compose -f compose/docker-compose.yml logs > logs.txt
+          mkdir -p artifacts/nightly-failure
+          docker compose -f compose/docker-compose.yml --profile interactive ps > artifacts/nightly-failure/compose-ps.txt || true
+          docker compose -f compose/docker-compose.yml logs > artifacts/nightly-failure/compose-logs.txt || true
           scripts/winebotctl diag bundle --max-mb 200 || true
-          # Artifacts would be uploaded here in a real scenario
+          cp -f logs/diagnostic_bundle_*.tar.gz artifacts/nightly-failure/ 2>/dev/null || true
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-failure-diagnostics
+          path: artifacts/nightly-failure
+          if-no-files-found: warn
           
       - name: Stop services
         if: always()
