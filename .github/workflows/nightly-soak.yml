@@ -85,27 +85,29 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          mkdir -p artifacts/nightly-failure
-          date -u +"%Y-%m-%dT%H:%M:%SZ" > artifacts/nightly-failure/collected-at-utc.txt
-          docker compose -f compose/docker-compose.yml --profile interactive ps > artifacts/nightly-failure/compose-ps.txt || true
+          FAIL_DIR="${GITHUB_WORKSPACE}/artifacts/nightly-failure"
+          mkdir -p "${FAIL_DIR}"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > "${FAIL_DIR}/collected-at-utc.txt"
+          docker compose -f compose/docker-compose.yml --profile interactive ps > "${FAIL_DIR}/compose-ps.txt" || true
           docker inspect "$(docker compose -f compose/docker-compose.yml --profile interactive ps -q winebot-interactive)" \
-            > artifacts/nightly-failure/container-inspect.json || true
-          docker compose -f compose/docker-compose.yml logs > artifacts/nightly-failure/compose-logs.txt || true
+            > "${FAIL_DIR}/container-inspect.json" || true
+          docker compose -f compose/docker-compose.yml logs > "${FAIL_DIR}/compose-logs.txt" || true
           scripts/winebotctl diag bundle --max-mb 200 || true
-          find logs -maxdepth 1 -name 'diagnostic_bundle_*.tar.gz' -exec cp -f {} artifacts/nightly-failure/ \; 2>/dev/null || true
+          find logs -maxdepth 1 -name 'diagnostic_bundle_*.tar.gz' -exec cp -f {} "${FAIL_DIR}/" \; 2>/dev/null || true
 
       - name: Upload failure diagnostics
         if: failure()
         run: |
-          mkdir -p artifacts/nightly-failure
-          test -f artifacts/nightly-failure/collected-at-utc.txt || date -u +"%Y-%m-%dT%H:%M:%SZ" > artifacts/nightly-failure/collected-at-utc.txt
+          FAIL_DIR="${GITHUB_WORKSPACE}/artifacts/nightly-failure"
+          mkdir -p "${FAIL_DIR}"
+          test -f "${FAIL_DIR}/collected-at-utc.txt" || date -u +"%Y-%m-%dT%H:%M:%SZ" > "${FAIL_DIR}/collected-at-utc.txt"
 
       - name: Upload failure diagnostics artifact
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-failure-diagnostics
-          path: artifacts/nightly-failure
+          path: ${{ github.workspace }}/artifacts/nightly-failure
           if-no-files-found: warn
           
       - name: Stop services

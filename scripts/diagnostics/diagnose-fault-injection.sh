@@ -5,6 +5,18 @@ API_URL="${API_URL:-http://localhost:8000}"
 API_TOKEN="${API_TOKEN:-}"
 RECOVERY_TIMEOUT_SECONDS="${RECOVERY_TIMEOUT_SECONDS:-30}"
 
+if [ -z "$API_TOKEN" ]; then
+  for token_file in /tmp/winebot_api_token /winebot-shared/winebot_api_token; do
+    if [ -f "$token_file" ]; then
+      token_value="$(tr -d '[:space:]' < "$token_file" || true)"
+      if [ -n "$token_value" ]; then
+        API_TOKEN="$token_value"
+        break
+      fi
+    fi
+  done
+fi
+
 api_curl() {
   local headers=()
   if [ -n "$API_TOKEN" ]; then
