@@ -70,6 +70,12 @@ jobs:
           docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
             pytest -q /work/tests/test_profile_matrix.py /work/tests/test_config_guard.py
 
+      - name: Normalize artifact directory ownership
+        run: |
+          mkdir -p artifacts
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+          chmod -R u+rwX artifacts || true
+
       - name: Generate trust pack
         run: |
           scripts/ci/generate-trust-pack.sh artifacts/trust-pack-nightly
@@ -85,6 +91,9 @@ jobs:
         continue-on-error: true
         run: |
           set +e
+          mkdir -p artifacts
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+          chmod -R u+rwX artifacts || true
           FAIL_DIR="${GITHUB_WORKSPACE}/artifacts/nightly-failure"
           mkdir -p "${FAIL_DIR}"
           date -u +"%Y-%m-%dT%H:%M:%SZ" > "${FAIL_DIR}/collected-at-utc.txt"
