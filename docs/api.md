@@ -32,6 +32,10 @@ Examples:
 - `scripts/winebotctl sessions list`
 - `scripts/winebotctl recording start --session-root /artifacts/sessions`
 - `scripts/winebotctl api POST /sessions/suspend --json '{"shutdown_wine":true}'`
+- `scripts/winebotctl tail`
+- `scripts/winebotctl config profile set human-desktop`
+- `scripts/winebotctl lifecycle shutdown --yes`
+- `scripts/winebotctl input trace start --layer windows`
 
 Idempotent mode is supported (see `--idempotent` / `--no-idempotent`) so repeat invocations can safely reuse the same response when desired.
 
