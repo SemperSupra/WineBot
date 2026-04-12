@@ -20,6 +20,7 @@ Use this for project maintenance and verification:
 - `./scripts/wb test`: Run unit and E2E tests.
 - `./scripts/wb build [intent]`: Build local images (e.g., `slim`, `dev`, `rel`).
 - `./scripts/wb vuln`: Run vulnerability scans.
+- `./scripts/wb ctl`: Alias for scripts/winebotctl.
 
 ### 2. Operator Tool (`scripts/winebotctl`)
 Use this to automate applications:
@@ -27,6 +28,8 @@ Use this to automate applications:
 - `scripts/winebotctl screenshot`: Capture the virtual desktop.
 - `scripts/winebotctl apps run "/path/to/app.exe"`: Launch a Windows app.
 - `scripts/winebotctl input click 100 200`: Perform a mouse click.
+- `scripts/winebotctl lifecycle shutdown --yes`: Shutdown the instance.
+- `scripts/winebotctl config profile set human-desktop`: Set a profile.
 
 ## Configuration
 

@@ -26,7 +26,7 @@ WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 d
 | `docker/entrypoint.sh` | Container boot logic. Handles Xvfb, Openbox, Wine init. | `Xvfb`, `wineserver`, `tint2` |
 | `docker/openbox/rc.xml` | Window Manager config. Controls input focus/decorations. | `<applications>`, `<mouse>` |
 | `scripts/bin/` | Primary user-facing tools (`winebotctl`, `run-app.sh`). | |
-| `scripts/diagnostics/` | System validation suite (`diagnose-master.sh`, `health-check.sh`). | `Environment Health` |
+| `scripts/diagnostics/` | System validation suite (`diagnose-master.sh`, `health-check.sh`). | `diagnose-master.sh` |
 | `scripts/setup/` | Installation and fix logic (`install-theme.sh`, `fix-wine-input.sh`). | |
 | `automation/bin/` | Standalone automation tools (`x11.sh`, `screenshot.sh`). | |
 | `automation/examples/` | Demo and verification scripts (`notepad_create_and_verify.py`). | |
@@ -68,6 +68,12 @@ scripts/winebotctl config set KEY VALUE
 
 # 2. Apply (Restarts container)
 scripts/winebotctl config apply
+```
+
+### How to trace input?
+```bash
+scripts/winebotctl input trace start --layer windows
+scripts/winebotctl input trace events --source client --limit 50
 ```
 
 ### How to debug input issues?
