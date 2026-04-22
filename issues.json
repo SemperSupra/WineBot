@@ -1,0 +1,157 @@
+[
+  {
+    "number": 46,
+    "title": "Config/ops: migrate runtime state paths to XDG conventions with compatibility",
+    "body": "## Summary\nAdopt standard runtime/state path conventions for human and agent accessibility, while preserving compatibility.\n\n## Scope\n- Move runtime pointer/state files from fixed `/tmp/winebot_*` locations to XDG-aligned defaults:\n  - `XDG_RUNTIME_DIR` for volatile runtime pointers\n  - `XDG_STATE_HOME` for persistent state where appropriate\n- Keep explicit env overrides for all paths\n- Add migration/compat fallback from legacy paths\n- Update docs and diagnostics to show effective paths\n\n## Acceptance Criteria\n- Runtime/state path locations are discoverable and configurable\n- Backward compatibility with existing `/tmp/winebot_*` deployments is maintained\n- Tests cover legacy fallback and XDG paths\n"
+  },
+  {
+    "number": 45,
+    "title": "Invariant hardening (deferred): durable broker state + CAS transitions",
+    "body": "## Summary\nAdvanced invariant hardening for control/session state beyond current lock-based guarantees.\n\n## Deferred Scope (grouped)\n1. Persist broker control snapshot (`control_state.json`) on major transitions and reload at startup.\n2. Add generation-based CAS semantics for session/control state writes to prevent stale-writer updates.\n\n## Why deferred\n- Requires migration/versioning decisions for persisted broker state.\n- Requires careful API compatibility and broader refactor of state update paths.\n\n## Acceptance Criteria\n- Restart-safe broker state restoration is deterministic and tested.\n- CAS write conflicts are detected and surfaced with explicit errors.\n- Transition tests cover stale update rejection and retry paths.\n"
+  },
+  {
+    "number": 43,
+    "title": "Conformance: add OpenAPI property-based fuzz tests",
+    "body": "## Summary\nAdd a conformance stage that runs property-based API tests generated from the OpenAPI document.\n\n## Scope\n- Add schemathesis as a pinned test dependency\n- Add deterministic profile for CI (seeded, bounded examples)\n- Exercise authenticated and unauthenticated endpoints with explicit allow/deny map\n- Export failing seeds/artifacts for reproducibility\n\n## Acceptance Criteria\n- CI job runs on PRs with bounded runtime\n- Failures include reproducible seed and endpoint\n- Existing API contract tests remain green\n"
+  },
+  {
+    "number": 42,
+    "title": "Conformance: add DNS-SD/mDNS integration tests on real network",
+    "body": "## Summary\nCurrent tests validate mDNS contracts statically/unit-level. Add integration conformance checks against real multicast behavior.\n\n## Scope\n- Add integration test harness (nightly or self-hosted runner) for RFC 6762/6763 behaviors\n- Verify service registration, browse, TTL update, and graceful withdrawal\n- Add collision/duplicate-name behavior checks\n- Capture packet/log artifacts for failures\n\n## Acceptance Criteria\n- Automated job verifies registration/discovery end-to-end\n- Test artifacts include discovery logs and failure diagnostics\n- Flaky test budget + retry policy documented"
+  },
+  {
+    "number": 41,
+    "title": "Recording Phase 2: Markerized Timeline and markers API",
+    "body": "Context: Phase 1 added recording timeline IDs and artifact manifests.\\n\\nScope:\\n- Emit explicit markers for start, pause, resume, stop.\\n- Emit markers for control-mode transitions and human/agent handoff events.\\n- Persist markers to recording_markers.jsonl in the active session.\\n- Add GET /recording/markers with filters for session_id, session_dir, timeline_id, and limit.\\n- Include recording_timeline_id and both wall-clock plus monotonic timestamps per marker.\\n\\nAcceptance criteria:\\n- Unit and API contract tests cover marker emission and retrieval.\\n- E2E verifies marker order and correlation with UI and API transitions.\\n- Docs updated in docs/api.md and docs/recording.md."
+  },
+  {
+    "number": 40,
+    "title": "Recording Phase 5: Timeline-Correlated Playback and Diagnostic UX",
+    "body": "## Context\\nUsers/agents need fast navigation from incidents to precise timeline context.\\n\\n## Scope\\nAdd a lightweight timeline viewer in dashboard UX tied to recording markers and operations.\\n\\n## Requirements\\n- Add timeline panel showing markers and correlated operation IDs.\\n- Provide jump-to-time affordances for recorded artifacts.\\n- Show clear correlation between API operations, marker events, and artifact files.\\n\\n## Acceptance Criteria\\n- E2E covers marker rendering and interaction basics.\\n- UX remains usable in both desktop/mobile dashboard modes.\\n- Documentation updated with operator workflow examples."
+  },
+  {
+    "number": 35,
+    "title": "Recorder: checkpointed finalization and recovery for interrupted long-running post-processing",
+    "body": "## Summary\nImplement checkpointed/fault-tolerant recorder finalization so long-running post-processing can resume after interruption.\n\n## Problem\nRecorder finalization currently runs as a one-shot chain (events load/adjust, subtitles generation, concat, mux). If interrupted, reruns may repeat expensive work and can leave partially generated artifacts.\n\n## Scope\n- Add explicit phase checkpoints for finalization stages.\n- Persist checkpoint state in session metadata.\n- Add recovery command/API path that resumes from last completed phase.\n- Ensure idempotent behavior for repeated recovery attempts.\n- Emit operation progress/heartbeat per phase.\n\n## Acceptance Criteria\n- Interruption during finalization can be resumed without restarting from scratch.\n- Recovery operation is idempotent.\n- Progress is visible through operation status endpoints.\n- Tests cover interruption/recovery path and phase idempotency.\n\n## Notes\nDeferred from temporal-correctness Wave 1 implementation.\n"
+  },
+  {
+    "number": 34,
+    "title": "Automation: detached job TTL, ownership binding, and cancellation controls",
+    "body": "## Summary\nAdd lifecycle controls for detached automation jobs (TTL, ownership/session binding, cancellation).\n\n## Problem\nDetached jobs are bounded by process-store capacity, but they currently lack explicit TTL/cancel semantics and first-class status ownership controls.\n\n## Scope\n- Add optional TTL for detached jobs.\n- Bind jobs to active session/controller context.\n- Add cancel endpoint and terminal status reporting.\n- Expose detached job state in operations/status APIs.\n- Add policy checks to avoid cross-session orphan control.\n\n## Acceptance Criteria\n- Detached jobs can be enumerated and cancelled safely.\n- Expired jobs are terminated/reaped with clear status.\n- Session transitions cannot leave uncontrolled detached ownership.\n- Tests validate TTL expiry, cancel, and ownership enforcement.\n\n## Notes\nDeferred from temporal-correctness Wave 1 implementation.\n"
+  },
+  {
+    "number": 32,
+    "title": "Resource control: make UI polling/backoff limits configurable",
+    "body": "## Summary\nMake dashboard polling/backoff constants runtime-configurable with safe defaults.\n\n## Problem\nUI uses fixed constants for polling/backoff windows. These are reasonable defaults but not tunable for high-latency or constrained deployments.\n\n## Scope\n- Add configuration delivery path (e.g., handshake/config endpoint) for UI timing defaults.\n- Make these configurable with validated ranges:\n  - base poll delay\n  - backoff max elapsed\n  - backoff max step delay\n  - failure threshold before entering backoff\n- Preserve current defaults if config is absent.\n- Add UI tests for applied config behavior.\n\n## Acceptance criteria\n- Operators can tune UI polling/backoff without editing source.\n- Defaults remain unchanged when no overrides provided.\n- UI remains stable under extreme but valid settings.\n"
+  },
+  {
+    "number": 31,
+    "title": "Resource control: residual backend timing constants configurable",
+    "body": "## Summary\nMake backend hardcoded runtime timing constants configurable to better control resource behavior across environments.\n\n## Problem\nSeveral endpoint and worker paths still use inline fixed values (timeouts/sleeps), which are arbitrary and not centrally tunable for different hosts/load profiles.\n\n## Scope\n- Inventory hardcoded timing values in API/router/monitor paths.\n- Add validated env/config knobs for selected high-impact constants.\n- Keep safe defaults equivalent to current behavior.\n- Add tests that verify overrides are applied.\n\n## Candidate areas\n- command invocation endpoint timeouts\n- probe/retry sleeps in input/automation routes\n- stream and polling sleep intervals where server-side tuning is appropriate\n\n## Acceptance criteria\n- No high-impact arbitrary timing constants remain hardcoded without configuration path.\n- Defaults preserve current behavior.\n- Regression tests validate override semantics.\n"
+  },
+  {
+    "number": 29,
+    "title": "State correctness: unexpected-transition telemetry and anomaly alerts",
+    "body": "## Summary\nAdd unexpected-transition telemetry and alert signals for lifecycle/control/UI state transitions.\n\n## Why\nWhen transitions occur outside expected paths, operators need first-class observability to diagnose correctness issues quickly.\n\n## Scope\n- Emit structured \"unexpected_transition\" events with:\n  - previous state, requested transition, resulting state\n  - API endpoint/method source\n  - session_id and instance mode context\n- Add counters/metrics for transition anomalies.\n- Expose recent anomalies in diagnostics bundle and/or `/lifecycle/events` summaries.\n- Add tests covering anomaly emission on blocked/invalid transitions.\n\n## Acceptance Criteria\n- Unexpected transitions are observable via logs/metrics.\n- Diagnostics surfaces anomaly counts and recent events.\n- Tests verify emission on representative invalid transition paths.\n"
+  },
+  {
+    "number": 28,
+    "title": "State correctness: add composed lifecycle transition-table invariant tests",
+    "body": "## Summary\nAdd explicit composed state-machine invariant tests across system lifecycle, API lifecycle, and UI lifecycle.\n\n## Why\nCurrent tests validate many endpoints and idempotent paths, but there is no single transition-table test suite that codifies allowed/blocked transitions across composed states.\n\n## Scope\n- Define transition table for:\n  - Instance states (`starting`, `running`, `shutting_down`, `powering_off`, `completed`, `failed`)\n  - Session states (`active`, `suspended`, `completed`)\n  - API availability states (`running`, `stopping`, `down`)\n  - UI polling states (`normal`, `backoff`, `stopped`)\n- Add tests that validate expected outputs for key transition sequences (including repeated/idempotent calls).\n- Add negative tests for forbidden transitions.\n\n## Acceptance Criteria\n- Transition table is documented and referenced by tests.\n- Tests fail on any undocumented transition behavior regression.\n- CI runs the suite in pre-flight or deterministic integration stage.\n"
+  },
+  {
+    "number": 26,
+    "title": "Correctness hardening: enable mypy untyped-body checks for discovery paths",
+    "body": "## Summary\nTrack deferred correctness work for Group C (static enforcement).\n\n## Problem\nMypy currently skips bodies of untyped functions in discovery paths, reducing static correctness guarantees in concurrency/network code.\n\n## Scope\n- Enable mypy --check-untyped-defs for api/core/discovery.py.\n- Add missing annotations and small refactors required to pass strict body checks.\n- Evaluate phased expansion to other modules where untyped bodies remain.\n\n## Acceptance criteria\n- Discovery module passes mypy with untyped-body checking enabled.\n- CI includes this check without materially increasing runtime.\n- Follow-up plan documented for broader adoption.\n\n## Notes\nDeferred to keep runtime behavior changes and static-typing expansion decoupled.\n"
+  },
+  {
+    "number": 25,
+    "title": "Correctness hardening: explicit write-failure surfacing + atomic log cap under contention",
+    "body": "## Summary\nTrack deferred correctness work for Group B.\n\n## Problem\nSeveral file/log write paths intentionally swallow exceptions, which can mask data-loss conditions. Log-size capping is checked before append, but not atomically under lock, so concurrent writers can overshoot configured caps and fail silently.\n\n## Scope\n- Replace silent exception swallowing in critical write paths with structured error surfacing (API error, lifecycle event, or error telemetry), while retaining best-effort semantics only for non-critical telemetry.\n- Make append_trace_event cap enforcement atomic under file lock.\n- Add dropped-event accounting (counter and/or metric) when cap reached.\n- Add concurrency tests for append/cap correctness under parallel writers.\n\n## Acceptance criteria\n- No critical write path silently discards failures without a surfaced signal.\n- Log caps are enforced deterministically under concurrent writes.\n- Tests cover contention path and dropped-event reporting.\n\n## Notes\nDeferred intentionally to keep current change focused on Group A race/idempotency fixes.\n"
+  },
+  {
+    "number": 23,
+    "title": "[Correctness] Bound memory usage in /recording/perf/summary",
+    "body": "## Problem\n`GET /recording/perf/summary` currently accumulates all metric samples in memory per metric before computing percentiles. On large sessions this can cause high memory use and long response times.\n\n## Why this matters\n- Unbounded per-request memory can degrade API stability under heavy telemetry volume.\n- Diagnostics endpoint behavior becomes less predictable as artifact size grows.\n\n## Proposed fix\n1. Replace full in-memory accumulation with bounded streaming aggregation.\n2. Use fixed-size histograms or quantile sketches (for example t-digest or reservoir approach) to estimate p50/p90/p95/p99 with bounded memory.\n3. Optionally add server-side limits and pagination controls for very large logs.\n4. Add tests with large synthetic metric logs to validate memory remains bounded and outputs are stable.\n\n## Acceptance criteria\n- Summary endpoint memory use remains bounded relative to configured sketch or bucket size.\n- Percentile outputs are deterministic and within documented error tolerance.\n- Existing API contract remains compatible.\n"
+  },
+  {
+    "number": 22,
+    "title": "[Correctness] Use context-local session attribution for process telemetry",
+    "body": "## Problem\n`api/utils/process.py` emits command-substrate telemetry by reading `WINEBOT_SESSION_DIR` from process environment. In concurrent request/task flows, env-based attribution can drift and write metrics to the wrong session artifact path.\n\n## Why this matters\n- Misattributed telemetry reduces trust in per-session diagnostics and performance analysis.\n- Race-prone attribution can hide regressions or create false positives in automation traces.\n\n## Proposed fix\n1. Introduce request/task-scoped session context using `contextvars.ContextVar` (for example, `current_session_dir`).\n2. Set and reset context explicitly at API and session lifecycle boundaries.\n3. Update process telemetry path resolution to prefer contextvar over env fallback.\n4. Add regression tests covering concurrent operations with different session IDs to verify no cross-session bleed.\n\n## Acceptance criteria\n- Command telemetry events are attributed to active request/session context under concurrency.\n- Existing behavior remains backward compatible when no context is set.\n- Tests fail without the fix and pass with it.\n"
+  },
+  {
+    "number": 20,
+    "title": "Telemetry Coverage: Interactive Stack (Openbox, x11vnc, noVNC/websockify)",
+    "body": "Context\n- Interactive mode reliability depends on multiple UI stack components.\n\nGap\n- Limited metrics on reconnect churn, attach latency, and process instability in interactive components.\n\nScope\n- Add component-level uptime/restart/reconnect telemetry for openbox, x11vnc, websockify/novnc proxy.\n- Track interactive attach/connect latency and failure classes.\n- Expose interactive stack summary in lifecycle and telemetry reports.\n\nAcceptance Criteria\n- Metrics identify unstable components and reconnect storms.\n- Interactive attach latency visible in p95/p99 trend views.\n- Tests cover status/latency emission paths in interactive mode."
+  },
+  {
+    "number": 19,
+    "title": "Telemetry Coverage: Session Artifact I/O and Retention Costs",
+    "body": "Context\n- Session logs/videos/events are major disk and latency contributors.\n\nGap\n- Artifact write amplification and retention cleanup costs are not fully quantified by feature.\n\nScope\n- Instrument artifact write sizes/latencies for recording outputs, trace logs, and lifecycle logs.\n- Add telemetry for cleanup/retention passes (duration, files removed, bytes reclaimed).\n- Emit warnings for high write throughput and near-threshold storage pressure.\n\nAcceptance Criteria\n- Per-session and per-capability I/O metrics available in summaries.\n- Retention operations visible with before/after storage deltas.\n- Tests verify telemetry emission without changing retention semantics."
+  },
+  {
+    "number": 18,
+    "title": "Telemetry Coverage: API Auth and Token Path",
+    "body": "Context\n- Control-plane auth reliability and cost are not yet explicitly profiled.\n\nGap\n- No dedicated telemetry on auth checks, rejection classes, and token validation overhead.\n\nScope\n- Add auth middleware timing metrics and response-class counters (2xx, 4xx auth, 5xx).\n- Tag by path family and auth-required versus auth-exempt route.\n- Add counters for invalid/missing token and version-negotiation rejection paths.\n\nAcceptance Criteria\n- Metrics are emitted with feature=security and capability=auth_path.\n- Can filter by route family and result class.\n- Tests cover emission on success and failure paths."
+  },
+  {
+    "number": 17,
+    "title": "Telemetry Coverage: Screenshot + Window Inspection Performance",
+    "body": "Context\n- Current telemetry covers recording, lifecycle, control, input tracing, and automation execution paths.\n\nGap\n- screenshot and inspect window endpoints are frequent diagnostic paths and can become bottlenecks under scale.\n\nScope\n- Add operation timing and payload-size telemetry for screenshot capture and metadata sidecar write.\n- Add operation timing plus complexity tags for inspect (include_controls, max_controls, returned controls count).\n- Emit error-class tags for failed captures/inspection parses.\n\nAcceptance Criteria\n- Metrics are targetable via feature/capability filters.\n- Perf summaries include screenshot/inspect metrics with p95/p99 visibility.\n- Tests validate telemetry emission and no behavior regression."
+  },
+  {
+    "number": 16,
+    "title": "Telemetry Phase 5: Trend Dashboards and Optimization Workflow",
+    "body": "Context\\n- Telemetry and summary data exist, but long-horizon trend visibility and optimization workflows are not yet unified.\\n\\nGoal\\n- Provide operator/engineering trend visibility and actionable optimization loops over time.\\n\\nScope\\n- Add trend rollups (daily/weekly) by feature/capability/feature_set and build metadata.\\n- Produce Top Regressions/Top Improvements reports for recent windows.\\n- Add dashboard-ready export format (JSON/CSV) for Grafana/BI ingestion.\\n- Document optimization playbook: detect, triage, validate, tune, and verify.\\n\\nAcceptance Criteria\\n- Rollup job produces deterministic trend outputs with retention controls.\\n- Reports identify largest p95/p99, error-rate, and resource regressions by capability.\\n- Operators can query trends by runtime profile/build intent/control mode.\\n- Docs include examples and recommended review cadence.\\n\\nOut of Scope\\n- Vendor-specific hosted observability setup details."
+  },
+  {
+    "number": 15,
+    "title": "Telemetry Phase 4: CI Baselines and Performance Regression Gates",
+    "body": "Context\\n- Telemetry events now include feature/capability metadata in session logs.\\n\\nGoal\\n- Convert telemetry into enforceable CI quality gates for performance regressions.\\n\\nScope\\n- Add benchmark harness jobs for critical capabilities (recording pause/resume, control grant/renew, input click, automation run).\\n- Store/update baseline artifacts keyed by branch/release/build-intent/profile.\\n- Implement threshold policy (warn/fail) by metric and percentile.\\n- Add CI report artifact summarizing regressions and improvements.\\n\\nAcceptance Criteria\\n- CI emits a perf comparison report on PRs affecting instrumented paths.\\n- Configurable thresholds support per-capability policy.\\n- Gate can be configured as warn-only or fail-on-regression.\\n- Documentation includes baseline maintenance workflow.\\n\\nOut of Scope\\n- Production dashboarding and alert pipelines (tracked separately)."
+  },
+  {
+    "number": 14,
+    "title": "Telemetry Phase 3: Runtime Telemetry Config + Summary/Regression APIs",
+    "body": "Context\\n- Phase 1-2 telemetry instrumentation is in place with feature/capability/feature-set targeting via env vars.\\n\\nGoal\\n- Add runtime telemetry control and richer analysis APIs without restarts.\\n\\nScope\\n- Add  and  for temporary runtime overrides with optional TTL/expiry.\\n- Add  for grouped percentile/throughput/error summaries (by feature/capability/feature_set/operation).\\n- Add  for recent-window deltas vs baseline window.\\n- Add guardrails: auth, schema validation, safe defaults, bounded query windows.\\n\\nAcceptance Criteria\\n- Runtime config can narrow telemetry to specific feature/capability sets and auto-expire by TTL.\\n- Summary endpoint supports p50/p90/p95/p99 + count + error_rate over a selectable window.\\n- Regression endpoint returns top N regressions with deterministic ranking fields.\\n- Unit/integration tests cover config expiry, filtering, and summary/regression calculations.\\n\\nOut of Scope\\n- External TSDB integration and dashboards (tracked separately)."
+  },
+  {
+    "number": 13,
+    "title": "Expand Human-Visible Agent-Control Indicators Beyond Dashboard",
+    "body": "## Context\nWe now show an explicit in-dashboard agent control banner (`#agent-control-banner`) when the agent holds control.\n\nTo fully meet operator expectations, human-visible ownership indicators should appear across all primary interaction surfaces, not only the web dashboard.\n\n## Problem\nA human can still interact with the system through surfaces where agent ownership is not visually obvious (e.g., Openbox desktop/chrome, optional overlays, logs/status tools). This creates a safety/usability gap even though control arbitration is enforced.\n\n## Proposal\nImplement a cross-surface agent-control indicator strategy for interactive sessions:\n\n1. Openbox/desktop indicator\n- Add a persistent on-screen visual marker when `control_mode=AGENT`.\n- Marker should remain visible even if dashboard tab is closed.\n\n2. Status surfaces\n- Expose control ownership in operator-facing status commands and diagnostics (`scripts/winebotctl`, diagnostics summaries).\n- Include `active_controller`, `effective_control_mode`, and session/instance policy modes.\n\n3. UX policy alignment\n- Define minimum visibility standards in policy docs (contrast, placement, behavior on reconnect/failure).\n- Add automated tests ensuring indicator presence/absence for USER vs AGENT modes.\n\n## Acceptance Criteria\n- In interactive mode, when agent control is active, a clear visual ownership indicator is visible without needing the dashboard page.\n- Indicator disappears promptly when control returns to USER.\n- `scripts/winebotctl`/diagnostic output includes current active controller and policy modes.\n- Regression tests cover ownership indicator transitions and non-agent state.\n\n## Notes\n- Keep human priority semantics unchanged (human can always interrupt).\n- Avoid introducing new destructive actions; this is observability/UX safety hardening.\n"
+  },
+  {
+    "number": 12,
+    "title": "[Correctness] Formalize Configuration Schema Versioning",
+    "body": "Implement 'WINEBOT_CONFIG_SCHEMA_VERSION' in 'winebot.env' to ensure environment variable compatibility.\n\nGoal:\n- The API should validate that the provided environment variables match the expected schema of the current build.\n- Refuse to boot with an informative error if critical configuration changes are detected (e.g., renamed variables)."
+  },
+  {
+    "number": 11,
+    "title": "[Accessibility] Implement Automated A11y Audits for Dashboard",
+    "body": "Integrate 'axe-core' or Google Lighthouse into the 'test-runner' container to enforce WCAG 2.1 AA compliance.\n\nGoals:\n- Automated A11y scoring in the CI pipeline.\n- Prevent regressions in keyboard navigation and ARIA labeling.\n- Target minimum score of 90/100 for release builds."
+  },
+  {
+    "number": 10,
+    "title": "[Test] Implement Network Partition & Latency Simulation",
+    "body": "Add chaos testing to the WineBot CI suite to verify system resilience under network stress. \n\nGoals:\n- Use 'pumba' or 'toxics' to simulate transient network loss between the API and mDNS discovery.\n- Verify that the Input Broker and Dashboard handle reconnections gracefully without orphaning sessions."
+  },
+  {
+    "number": 9,
+    "title": "[Feature] Implement Resource Quotas per App",
+    "body": "Implement the ability to enforce CPU and Memory limits on specific Windows processes using Linux cgroups via the API. \n\nGoals:\n- Prevent a single rogue Windows app from crashing the container.\n- Configurable limits via the 'POST /apps/run' payload."
+  },
+  {
+    "number": 8,
+    "title": "[Feature] Implement Native Wine Event Pipe",
+    "body": "Replace current polling-based input tracing (AHK/xinput) with a native C-hook in Wine's 'user32.dll' or 'winex11.drv'. \n\nBenefits:\n- Sub-millisecond event reporting.\n- Removal of AutoHotkey/AutoIt overhead.\n- True synchronous event capture."
+  },
+  {
+    "number": 7,
+    "title": "[Feature] Implement Stage 2: Instrumented Wine Core Build",
+    "body": "Following Stage 1 (Slim Intent), implement a custom Wine build with deep instrumentation for WineBot. \n\nGoals:\n- Structured JSON logging from Wine internals.\n- Direct synchronization hooks for input processing state.\n- Embedded tracing to remove AHK/AutoIt overhead.\n- Performance stripping of unused Wine modules.\n\nReferences: Stage 1 completed in v0.9.6."
+  },
+  {
+    "number": 5,
+    "title": "[Optimization] Investigate and Implement a Stripped Custom Wine Build",
+    "body": "Deferred in favor of the more comprehensive Stage 2 Instrumented Wine Core Build (Issue #7)."
+  }
+]
