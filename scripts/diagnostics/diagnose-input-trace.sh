@@ -1528,16 +1528,25 @@ except Exception:
 fi
 
 if [ "$SKIP_CLIENT" -eq 0 ] && layer_enabled "client"; then
-  log "Test 4: Client trace event (noVNC UI)"
+  log "Test 4: Client trace event (noVNC UI via Playwright)"
   t0=$(now_ms)
-  api_post_json "/input/client/event" '{"event":"client_click","origin":"user","tool":"novnc","x":120,"y":140,"button":1}' >/dev/null || true
-  sleep 0.2
+
+  if python3 -c "import playwright" 2>/dev/null; then
+    log "  Injecting physical click via Playwright..."
+    API_URL="$API_URL" python3 scripts/diagnostics/playwright-client-trace.py >/dev/null 2>&1 || true
+    sleep 0.2
+  else
+    log "  Playwright missing. Falling back to mocked API injection."
+    api_post_json "/input/client/event" '{"event":"client_click","origin":"user","tool":"novnc","x":120,"y":140,"button":1}' >/dev/null || true
+    sleep 0.2
+  fi
+
   client_ok="$(trace_has_event "client" "client_click" "$t0")"
   log "  trace client=$client_ok"
   if [ "$client_ok" = "0" ]; then
     log "  DIAG: client trace missing. Check client trace toggle/UI wiring."
   else
-    log "  DIAG: client trace event recorded (does not validate injection)."
+    log "  DIAG: client trace event recorded (validates true frontend injection if Playwright was used)."
   fi
 fi
 
@@ -1619,9 +1628,32 @@ def vnc_probe(host, port, password):
         time.sleep(0.1)
         sock.sendall(struct.pack(">BBHH", 5, 0, 300, 300))
         time.sleep(0.1)
-        # Key 'a'
-        sock.sendall(struct.pack(">BBHI", 4, 1, 0, 97))
-        sock.sendall(struct.pack(">BBHI", 4, 0, 0, 97))
+
+        # Drag to 320, 320
+        sock.sendall(struct.pack(">BBHH", 5, 1, 300, 300)) # btn down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHH", 5, 1, 310, 310)) # move while down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHH", 5, 1, 320, 320)) # move while down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHH", 5, 0, 320, 320)) # btn up
+        time.sleep(0.1)
+
+        # Mouse Wheel (Vertical scroll down: btn 5)
+        # RFB mask: Left=1, Middle=2, Right=4, WheelUp=8, WheelDown=16
+        sock.sendall(struct.pack(">BBHH", 5, 16, 320, 320)) # Wheel btn down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHH", 5, 0, 320, 320))  # Wheel btn up
+        time.sleep(0.1)
+
+        # Modifier Chord: Shift (0xffe1) + Key 'a' (97)
+        sock.sendall(struct.pack(">BBHI", 4, 1, 0, 0xffe1)) # Shift down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHI", 4, 1, 0, 97))     # 'a' down
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHI", 4, 0, 0, 97))     # 'a' up
+        time.sleep(0.05)
+        sock.sendall(struct.pack(">BBHI", 4, 0, 0, 0xffe1)) # Shift up
         return True
     finally: sock.close()
 
@@ -1650,7 +1682,7 @@ PY
   fi
   win_ok="0"
   if [ "$SKIP_WINDOWS" -eq 0 ] && layer_enabled "windows"; then
-    win_ok="$(trace_has_event "windows" "mouse_down,mouse_up,key_down,key_up" "$t0")"
+    win_ok="$(trace_has_event "windows" "mouse_down,mouse_up,mouse_wheel,key_down,key_up" "$t0")"
   fi
   hook_ok="0"
   if [ "$WINE_HOOK_OBSERVER" = "1" ] && [ -n "${wine_hook_observer_log:-}" ] && [ -f "$wine_hook_observer_log" ]; then
