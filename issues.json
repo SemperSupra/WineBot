@@ -1,5 +1,15 @@
 [
   {
+    "number": 48,
+    "title": "Conformance: Viewport scaling and UI occlusion input tests",
+    "body": "## Summary\nAdd e2e tests to verify inputs map correctly when the noVNC canvas is scaled, and ensure dashboard UI overlays do not swallow clicks.\n\n## Scope\n- Add Playwright tests to simulate clicks on the noVNC canvas at various viewport scaling ratios.\n- Ensure coordinate mapping remains accurate and inputs are routed to Wine successfully despite scaling.\n- Add tests verifying that interactive/non-interactive UI overlays (like toasts or control panels) do not unintentionally block/occlude pointer events meant for the canvas.\n\n## Acceptance Criteria\n- Tests cover 1:1 and scaled viewports.\n- Test suite asserts successful click delivery through the frontend pipeline in these scenarios.\n- Conformance policy for UI occlusion is verified."
+  },
+  {
+    "number": 47,
+    "title": "Performance: Integrate latency thresholds into input trace bisect",
+    "body": "## Summary\nIntegrate latency thresholds from `analyze-trace-latency.py` into `diagnose-input-trace.sh` as an automated performance gating test.\n\n## Scope\n- Modify `diagnose-input-trace.sh` to extract and evaluate latency between network, X11, and Windows input trace layers.\n- Fail the diagnostic if event propagation from network -> windows exceeds a specified threshold (e.g., >150ms).\n- Provide configurability for the threshold.\n\n## Acceptance Criteria\n- Input trace diagnostic script correctly detects latency regressions.\n- Exceeding the threshold reliably fails the diagnostic run with clear messaging."
+  },
+  {
     "number": 46,
     "title": "Config/ops: migrate runtime state paths to XDG conventions with compatibility",
     "body": "## Summary\nAdopt standard runtime/state path conventions for human and agent accessibility, while preserving compatibility.\n\n## Scope\n- Move runtime pointer/state files from fixed `/tmp/winebot_*` locations to XDG-aligned defaults:\n  - `XDG_RUNTIME_DIR` for volatile runtime pointers\n  - `XDG_STATE_HOME` for persistent state where appropriate\n- Keep explicit env overrides for all paths\n- Add migration/compat fallback from legacy paths\n- Update docs and diagnostics to show effective paths\n\n## Acceptance Criteria\n- Runtime/state path locations are discoverable and configurable\n- Backward compatibility with existing `/tmp/winebot_*` deployments is maintained\n- Tests cover legacy fallback and XDG paths\n"
