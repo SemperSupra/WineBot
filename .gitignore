@@ -21,3 +21,4 @@ WineBot-codex-starter-files.zip
 # Artifacts (keep empty dir)
 /artifacts/*
 !/artifacts/.gitkeep
+venv/

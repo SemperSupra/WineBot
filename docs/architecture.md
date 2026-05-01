@@ -2,6 +2,21 @@
 
 WineBot runs Windows GUI applications inside a Linux container using Wine, Xvfb, and a lightweight window manager. It exposes an HTTP API for programmatic control.
 
+## Base Image Selection
+
+Choosing the correct base image is critical for supporting modern versions of Wine while maintaining container best practices. The following options were evaluated:
+
+*   **Ubuntu LTS + WineHQ Repository:** While this provides access to the latest Wine versions, Ubuntu images are larger, and relying on third-party repositories introduces build-time failure risks (e.g., repository downtime or GPG key changes).
+*   **Alpine Linux:** Offers the smallest possible footprint. However, Alpine uses `musl` libc instead of `glibc`. Wine heavily relies on `glibc`, making Alpine highly incompatible and requiring complex, fragile workarounds.
+*   **Arch Linux:** Provides native, bleeding-edge packages without external repositories. However, rolling releases lack the stability required for predictable CI/CD pipelines and production container runtimes.
+*   **Debian Stable + WineHQ / Backports:** Provides a rock-solid base, but backports often lag behind the latest Wine releases, and using WineHQ reintroduces third-party dependency risks.
+
+**Final Decision:** WineBot uses a **minimal Debian Trixie (Testing) base** (`debian:trixie-slim`) layered with specific requirements. This approach was chosen because it:
+1.  **Provides Modern Wine:** Access to recent Wine versions directly from native Debian repositories without third-party repos.
+2.  **Maintains Minimal Size:** The slim variant keeps the base layer small.
+3.  **Ensures High Compatibility:** Full `glibc` support ensures standard behavior for Wine and Windows applications.
+4.  **Is Future-Proof:** Using the upcoming stable release prepares the project for the future without major migrations.
+
 ## System Layers
 
 1.  **Application Layer (Windows)**
