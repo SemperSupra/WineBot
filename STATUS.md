@@ -1,41 +1,67 @@
 # Status
 
-## Current state
-- **Version:** v0.9.6 (In Progress - Final Verification)
-- **Status:** **Feature Complete & Hardened**
-- **Handover Point:** Release v0.9.6 is committed and pushed. GitHub Actions manual release run is currently processing.
-- **Migration:** All internal and registry references successfully moved to the `SemperSupra` organization.
+## Current State
+- **Version:** v0.9.7a release containers published.
+- **Status:** **Release containers rebuilt and verified on GitHub Actions.**
+- **Handover Point:** `main` is synchronized with `origin/main` at commit `8b93e66` plus this documentation handoff. The Debian Trixie base image and v0.9.7a release images were published to GHCR and verified by the release workflow.
+- **Base Runtime:** `ghcr.io/sempersupra/winebot-base:base-2026-05-04` is the active pinned fallback base image. `base-latest` and `base-stable` were updated by the Base Image workflow.
 
-### Working Features (v0.9.6 Improvements)
-- **Modernized Stack:** Upgraded to FastAPI 0.129, Uvicorn 0.41, Wine 10.0, and Python 3.13.12.
-- **Security Hardening:** 
-    - Random `API_TOKEN` generated on startup by default.
-    - Strict Content Security Policy (CSP) and security headers (X-Frame-Options, etc.).
-- **Operational Excellence:**
-    - **Unified Config:** Centralized Pydantic-based configuration with startup validation.
-    - **Structured Logging:** Standardized log format across all services.
-    - **Constant-Time Log Tailing:** New `winebotctl tail` command and `/logs/tail` API endpoint using efficient backward-seeking.
-- **Robust Infrastructure:**
-    - **Registry Warming:** Fixed race conditions in `base.Dockerfile` ensuring theme/optimizations persist.
-    - **Async Correctness:** Implemented subprocess reaping and context managers for clean process teardown.
-- **Resource Management:** Hard bounds on log sizes, screenshots per session, and trace buffer memory.
-- **Automation Improvements:** Automatic inactivity detection pauses/resumes recording based on user input.
-- **Internal Versioning:** Added `/handshake` for agent capability discovery and strict resumption guards for session manifests.
+## Completed This Session
+- Created a new minimal Debian Trixie slim base image path using a digest-pinned Debian base and the required Wine/X11/Python runtime packages.
+- Added base-image patching/upgrade steps so required patched packages are refreshed during base and application image builds.
+- Updated release, smoke, soak, compose, README, and policy-check fallbacks to `ghcr.io/sempersupra/winebot-base:base-2026-05-04`.
+- Corrected GitHub Actions Node.js 20 warnings by moving actions to Node 24-compatible pinned SHAs.
+- Updated external dependency pins for the accepted dependency refresh:
+  - Embedded Windows Python `3.13.13`.
+  - Playwright `1.59.0`.
+  - `pytest==9.0.3`.
+  - `pytest-playwright==0.7.2`.
+  - `uvloop==0.22.1`.
+  - `zstandard==0.25.0`.
+- Rebuilt and published the base image and v0.9.7a release containers through GitHub Actions.
 
-### Known Issues / Blockers
-- **UI/UX Policy Enforcement Failure:** The GitHub Actions release workflow is currently failing at the final Playwright E2E stage. 
-    - **Diagnosis:** Timing and authentication race conditions in the `Noble`-based test container.
-    - **Mitigations implemented:** Token-via-URL injection, explicit `#app-ready-marker` signal, and absolute URL navigation. Verification of these fixes is pending the next build result.
+## Published Images
+- `ghcr.io/sempersupra/winebot-base:base-2026-05-04`
+- `ghcr.io/sempersupra/winebot-base:base-latest`
+- `ghcr.io/sempersupra/winebot-base:base-stable`
+- `ghcr.io/sempersupra/winebot:v0.9.7a-rel`
+  - index digest: `sha256:46bce5b85d6e0c0f2384f94a0d12b76970259bb073e939398479e5653c07d674`
+- `ghcr.io/sempersupra/winebot:v0.9.7a-rel-runner`
+  - index digest: `sha256:a41433596594966a3d99bf8884ff04fc0c945e31891adc44484049a9db2a642e`
 
-## Backlog / Future Work
-- **Issue #7**: Implement Stage 2 Instrumented Wine Core Build (Next Major Milestone).
-- **Issue #8**: Native Wine Event Pipe (DLL Hooking for low-latency tracing).
-- **Issue #9**: Resource Quotas per App (cgroups for process isolation).
-- **Issue #10**: Network Partition Chaos Testing.
-- **Issue #11**: Automated A11y Audits (WCAG 2.1 AA).
-- **Issue #12**: Configuration Schema Versioning.
+## Validation Evidence
+- Local lint gate passed:
+  - `./scripts/wb lint`
+  - Ruff passed.
+  - Mypy passed for 93 source files.
+  - Capability matrix, SBOM, and license policy checks passed.
+  - Local Trivy filesystem scan was skipped because Trivy is not installed locally.
+- Local containerized unit tests passed:
+  - `docker compose -f compose/docker-compose.yml --profile lint run --rm lint-runner /work/scripts/ci/test.sh`
+  - Result: `135 passed, 1 warning`.
+- GitHub Base Image workflow passed:
+  - Run `25330932840`
+  - `https://github.com/SemperSupra/WineBot/actions/runs/25330932840`
+- GitHub Release workflow for `v0.9.7a` passed:
+  - Run `25331384570`
+  - `https://github.com/SemperSupra/WineBot/actions/runs/25331384570`
+  - Smoke gate, UI/UX policy, keyboard UX, Trivy scan, REL policy checks, publish, cosign signing, and artifact verification passed.
+
+## GitHub Actions Status
+- No queued runs at handoff.
+- No in-progress runs at handoff.
+- Latest Base Image and Release runs passed.
+- A stale CI run failed before the new base image tag existed:
+  - Run `25330798122`
+  - Cause: CI attempted to pull `ghcr.io/sempersupra/winebot-base:base-2026-05-04` before the Base Image workflow had published it.
+  - Current impact: superseded by the successful Base Image and Release workflows.
+
+## Known Issues / Follow-Up
+- Decide whether CI should authenticate to GHCR or order base-image publication before CI image builds when the pinned base tag changes. This would avoid transient failures like run `25330798122`.
+- Local Trivy is not installed, so local lint skips the filesystem vulnerability scan. GitHub Trivy gates are passing.
+- Confirm whether a separate GitHub Release object is desired for `v0.9.7a`; this session published release containers through workflow dispatch but did not create a GitHub Release object.
 
 ## Next Session Proposed Steps
-1. **Finalize Release**: Confirm Run ID `22276487954` (or subsequent) passes. If not, bypass UI/UX checks temporarily to unblock publication, or refine Playwright wait-states further.
-2. **Start Stage 2**: Begin research on Issue #7 (Instrumented Wine Build).
-3. **Audit Documentation**: Update the "How to contribute" section to include the new Agent Accountability Policy.
+1. Review GHCR package visibility/authentication and decide whether CI should log in before pulling private or organization-scoped base images.
+2. Optionally create a GitHub Release or release notes entry for `v0.9.7a`.
+3. Continue Stage 2 planning from the existing backlog after release follow-up is closed.

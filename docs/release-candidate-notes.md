@@ -1,5 +1,27 @@
 # Release Candidate Notes
 
+## v0.9.7a Container Rebuild
+- Date: 2026-05-04
+- Branch: `main`
+- Head commit: `8b93e66`
+- Scope:
+  - Rebuilt the release containers on top of the new Debian Trixie slim base image.
+  - Published `ghcr.io/sempersupra/winebot-base:base-2026-05-04`.
+  - Published `ghcr.io/sempersupra/winebot:v0.9.7a-rel`.
+  - Published `ghcr.io/sempersupra/winebot:v0.9.7a-rel-runner`.
+  - Updated GitHub Actions to Node 24-compatible pinned SHAs to clear Node.js 20 action warnings.
+- Validation evidence:
+  - Base Image workflow run `25330932840`: pass.
+  - Release workflow run `25331384570`: pass.
+  - Release smoke gate, Trivy scan, REL policy checks, cosign signing, and artifact verification: pass.
+  - Local lint: pass.
+  - Local containerized unit tests: `135 passed`.
+- Published digests:
+  - `v0.9.7a-rel`: `sha256:46bce5b85d6e0c0f2384f94a0d12b76970259bb073e939398479e5653c07d674`
+  - `v0.9.7a-rel-runner`: `sha256:a41433596594966a3d99bf8884ff04fc0c945e31891adc44484049a9db2a642e`
+- Known note:
+  - No GitHub Release object was created in this session; the containers were published via manual `workflow_dispatch`.
+
 ## Candidate
 - Date: 2026-03-01
 - Branch: `feat/recording-contract-hardening`
