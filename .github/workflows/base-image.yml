@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       base_version:
-        description: Base image version tag (e.g. base-2026-02-09)
+        description: Base image version tag (e.g. base-2026-05-04)
         required: true
       update_base_stable:
         description: Also move base-stable tag
@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -37,12 +37,15 @@ jobs:
       - name: Prepare base tags
         id: meta
         run: |
-          image="ghcr.io/${{ github.repository_owner }}/winebot-base"
+          owner_lc="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner_lc}/winebot-base"
           version="${{ github.event.inputs.base_version }}"
           if [[ ! "$version" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
             echo "Invalid base_version: $version" >&2
             exit 1
           fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
             echo "${image}:${version}"
@@ -53,13 +56,39 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build & push base-runtime
-        id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+      - name: Build base image for validation
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: .
-          file: docker/Dockerfile
-          target: base-ready
+          file: docker/base.Dockerfile
+          target: final
+          load: true
+          push: false
+          tags: winebot-base:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan base image (Trivy)
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.cache/trivy"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${GITHUB_WORKSPACE}/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:0.65.0 image \
+            --scanners vuln \
+            --format table \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            "winebot-base:${{ steps.meta.outputs.version }}"
+
+      - name: Build & push base image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: .
+          file: docker/base.Dockerfile
+          target: final
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
@@ -68,14 +97,15 @@ jobs:
           sbom: true
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
 
       - name: Sign base digest
         env:
+          IMAGE: ${{ steps.meta.outputs.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           if [ -z "$DIGEST" ]; then
             echo "Missing base digest from build" >&2
             exit 1
           fi
-          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/winebot-base@${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"

@@ -94,6 +94,12 @@ See [docs/feature-capability-commit-map.md](docs/feature-capability-commit-map.m
 Auto-generate a draft from recent commit subjects:
 `./scripts/wb feature-map 200`
 
+Daily status / handoff:
+
+See latest status note: [archive/status/STATUS-2026-03-12.md](archive/status/STATUS-2026-03-12.md)
+
+Status history: [archive/status/](archive/status/)
+
 Test capability coverage matrix:
 
 See [docs/test-capability-matrix.md](docs/test-capability-matrix.md).
@@ -139,7 +145,7 @@ Base runtime can be pinned independently:
 
 `BASE_IMAGE=ghcr.io/<owner>/winebot-base:<base-version>`
 
-CI/release builds read repository variable `WINEBOT_BASE_IMAGE` (fallback is `ghcr.io/SemperSupra/winebot-base:base-2026-02-09`).
+CI/release builds read repository variable `WINEBOT_BASE_IMAGE` (fallback is `ghcr.io/sempersupra/winebot-base:base-2026-05-04`).
 
 In `rel` and `rel-runner`, default logging is capped (`WARN`). Enable bounded support mode for triage:
 

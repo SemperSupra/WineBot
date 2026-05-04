@@ -4,7 +4,7 @@ from pathlib import Path
 def test_dockerfile_declares_build_intent():
     dockerfile = Path("docker/Dockerfile").read_text()
     assert "ARG BASE_IMAGE=" in dockerfile
-    assert "FROM ${BASE_IMAGE} AS base-runtime" in dockerfile
+    assert "FROM ${BASE_IMAGE} AS base-system" in dockerfile
     assert "FROM base-interactive AS intent-test" in dockerfile
     assert "FROM intent-test AS intent-dev" in dockerfile
     assert "FROM base-interactive AS intent-rel" in dockerfile

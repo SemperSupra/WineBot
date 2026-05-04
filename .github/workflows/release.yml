@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Validate release guardrails
-        uses: actions/github-script@v7
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
             if (context.eventName !== "release") {
@@ -101,8 +101,8 @@ jobs:
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf /usr/share/swift
           df -h
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
       - name: Set image tags (REL)
         id: meta_rel
         run: |
@@ -179,20 +179,20 @@ jobs:
             echo "${image}:sha-${GITHUB_SHA::7}-rel-runner"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build & push
         id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: .
           file: docker/Dockerfile
           target: intent-rel
           build-args: |
-            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13' }}
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/sempersupra/winebot-base:base-2026-05-04' }}
             BUILD_INTENT=rel
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.run_id }}
@@ -205,13 +205,13 @@ jobs:
           sbom: true
       - name: Build & push REL-RUNNER
         id: build_runner
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: .
           file: docker/Dockerfile
           target: intent-rel-runner
           build-args: |
-            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/mark-e-deyoung/winebot-base:base-2026-02-13' }}
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/sempersupra/winebot-base:base-2026-05-04' }}
             BUILD_INTENT=rel-runner
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.run_id }}
@@ -223,7 +223,7 @@ jobs:
           provenance: mode=max
           sbom: true
       - name: Install cosign
-        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
       - name: Sign image digest (keyless OIDC)
         env:
           IMAGE: ${{ steps.meta_rel.outputs.image }}
@@ -261,7 +261,7 @@ jobs:
           sudo rm -rf /usr/share/swift
           df -h
       - name: Install cosign
-        uses: sigstore/cosign-installer@430b6a704fe0c92f1b1261d84376a900f38d90ff
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003
       - name: Verify signature
         env:
           IMAGE: ${{ needs.publish.outputs.image }}

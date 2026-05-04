@@ -1,11 +1,11 @@
 # WineBot Base Image
-# Contains: Debian Trixie + Wine 10.0 + Xvfb + Python + Pre-warmed Prefix
-ARG BASE_IMAGE=debian:trixie-slim
+# Contains: digest-pinned Debian Trixie slim + Wine/X11/Python runtime + pre-warmed prefix.
+ARG BASE_IMAGE=debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a
 
 FROM ${BASE_IMAGE} AS base-system
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. System Dependencies (Wine, X11, Python)
+# 1. Minimal runtime dependencies (Wine, X11 automation, recording, diagnostics).
 RUN if [ -f /etc/apt/sources.list ]; then \
         sed -i 's/ main/ main contrib non-free non-free-firmware/' /etc/apt/sources.list; \
     elif [ -f /etc/apt/sources.d/debian.sources ]; then \
@@ -13,7 +13,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     fi \
     && dpkg --add-architecture i386 \
     && apt-get update \
-    && apt-get -y upgrade \
+    && apt-get -y --with-new-pkgs upgrade \
     && apt-get install -y --no-install-recommends \
         wine wine64 wine32 cabextract \
         xvfb xauth xdotool wmctrl xinput \
@@ -22,6 +22,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
         imagemagick x11-utils procps ffmpeg \
         ca-certificates curl gosu unzip \
         python3 python3-pip gdb \
+    && apt-get -y --with-new-pkgs upgrade \
     && curl -sL -o /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/20260125/src/winetricks \
     && chmod +x /usr/local/bin/winetricks \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

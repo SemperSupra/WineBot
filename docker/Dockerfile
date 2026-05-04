@@ -1,5 +1,5 @@
-# Pinned to debian:trixie-slim as of 2026-02-08
-ARG BASE_IMAGE=ghcr.io/sempersupra/winebot-base:base-2026-02-13
+# Pinned to digest-based Debian Trixie base published by .github/workflows/base-image.yml.
+ARG BASE_IMAGE=ghcr.io/sempersupra/winebot-base:base-2026-05-04
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG SOURCE_REPO="https://github.com/SemperSupra/WineBot"
@@ -27,8 +27,8 @@ RUN bash /download_tool.sh "AutoHotkey" \
 
 FROM tool-base AS builder-python
 RUN bash /download_tool.sh "Python" \
-    "https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-amd64.zip" \
-    "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0" \
+    "https://www.python.org/ftp/python/3.13.13/python-3.13.13-embed-amd64.zip" \
+    "8766a8775746235e23cf5aee5027ab1060bb981d93110577adcf3508aa0cbd55" \
     "/opt/winebot/windows-tools/Python" \
     && find /opt/winebot/windows-tools -name "*.txt" -delete
 
@@ -53,8 +53,18 @@ RUN id -u winebot >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash winebot \
 # Keep base OS packages at patched security levels for release gates.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
+      imagemagick \
+      imagemagick-7-common \
+      imagemagick-7.q16 \
+      libmagickcore-7.q16-10 \
+      libmagickwand-7.q16-10 \
+      libngtcp2-16 \
       libpng16-16t64 \
+      libssl3t64 \
+      libtiff6 \
       libvpx9 \
+      openssl \
+      openssl-provider-legacy \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
