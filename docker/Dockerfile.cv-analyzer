@@ -1,0 +1,33 @@
+FROM python:3.12-slim
+
+# System dependencies for OpenCV + Tesseract + ffmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    tesseract-ocr tesseract-ocr-eng \
+    libgl1 libglib2.0-0 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
+RUN pip install --no-cache-dir \
+    opencv-python-headless==4.13.0.92 \
+    Pillow==12.0.0 \
+    pytesseract==0.3.13 \
+    numpy==2.4.6 \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    ultralytics \
+    transformers
+
+# Copy analysis scripts
+COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py
+COPY scripts/diagnostics/cv-element-detect.py /scripts/cv-element-detect.py
+
+# Download OmniParser v2 model weights on build
+RUN python3 -c "
+from ultralytics import YOLO
+# Download YOLOv8n UI-detection model
+YOLO('yolov8n.pt')
+print('YOLOv8n downloaded')
+"
+
+WORKDIR /work
+ENTRYPOINT ["python3", "/scripts/cv-omni-analyze.py"]
