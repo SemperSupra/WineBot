@@ -24,6 +24,10 @@ BATEOF
 chown winebot:winebot ${BAT_DIR}/${name}.bat"
   api_post "/apps/run" "{\"path\":\"cmd.exe\",\"args\":\"/c ${ART_WIN}/bats/${name}.bat\",\"detach\":false}" > /dev/null
 }
+linux_dl() {
+  local url="$1" dest="$2"
+  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "curl -sL '$url' -o '$dest' && chown winebot:winebot '$dest' && echo 'Downloaded: ' \$(wc -c < '$dest') ' bytes'" 2>/dev/null
+}
 
 detect_token
 SESSION=$(curl -s -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
@@ -41,8 +45,9 @@ echo ""
 echo "=== Step 1: Download + Install VLC ==="
 ch "Download and install VLC"
 ann "Downloading VLC installer via .bat script"
-bat_run "vlc_dl" "curl -L -o ${ART_WIN}/vlc-installer.exe ${VLC_URL}"
-sleep 10
+ann "Downloading via Linux curl"
+linux_dl "$VLC_URL" "${ART_LIN}/vlc-installer.exe"
+sleep 2
 echo "  $(verify_file "${ART_LIN}/vlc-installer.exe")"
 
 ann "Installing VLC with /S flag"

@@ -29,6 +29,12 @@ chown winebot:winebot ${BAT_DIR}/${name}.bat"
   api_post "/apps/run" "{\"path\":\"cmd.exe\",\"args\":\"/c ${ARTIFACTS_WIN}/bats/${name}.bat\",\"detach\":false}" > /dev/null
 }
 
+# Download from Linux host (curl NOT available inside Wine cmd.exe)
+linux_dl() {
+  local url="$1" dest="$2"
+  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "curl -sL '$url' -o '$dest' && chown winebot:winebot '$dest' && echo 'Downloaded: ' \$(wc -c < '$dest') ' bytes'" 2>/dev/null
+}
+
 # INIT
 detect_token
 SESSION=$(curl -s -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
@@ -47,9 +53,9 @@ echo ""
 # ---- 1. DOWNLOAD ----
 echo "=== Step 1: Download 7-Zip ==="
 ch "Download 7-Zip installer"
-ann "Downloading 7-Zip via curl in .bat script"
-bat_run "download" "curl -L -o ${ARTIFACTS_WIN}/7z-installer.exe ${SEVENZIP_URL}"
-sleep 5
+ann "Downloading 7-Zip via Linux curl (not available in Wine cmd.exe)"
+linux_dl "$SEVENZIP_URL" "${ARTIFACTS_LIN}/7z-installer.exe"
+sleep 2
 echo "  $(verify_file "${ARTIFACTS_LIN}/7z-installer.exe")"
 
 # ---- 2. INSTALL ----

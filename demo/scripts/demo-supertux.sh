@@ -24,6 +24,10 @@ BATEOF
 chown winebot:winebot ${BAT_DIR}/${name}.bat"
   api_post "/apps/run" "{\"path\":\"cmd.exe\",\"args\":\"/c ${ART_WIN}/bats/${name}.bat\",\"detach\":false}" > /dev/null
 }
+linux_dl() {
+  local url="$1" dest="$2"
+  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "curl -sL '$url' -o '$dest' && chown winebot:winebot '$dest' && echo 'Downloaded: ' \$(wc -c < '$dest') ' bytes'" 2>/dev/null
+}
 
 detect_token
 SESSION=$(curl -s -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
@@ -41,8 +45,9 @@ echo ""
 echo "=== Step 1: Download SuperTux MSI ==="
 ch "Download SuperTux MSI"
 ann "Downloading SuperTux MSI installer via .bat script"
-bat_run "stux_dl" "curl -L -o ${ART_WIN}/supertux.msi ${STUX_URL}"
-sleep 12
+ann "Downloading SuperTux MSI via Linux curl"
+linux_dl "$STUX_URL" "${ART_LIN}/supertux.msi"
+sleep 2
 echo "  $(verify_file "${ART_LIN}/supertux.msi")"
 
 echo ""
