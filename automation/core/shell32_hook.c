@@ -1,17 +1,20 @@
 /*
- * comdlg32_hook.c — API hook DLL for GetSaveFileNameW / GetOpenFileNameW
+ * shell32_hook.c — Intercept SHBrowseForFolderW
  *
- * Replaces Wine's file dialog with the AHK pipe-driven dialog replacement.
- * Only two exports: GetSaveFileNameW and GetOpenFileNameW.
- * All other comdlg32 functions fall through to Wine's builtin (n,b override).
+ * Replaces the folder browser dialog with our pipe-driven AHK replacement.
+ * Returns a simple PIDL pointing to the chosen directory.
+ *
+ * Build:
+ *   x86_64-w64-mingw32-gcc -shared -o shell32.dll shell32_hook.c \
+ *     -nostartfiles -lkernel32 -luser32 -lshell32
  */
 
 #include <windows.h>
-#include <commdlg.h>
+#include <shlobj.h>
+#include <stdio.h>
 
 /* ── Pipe protocol (shared with dialog_replacement.ahk) ── */
 #define PIPE        L"C:\\dialog_handler\\pipe.txt"
-#define ARTIFACTS   L"C:/artifacts/"
 #define BUF_SIZE    4096
 #define TIMEOUT     10000
 
@@ -52,7 +55,7 @@ static void extract_path(const WCHAR *json, WCHAR *out, int outlen) {
     const WCHAR *key = L"\"path\":\"";
     const WCHAR *s = wcsstr(json, key);
     if (!s) { out[0] = 0; return; }
-    s += 8; /* strlen of "path":" */
+    s += 8;
     const WCHAR *e = wcsstr(s, L"\"");
     if (!e) { out[0] = 0; return; }
     int n = (int)(e - s);
@@ -61,57 +64,61 @@ static void extract_path(const WCHAR *json, WCHAR *out, int outlen) {
     out[n] = 0;
 }
 
-static void fwd_to_bslash(WCHAR *p) {
-    for (; *p; p++) if (*p == L'/') *p = L'\\';
+/* Build a simple PIDL from a filesystem path string.
+ * A simple PIDL is a SHITEMID structure with just the path bytes,
+ * terminated by a 2-byte zero cb field. */
+static LPITEMIDLIST make_simple_pidl(const WCHAR *path) {
+    if (!path || !path[0]) return NULL;
+
+    /* Convert forward slashes to backslashes */
+    WCHAR clean[MAX_PATH];
+    lstrcpynW(clean, path, MAX_PATH);
+    WCHAR *p;
+    for (p = clean; *p; p++) if (*p == L'/') *p = L'\\';
+
+    /* Calculate size: 1 SHITEMID with the path, then terminator */
+    int path_bytes = (lstrlenW(clean) + 1) * sizeof(WCHAR); /* +1 for null */
+    int total = sizeof(USHORT) + path_bytes + sizeof(USHORT); /* cb + data + terminator cb */
+
+    LPITEMIDLIST pidl = (LPITEMIDLIST)CoTaskMemAlloc(total);
+    if (!pidl) return NULL;
+
+    BYTE *raw = (BYTE *)pidl;
+    *(USHORT *)raw = (USHORT)(path_bytes + sizeof(USHORT)); /* cb: size of this item including cb itself */
+    raw += sizeof(USHORT);
+    memcpy(raw, clean, path_bytes); /* data */
+    raw += path_bytes;
+    *(USHORT *)raw = 0; /* terminator cb=0 */
+
+    return pidl;
 }
 
-/* ── Pipe dialog workflow ── */
+/* ── Hook ── */
 
-static BOOL run_pipe_save(LPOPENFILENAMEW ofn) {
+LPITEMIDLIST WINAPI SHBrowseForFolderW(LPBROWSEINFOW lpbi) {
     WCHAR b[BUF_SIZE];
 
-    /* Step 1: open the AHK Gui */
     write_pipe(L"open_gui");
-    if (!read_pipe(b, sizeof(b), 5000)) return FALSE;
+    if (!read_pipe(b, sizeof(b), 5000)) return NULL;
 
-    /* Step 2: set filename (use app default if provided) */
-    if (ofn->lpstrFile && ofn->lpstrFile[0]) {
+    /* Use the display name or title as default */
+    if (lpbi && lpbi->lpszTitle) {
         WCHAR cmd[BUF_SIZE];
-        wsprintfW(cmd, L"set_filename:%s", ofn->lpstrFile);
+        wsprintfW(cmd, L"set_filename:%s", lpbi->lpszTitle);
         write_pipe(cmd);
     } else {
-        write_pipe(L"set_filename:save_result.txt");
+        write_pipe(L"set_filename:browse_result");
     }
-    if (!read_pipe(b, sizeof(b), 5000)) return FALSE;
+    if (!read_pipe(b, sizeof(b), 5000)) return NULL;
 
-    /* Step 3: click save — response has the path */
     write_pipe(L"click_save");
-    if (!read_pipe(b, sizeof(b), TIMEOUT)) return FALSE;
+    if (!read_pipe(b, sizeof(b), TIMEOUT)) return NULL;
 
-    /* Step 4: extract path from {"status":"saved","path":"C:/artifacts/x.txt"} */
     WCHAR path[MAX_PATH];
     extract_path(b, path, MAX_PATH);
-    if (!path[0]) return FALSE;
+    if (!path[0]) return NULL;
 
-    fwd_to_bslash(path);
-
-    if (ofn->lpstrFile) {
-        lstrcpynW(ofn->lpstrFile, path, ofn->nMaxFile);
-        ofn->nFileOffset = lstrlenW(ofn->lpstrFile);
-    }
-
-    return TRUE;
-}
-
-/* ── Exports ── */
-
-BOOL WINAPI GetSaveFileNameW(LPOPENFILENAMEW ofn) { return run_pipe_save(ofn); }
-BOOL WINAPI GetOpenFileNameW(LPOPENFILENAMEW ofn) { return run_pipe_save(ofn); }
-
-/* ── Stub for function Wine internals need ── */
-short WINAPI GetFileTitleW(LPCWSTR file, LPWSTR title, WORD bufsize) {
-    if (title && bufsize > 0) { title[0] = 0; }
-    return 0;
+    return make_simple_pidl(path);
 }
 
 /* ── Entry point ── */

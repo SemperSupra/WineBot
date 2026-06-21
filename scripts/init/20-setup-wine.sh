@@ -169,9 +169,9 @@ fi
 sleep 1
 wineserver -p >/dev/null 2>&1 &
 
-# Install comdlg32 hook DLL (replaces Save As / Open dialogs)
-if [ -x "/scripts/setup/install-comdlg32-hook.sh" ]; then
-    /scripts/setup/install-comdlg32-hook.sh
+# Install API hook DLLs (winebot_hook.dll — IAT-based, no system DLL conflicts)
+if [ -x "/scripts/setup/install-hooks.sh" ]; then
+    /scripts/setup/install-hooks.sh
 fi
 
 echo "--> Pass 3 complete."
