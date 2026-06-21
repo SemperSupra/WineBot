@@ -98,22 +98,31 @@ GUI apps should accept command-line file path arguments to avoid dialogs entirel
 In the demo, file dialogs are bypassed: file creation uses `cmd.exe echo > file`,
 registry uses `reg add/query/delete`, and Notepad demonstrates pure input only.
 
-**Solution: AHK Pipe-Based Dialog Replacement (WORKING).**
-A pipe-driven AHK Gui (`automation/core/dialog_replacement.ahk`) that accepts
-commands via `C:\dialog_handler\pipe.txt` and saves files without Wine dialogs.
+**Solution: AHK Pipe-Based Dialog (WORKING).**
+A pipe-driven AHK Gui (`automation/core/dialog_replacement.ahk`) replaces
+Save As dialogs entirely. No Wine dialogs are triggered — the AHK Gui IS
+the dialog interface.
 
 **How it works:**
 1. Launch AHK via `/apps/run {"path":"ahk","args":"C:/dr.ahk","detach":true}`
-2. Script opens AHK Gui: "WineBot Save Dialog" with Edit control + Save button
-3. Write commands via `su -s /bin/sh winebot -c "echo open_gui > pipe.txt"`
-4. Commands: `open_gui`, `set_filename:file.txt`, `click_save`, `click_cancel`
-5. Responses: `{"status":"gui_opened"}`, `{"status":"set_ok"}`, etc.
-6. `click_save` writes file directly via AHK `FileAppend` — no Wine dialog involved
+2. Script waits for pipe commands at `C:\dialog_handler\pipe.txt`
+3. `open_gui` → Shows "WineBot Save Dialog" with filename field + Save/Cancel
+4. `set_filename:file.txt` → Sets filename in global variable
+5. `click_save` → Writes file via AHK `FileAppend` to `C:/artifacts/file.txt`
+6. Responses: `{"status":"gui_opened"}`, `{"status":"set_ok"}`, `{"status":"saved"}`
 
-**Three mechanical requirements (discovered through testing):**
-- **Ownership:** Write pipe file as winebot user (not root) so AHK can delete it
-- **Paths:** Use forward slashes in AHK strings (`C:/artifacts/`, not `C:\artifacts\`) — `\a` is ASCII bell
-- **Variables:** Store filename in AHK global var, not Gui variable (timer callbacks can't read Gui vars)
+**CV-confirmed: No Wine Save As dialog appears.** The CV watcher
+(`scripts/diagnostics/cv-watcher.py`) confirmed via pixel diff analysis that
+only the AHK Gui appears on screen — no comdlg32 dialog is triggered.
+
+**Why interception was removed:**
+The interceptor's PollDialogs timer had a race condition: `if (gGuiOpen) return`
+silently ignored Wine Save As dialogs that appeared while the AHK Gui was open.
+The CV watcher showed the Wine dialog at +106,616px change and persisting for
+7+ frames (~3.5 seconds) without being caught. The correct approach is to never
+trigger Wine dialogs — use the AHK Gui directly as the save interface.
+
+**Pipe protocol (zero chown, su winebot throughout).**
 
 ### 4. XInput2 Disabled
 
