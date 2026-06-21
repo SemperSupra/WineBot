@@ -118,10 +118,5 @@ echo "  Type: /input/key    Save: AHK pipe dialog"
 echo "=============================================="
 
 api_post "/recording/stop" '{}' 2>/dev/null || true
-sleep 2; TRIM_SS="${TRIM_SS:-40}"
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "
-  ffmpeg -y -ss ${TRIM_SS} -i ${SESSDIR}/video_001.mkv -c copy -avoid_negative_ts make_zero /tmp/trimmed.mkv 2>/dev/null
-  ffmpeg -y -i /tmp/trimmed.mkv -vf 'fps=8,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse' -loop 0 /tmp/trimmed.gif 2>/dev/null
-  echo 'Trimmed:' \$(ls -lh /tmp/trimmed.mkv | awk '{print \$5}') 'GIF:' \$(ls -lh /tmp/trimmed.gif | awk '{print \$5}')
-"
-echo "Output: docker cp compose-winebot-interactive-1:/tmp/trimmed.mkv demo/output/demo.mkv"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" 2>/dev/null || SCRIPT_DIR="."
+[ -f "$SCRIPT_DIR/_trim.sh" ] && source "$SCRIPT_DIR/_trim.sh" && smart_trim "$SESSDIR"
