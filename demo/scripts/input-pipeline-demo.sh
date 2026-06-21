@@ -125,32 +125,47 @@ sleep 0.3
 # PART 2: AHK PIPE DIALOG REPLACEMENT
 # ============================================================================
 echo ""
-echo "=== PART 2: Pipe-Driven Dialog Replacement ==="
-annotate "PART 2: AHK pipe dialog — open_gui -> set_filename -> click_save"
+echo "=== PART 2: Full Interception — Wine Save As → AHK Replacement ==="
+annotate "PART 2: Ctrl+S triggers Save As — AHK interceptor catches and replaces"
 sleep 1
 
-pipe_cmd "open_gui"
-sleep 3
-RESP=$(pipe_read)
-if echo "$RESP" | grep -q "gui_opened"; then
-    echo "  Gui opened: $RESP"
-    annotate "AHK Gui dialog opened (X11 window visible)"
-else
-    echo "  Gui failed: $RESP"
-fi
+# THE REAL FLOW: Press Ctrl+S → Wine Save As dialog opens
+# The AHK interceptor detects it, closes it, opens AHK Gui
+# Then pipe commands set filename and click save.
+press_key "ctrl+s" "Notepad"
+echo "  Ctrl+S sent — Wine Save As should appear..."
+sleep 5
+annotate "Ctrl+S: Wine Save As dialog opened"
 
-# Verify X11 window
+# Check if the interceptor caught it
+RESP=$(pipe_read)
+if echo "$RESP" | grep -q "intercepted"; then
+    echo "  INTERCEPTED: $RESP"
+    annotate "INTERCEPTED: Wine Save As closed, AHK replacement opened"
+else
+    echo "  No intercept yet. Checking again..."
+    RESP=$(pipe_wait "intercepted\|gui_opened" 5)
+    if echo "$RESP" | grep -q "intercepted"; then
+        echo "  INTERCEPTED: $RESP"
+        annotate "INTERCEPTED: Wine Save As closed, AHK replacement opened"
+    fi
+fi
+sleep 1
+
+# Verify AHK Gui is visible on X11
 GUI_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "WineBot Save Dialog" 2>/dev/null | wc -l)
-echo "  X11 windows visible: $GUI_COUNT (should be 1)"
-sleep 0.5
+echo "  X11 Gui windows: $GUI_COUNT"
+# Also verify Wine dialog is gone
+SAVE_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "Save As" 2>/dev/null | wc -l)
+echo "  Wine Save As windows: $SAVE_COUNT (should be 0 — intercepted!)"
 
 echo ""
 echo "  Setting filename via pipe..."
-pipe_cmd "set_filename:WineBot_Pipe_Demo_v4.txt"
+pipe_cmd "set_filename:Intercepted_Save_Demo.txt"
 sleep 1.5
 RESP=$(pipe_read)
 echo "  Response: $RESP"
-annotate "Filename set via pipe: WineBot_Pipe_Demo_v4.txt"
+annotate "Filename set via pipe"
 sleep 0.5
 
 echo ""
@@ -160,19 +175,16 @@ sleep 3
 RESP=$(pipe_wait "saved" 5)
 if echo "$RESP" | grep -q "saved"; then
     echo "  SAVED: $RESP"
-    annotate "FILE SAVED via pipe protocol! WineBot_Pipe_Demo_v4.txt"
+    annotate "FILE SAVED via AHK pipe protocol!"
 else
-    echo "  Response: $RESP"
+    echo "  Response: $RESP (checking disk directly...)"
 fi
 
-# Verify
+# Verify on disk
 echo ""
-echo "  [VERIFY] File on disk:"
-if docker exec compose-winebot-interactive-1 sh -c 'test -f /wineprefix/drive_c/artifacts/WineBot_Pipe_Demo_v4.txt && echo "EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Pipe_Demo_v4.txt' 2>/dev/null; then
-    true
-else
-    echo "  (check manually)"
-fi
+echo "  [VERIFY] File:"
+docker exec compose-winebot-interactive-1 sh -c \
+  'test -f /wineprefix/drive_c/artifacts/Intercepted_Save_Demo.txt && echo "EXISTS" && cat /wineprefix/drive_c/artifacts/Intercepted_Save_Demo.txt' 2>/dev/null || echo "  (check manually)"
 
 # Close Notepad
 press_key "alt+F4" "Notepad"; sleep 1
