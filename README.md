@@ -88,6 +88,21 @@ Named defaults (recommended):
 
 See [docs/default-profiles.md](docs/default-profiles.md) for profile definitions.
 
+## Demo
+
+A comprehensive input pipeline demo is available in [demo/](demo/):
+
+```bash
+docker compose -f compose/docker-compose.yml --profile interactive up -d
+bash demo/scripts/input-pipeline-demo.sh
+```
+
+The demo exercises every input type (mouse, keyboard text, named keys, modifier chords,
+arrow keys) and capability (file create/edit/delete, registry operations, programmatic
+batch script execution) end-to-end with recording and subtitles.
+
+See [demo/README.md](demo/README.md) for details.
+
 Feature/capability commit mapping:
 
 See [docs/feature-capability-commit-map.md](docs/feature-capability-commit-map.md).

@@ -144,11 +144,15 @@ class TestXDotoolToAHKKeys:
 
     def test_ahk_special_chars_escaped(self):
         from api.routers.input import _xdotool_to_ahk_keys
-        # Raw +, ^, !, # should be escaped in plain-text mode
+        # Raw +, ^, !, #, % should be escaped in plain-text mode
         result = _xdotool_to_ahk_keys("+")
         assert "{+}" in result
         result = _xdotool_to_ahk_keys("^")
         assert "{^}" in result
+        result = _xdotool_to_ahk_keys("%")
+        assert "`%" in result, f"Expected backtick-escaped %, got: {result!r}"
+        result = _xdotool_to_ahk_keys("%%DATE%%")
+        assert "`%" in result, f"Expected % escaped, got: {result!r}"
 
     def test_ctrl_alt_delete_chord(self):
         from api.routers.input import _xdotool_to_ahk_keys

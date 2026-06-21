@@ -1,0 +1,7 @@
+# Demo output files are generated, not committed
+*.mkv
+*.mp4
+*.gif
+*.vtt
+*.ass
+*.json

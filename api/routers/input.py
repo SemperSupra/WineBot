@@ -185,7 +185,8 @@ def _xdotool_to_ahk_keys(keys: str) -> str:
     # (only applies when there are no modifiers — plain text passthrough)
     if not modifiers and base_key == keys:
         # This is raw text — escape AHK special characters
-        result = result.replace("+", "{+}").replace("^", "{^}").replace("!", "{!}").replace("#", "{#}")
+        # % is a variable dereference in AHK Send; backtick escapes it
+        result = result.replace("+", "{+}").replace("^", "{^}").replace("!", "{!}").replace("#", "{#}").replace("%", "`%")
 
     return result
 
