@@ -100,7 +100,7 @@ services:
       VNC_PASSWORD: ${VNC_PASSWORD:-winebot}
     ports:
       - "8000:8000"
-      - "5353:5353/udp"
+      - "5354:5353/udp"
       - "5900:5900"
       - "6080:6080"
       - "${WINEDBG_PORT:-2345}:${WINEDBG_PORT:-2345}"
