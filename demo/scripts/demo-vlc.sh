@@ -22,7 +22,10 @@ wine_install() { local exe="$1" flags="${2:-/S}"
   MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "
     gosu winebot env DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all \
     wine '$exe' '$flags' 2>/dev/null &
-    sleep 8
+    PID=\$!
+    for i in \$(seq 1 30); do
+      if ps -p \$PID > /dev/null 2>&1; then sleep 1; else echo '  Installer exited'; break; fi
+    done
   "; }
 
 detect_token

@@ -18,7 +18,14 @@ ch()   { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "pyt
 vf() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "test -f $1 && echo PASS \$(wc -c< $1)bytes || echo FAIL" 2>/dev/null; }
 check() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "test -f $1 && echo 'PASS' || echo 'FAIL'" 2>/dev/null; }
 linux_dl() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "curl -sL '$1' -o '$2' && chown winebot:winebot '$2' && echo Downloaded \$(wc -c< '$2')bytes" 2>/dev/null; }
-wine_install() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "gosu winebot env DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all wine '$1' '/S' 2>/dev/null & sleep 10"; }
+wine_install() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "
+    gosu winebot env DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all \
+    wine '$1' '/S' 2>/dev/null &
+    PID=\$!
+    for i in \$(seq 1 30); do
+      if ps -p \$PID > /dev/null 2>&1; then sleep 1; else break; fi
+    done
+  "; }
 bat() { local content="$1"
   MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "cat > ${BAT} << 'BATEOF'
 ${content}
