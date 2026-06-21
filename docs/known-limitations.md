@@ -39,15 +39,31 @@ VNC Client -> x11vnc(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
 space, bypassing this barrier. Mouse clicks work through xdotool regardless.
 Configurable via `WINEBOT_SUPERVISE_EXPLORER` and `WINEBOT_INPUT_KEY_BACKEND`.
 
-### 3. comdlg32 File Dialogs Cannot Accept Text Input
+### 3. comdlg32 File Dialogs — No Text Injection Path Exists
 
-Wine's common dialog implementation creates modal windows with zero X11 children.
-AHK `Send`, `xdotool type`, `winpy ctypes`, and `WinSpy` all cannot inject text
-into Save As/Open dialog filename fields.
+Wine's common dialog implementation (`comdlg32`) creates modal windows that
+are **monolithic single X11 windows with zero child windows**. All controls
+(filename fields, buttons, dropdowns, tree views) exist only inside Wine's
+internal windowing — they are not exposed to X11, AHK, or any external tool.
+
+**Exhaustively tested and confirmed NOT working:**
+- AHK `Send` / `SendInput` / `SendPlay` — keystrokes land on the dialog window, not the edit control
+- AHK `ControlSend` / `ControlSetText` to `Edit1`, `ComboBox1` — ErrorLevel set, no effect
+- AHK clipboard + `^v` paste — paste goes to the window, not the control
+- `xdotool type` / `xdotool key` — blocked by the `explorer.exe /desktop` keyboard barrier
+- `winpy` with `ctypes.windll` + `FindWindowExW` + `SetWindowTextW` — times out
+- `WinSpy` — can inspect control classes/positions but cannot inject text
+- Mouse click to focus field + AHK Send to focused window — focus doesn't transfer to Wine internal controls
+
+**What DOES work:**
+- Mouse clicks on dialog buttons (Save, Cancel, Open) via xdotool — these pass through
+- Mouse clicks to focus the filename field — the field gets visual focus, but text still cannot be injected
 
 **Adaptation:** File and registry operations use `cmd.exe` (echo/redirect, reg add/query),
 `/run/python` (Linux Python writes to prefix), or `docker cp` for file injection.
 GUI apps should accept command-line file path arguments to avoid dialogs entirely.
+In the demo, file dialogs are bypassed: file creation uses `cmd.exe echo > file`,
+registry uses `reg add/query/delete`, and Notepad demonstrates pure input only.
 
 ### 4. XInput2 Disabled
 
