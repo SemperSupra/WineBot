@@ -149,9 +149,23 @@ echo "  [VERIFY]:"
 docker exec compose-winebot-interactive-1 sh -c \
   'test -f /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt && echo "  FILE EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt' 2>/dev/null || echo "  (check manually)"
 
-# Close Notepad
+# Close Notepad — clear document content first to prevent "Save changes?" prompt
+press_key "ctrl+a" "Notepad"; sleep 0.3
+press_key "Delete" "Notepad"; sleep 0.3
+type_text " " "Notepad"; sleep 0.2  # one char to avoid empty-document edge case
+press_key "ctrl+a" "Notepad"; sleep 0.2
+press_key "Delete" "Notepad"; sleep 0.3
+# Now close — Notepad exits cleanly with no prompt
 press_key "alt+F4" "Notepad"; sleep 1
-annotate "Alt+F4: Notepad closed"
+# Belt-and-suspenders: dismiss any stray save prompt
+docker exec compose-winebot-interactive-1 sh -c '
+for title in "Notepad" "Save As" "Untitled"; do
+  wid=$(xdotool search --name "$title" 2>/dev/null | head -1)
+  [ -n "$wid" ] && xdotool windowclose "$wid" 2>/dev/null
+done
+' 2>/dev/null || true
+sleep 2
+annotate "Alt+F4: Notepad closed (document was cleared)"
 
 # ================ PART 3: FILE OPS via cmd.exe ================
 echo ""
