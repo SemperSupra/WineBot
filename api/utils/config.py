@@ -83,6 +83,10 @@ class WineBotConfig(BaseModel):
     WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN: int = 600
 
     # Temporal budgets and retries
+    WINEBOT_INPUT_KEY_BACKEND: str = Field(
+        default="ahk", pattern="^(ahk|xdotool|auto)$"
+    )
+    WINEBOT_TIMEOUT_INPUT_KEY_SECONDS: int = 10
     WINEBOT_TIMEOUT_AUTOMATION_APP_RUN_SECONDS: int = 30
     WINEBOT_TIMEOUT_AUTOMATION_SCRIPT_SECONDS: int = 30
     WINEBOT_TIMEOUT_RECORDING_CONTROL_SECONDS: int = 15
@@ -268,6 +272,12 @@ def validate_config() -> WineBotConfig:
             ),
             "WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN": _parse_int(
                 "WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN", 600
+            ),
+            "WINEBOT_INPUT_KEY_BACKEND": os.getenv(
+                "WINEBOT_INPUT_KEY_BACKEND", "ahk"
+            ),
+            "WINEBOT_TIMEOUT_INPUT_KEY_SECONDS": _parse_int(
+                "WINEBOT_TIMEOUT_INPUT_KEY_SECONDS", 10
             ),
             "WINEBOT_TIMEOUT_AUTOMATION_APP_RUN_SECONDS": _parse_int(
                 "WINEBOT_TIMEOUT_AUTOMATION_APP_RUN_SECONDS", 30

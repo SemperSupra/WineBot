@@ -56,3 +56,101 @@ def test_click_at_validation(
         )
         assert response.status_code == 200
         assert response.json()["status"] == "clicked"
+
+
+class TestXDotoolToAHKKeys:
+    """Unit tests for xdotool-to-AHK key syntax translation."""
+
+    def test_modifier_chord_ctrl(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("ctrl+c") == "^c"
+
+    def test_modifier_chord_alt(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("alt+F4") == "!{F4}"
+
+    def test_modifier_chord_ctrl_shift(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("ctrl+shift+a") == "^+a"
+
+    def test_modifier_chord_super(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        result = _xdotool_to_ahk_keys("super+r")
+        assert result == "#r" or result == "#r"
+
+    def test_named_key_return(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Return") == "{Enter}"
+
+    def test_named_key_escape(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Escape") == "{Esc}"
+
+    def test_named_key_tab(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Tab") == "{Tab}"
+
+    def test_named_key_backspace(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("BackSpace") == "{BS}"
+
+    def test_named_key_space(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("space") == "{Space}"
+
+    def test_named_key_delete(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Delete") == "{Delete}"
+
+    def test_function_key(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("F5") == "{F5}"
+
+    def test_function_key_f12(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("F12") == "{F12}"
+
+    def test_arrow_keys(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Up") == "{Up}"
+        assert _xdotool_to_ahk_keys("Down") == "{Down}"
+        assert _xdotool_to_ahk_keys("Left") == "{Left}"
+        assert _xdotool_to_ahk_keys("Right") == "{Right}"
+
+    def test_plain_text(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Hello") == "Hello"
+
+    def test_plain_text_with_spaces(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        assert _xdotool_to_ahk_keys("Hello World")
+
+    def test_single_character(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        result = _xdotool_to_ahk_keys("a")
+        assert result == "a"
+
+    def test_empty_string_raises(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        import pytest
+        with pytest.raises(ValueError):
+            _xdotool_to_ahk_keys("")
+
+    def test_whitespace_only_raises(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        import pytest
+        with pytest.raises(ValueError):
+            _xdotool_to_ahk_keys("   ")
+
+    def test_ahk_special_chars_escaped(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        # Raw +, ^, !, # should be escaped in plain-text mode
+        result = _xdotool_to_ahk_keys("+")
+        assert "{+}" in result
+        result = _xdotool_to_ahk_keys("^")
+        assert "{^}" in result
+
+    def test_ctrl_alt_delete_chord(self):
+        from api.routers.input import _xdotool_to_ahk_keys
+        result = _xdotool_to_ahk_keys("ctrl+alt+Delete")
+        assert result == "^!{Delete}"

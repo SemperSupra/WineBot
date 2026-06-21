@@ -82,6 +82,13 @@ class ClickModel(BaseModel):
     relative: bool = False
 
 
+class KeyModel(BaseModel):
+    keys: str
+    window_title: Optional[str] = None
+    window_id: Optional[str] = None
+    backend: Optional[str] = None
+
+
 class AHKModel(BaseModel):
     script: str
     focus_title: Optional[str] = None

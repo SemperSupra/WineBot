@@ -35,6 +35,8 @@ x-winebot-env: &winebot_env
   BUILD_INTENT: ${BUILD_INTENT:-rel}
   WINEBOT_SUPPORT_MODE: ${WINEBOT_SUPPORT_MODE:-0}
   WINEBOT_SUPPORT_MODE_MINUTES: ${WINEBOT_SUPPORT_MODE_MINUTES:-60}
+  WINEBOT_ALLOW_HEADLESS_HYBRID: ${WINEBOT_ALLOW_HEADLESS_HYBRID:-0}
+  WINEBOT_INPUT_KEY_BACKEND: ${WINEBOT_INPUT_KEY_BACKEND:-ahk}
   WINEDEBUG: ${WINEDEBUG:-}
 
 x-winebot-base: &winebot_base
@@ -66,6 +68,11 @@ services:
       MODE: headless
       WINEBOT_INSTANCE_CONTROL_MODE: ${WINEBOT_INSTANCE_CONTROL_MODE:-agent-only}
       WINEBOT_SESSION_CONTROL_MODE: ${WINEBOT_SESSION_CONTROL_MODE:-agent-only}
+      WINEBOT_ALLOW_HEADLESS_HYBRID: ${WINEBOT_ALLOW_HEADLESS_HYBRID:-0}
+      # When set to 0, prevents the desktop supervisor from restarting
+      # explorer.exe. Required for headless automation that targets
+      # individual app X11 windows via xdotool or VNC key events.
+      WINEBOT_SUPERVISE_EXPLORER: ${WINEBOT_SUPERVISE_EXPLORER:-1}
     ports: []
     healthcheck:
       test:

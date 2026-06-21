@@ -11,6 +11,7 @@ import signal
 import threading
 from api.core.models import (
     ClickModel,
+    KeyModel,
     InputTraceStartModel,
     InputTraceStopModel,
     InputTraceX11CoreStartModel,
@@ -82,6 +83,194 @@ def _require_active_session() -> str:
             detail="No active session. Resume or create a session before input operations.",
         )
     return session_dir
+
+
+# Map xdotool key names to AHK Send syntax
+_XDOTOOL_TO_AHK_KEY: Dict[str, str] = {
+    "Return": "{Enter}",
+    "Escape": "{Esc}",
+    "BackSpace": "{BS}",
+    "Tab": "{Tab}",
+    "space": "{Space}",
+    "Delete": "{Delete}",
+    "Del": "{Del}",
+    "Home": "{Home}",
+    "End": "{End}",
+    "PgUp": "{PgUp}",
+    "PgDn": "{PgDn}",
+    "Up": "{Up}",
+    "Down": "{Down}",
+    "Left": "{Left}",
+    "Right": "{Right}",
+    "Insert": "{Ins}",
+    "Print": "{PrintScreen}",
+    "Caps_Lock": "{CapsLock}",
+    "Num_Lock": "{NumLock}",
+    "Scroll_Lock": "{ScrollLock}",
+    "Pause": "{Pause}",
+    "Menu": "{AppsKey}",
+    "minus": "-",
+    "equal": "=",
+    "bracketleft": "[",
+    "bracketright": "]",
+    "backslash": "\\",
+    "semicolon": ";",
+    "apostrophe": "'",
+    "comma": ",",
+    "period": ".",
+    "slash": "/",
+    "grave": "`",
+}
+
+
+def _xdotool_to_ahk_keys(keys: str) -> str:
+    """Translate xdotool key syntax to AHK Send syntax.
+
+    Modifier chords like 'ctrl+c' become '^c'.
+    Named keys like 'Return' become '{Enter}'.
+    Plain text is passed through as-is (AHK Send handles literals).
+
+    Raises ValueError if keys is empty or whitespace-only.
+    """
+    if not keys or not keys.strip():
+        raise ValueError("keys must not be empty")
+    keys = keys.strip()
+
+    # Modifier mapping: xdotool modifier prefix -> AHK symbol
+    modifier_map = {
+        "ctrl": "^",
+        "alt": "!",
+        "shift": "+",
+        "super": "#",
+        "meta": "#",
+    }
+
+    # Split on '+' to check for modifier chords
+    parts = [p.strip() for p in keys.split("+")]
+
+    # If all parts are modifiers, treat the last as the base key
+    modifiers = []
+    base_key_parts = []
+    for p in parts:
+        if p.lower() in modifier_map:
+            modifiers.append(modifier_map[p.lower()])
+        else:
+            base_key_parts.append(p)
+
+    base_key = "+".join(base_key_parts)
+
+    # Build AHK Send string
+    ahk_prefix = "".join(modifiers)
+
+    if not base_key:
+        # Purely modifier keys (e.g., just "ctrl") — send the modifiers
+        return ahk_prefix
+
+    # Check if base key is a named key (e.g., Return, F1, etc.)
+    if base_key in _XDOTOOL_TO_AHK_KEY:
+        base_ahk = _XDOTOOL_TO_AHK_KEY[base_key]
+    elif base_key.startswith("F") and base_key[1:].isdigit():
+        # Function keys: F1-F24
+        base_ahk = "{" + base_key + "}"
+    elif len(base_key) == 1:
+        # Single character — AHK modifier syntax needs the raw char
+        base_ahk = base_key
+    else:
+        # Multi-character text — pass through as literal text for AHK Send
+        base_ahk = base_key
+
+    result = ahk_prefix + base_ahk
+
+    # Escape literal AHK special chars if the result is raw text
+    # (only applies when there are no modifiers — plain text passthrough)
+    if not modifiers and base_key == keys:
+        # This is raw text — escape AHK special characters
+        result = result.replace("+", "{+}").replace("^", "{^}").replace("!", "{!}").replace("#", "{#}")
+
+    return result
+
+
+def _desktop_absent() -> bool:
+    """Check if explorer.exe /desktop is not running.
+
+    When the desktop is absent, xdotool key injection works directly.
+    """
+    result = safe_command(["pgrep", "-f", "explorer.exe"], timeout=2)
+    return not result.get("ok") or not result.get("stdout", "").strip()
+
+
+async def _send_keys(
+    keys: str,
+    window_id: Optional[str],
+    backend_preference: str,
+    session_dir: str,
+    timeout: int,
+) -> Dict[str, Any]:
+    """Dispatch key injection to the configured backend.
+
+    AHK backend: writes a one-shot AHK script and executes it via wine.
+    xdotool backend: uses xdotool key command directly.
+    auto: uses xdotool if explorer.exe desktop is absent, otherwise AHK.
+    """
+    effective_backend = backend_preference.lower()
+    if effective_backend == "auto":
+        effective_backend = "xdotool" if _desktop_absent() else "ahk"
+
+    if effective_backend == "xdotool":
+        cmd = ["xdotool"]
+        if window_id:
+            cmd.extend(["key", "--window", window_id, keys])
+        else:
+            cmd.extend(["key", keys])
+        result = await run_async_command(cmd, timeout=timeout)
+        return {
+            "ok": result.get("ok", False),
+            "backend": "xdotool",
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+        }
+
+    # AHK path (default)
+    try:
+        ahk_keys = _xdotool_to_ahk_keys(keys)
+    except ValueError as exc:
+        return {"ok": False, "backend": "ahk", "error": str(exc), "stderr": ""}
+
+    if not ahk_keys:
+        return {"ok": False, "backend": "ahk", "error": "Empty key sequence", "stderr": ""}
+
+    script_id = uuid.uuid4().hex[:8]
+    script_path = os.path.join(session_dir, "scripts", f"key_{script_id}.ahk")
+    os.makedirs(os.path.dirname(script_path), exist_ok=True)
+
+    script_lines = [
+        "#NoTrayIcon",
+        "#NoEnv",
+        "#SingleInstance Force",
+        "SetKeyDelay, 20, 20",
+    ]
+    if window_id:
+        hex_id = window_id
+        if window_id.startswith("0x"):
+            hex_id = window_id  # already hex
+        script_lines.extend([
+            "WinActivate, ahk_id %s" % hex_id,
+            "WinWaitActive, ahk_id %s,, 2" % hex_id,
+        ])
+    script_lines.append("Send, %s" % ahk_keys)
+    script_lines.append("ExitApp")
+
+    with open(script_path, "w") as f:
+        f.write("\n".join(script_lines) + "\n")
+
+    cmd = ["ahk", to_wine_path(script_path)]
+    result = safe_command(cmd, timeout=timeout)
+    return {
+        "ok": result.get("ok", False),
+        "backend": "ahk",
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+    }
 
 
 @router.get("/events")
@@ -295,6 +484,135 @@ async def click_at(data: ClickModel):
     )
 
     return {"status": "clicked", "x": data.x, "y": data.y, "trace_id": trace_id}
+
+
+@router.post("/key")
+async def key_press(data: KeyModel):
+    """Send keyboard input (keys, chords, text) to Windows applications.
+
+    Uses AHK Send by default, which operates inside the Wine process space
+    and bypasses the X11 keyboard interception layer. Falls back to xdotool
+    when configured and the explorer.exe desktop barrier is absent.
+    """
+    op_started = time.perf_counter()
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
+    await broker.report_agent_activity()
+
+    # Resolve target window from title if window_id not provided
+    target_win_id = data.window_id
+    target_win_title = data.window_title
+    if not target_win_id and data.window_title:
+        search_res = await run_async_command(
+            ["xdotool", "search", "--name", data.window_title]
+        )
+        if search_res["ok"]:
+            ids = search_res["stdout"].strip().split("\n")
+            if ids and ids[0]:
+                target_win_id = ids[0]
+
+    session_dir = _require_active_session()
+    backend = (data.backend or config.WINEBOT_INPUT_KEY_BACKEND).lower()
+    if backend not in ("ahk", "xdotool", "auto"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid backend '{backend}'. Must be one of: ahk, xdotool, auto",
+        )
+
+    trace_id = uuid.uuid4().hex
+    append_input_event(
+        session_dir,
+        {
+            "event": "agent_key",
+            "phase": "request",
+            "origin": "agent",
+            "source": "api",
+            "tool": "api:/input/key",
+            "keys": data.keys,
+            "trace_id": trace_id,
+            "via": backend,
+            "target_window_id": target_win_id or "unknown",
+            "target_window_title": target_win_title or "unknown",
+        },
+    )
+
+    result = await _send_keys(
+        keys=data.keys,
+        window_id=target_win_id,
+        backend_preference=backend,
+        session_dir=session_dir,
+        timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,
+    )
+
+    if not result.get("ok"):
+        emit_operation_timing(
+            session_dir,
+            feature="input",
+            capability="key_press",
+            feature_set="control_input_automation",
+            operation="api_key",
+            duration_ms=(time.perf_counter() - op_started) * 1000.0,
+            result="error",
+            source="api",
+            metric_name="input.api_key.latency",
+            tags={
+                "reason": result.get("error") or result.get("stderr", "backend_failed"),
+                "backend": result.get("backend", backend),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Key injection failed: %s"
+            % (result.get("error") or result.get("stderr", "unknown error")),
+        )
+
+    append_input_event(
+        session_dir,
+        {
+            "event": "agent_key",
+            "phase": "complete",
+            "origin": "agent",
+            "source": "api",
+            "tool": "api:/input/key",
+            "keys": data.keys,
+            "trace_id": trace_id,
+            "status": "sent",
+            "backend": result.get("backend"),
+        },
+    )
+
+    # Cross-layer: log to Windows trace layer
+    windows_payload = {
+        "event": "key_sent",
+        "origin": "agent",
+        "source": "windows",
+        "keys": data.keys,
+        "trace_id": trace_id,
+        "backend": result.get("backend"),
+        "timestamp_epoch_ms": int(time.time() * 1000),
+    }
+    append_trace_event(input_trace_windows_log_path(session_dir), windows_payload)
+
+    emit_operation_timing(
+        session_dir,
+        feature="input",
+        capability="key_press",
+        feature_set="control_input_automation",
+        operation="api_key",
+        duration_ms=(time.perf_counter() - op_started) * 1000.0,
+        result="ok",
+        source="api",
+        metric_name="input.api_key.latency",
+        tags={"backend": result.get("backend", backend)},
+    )
+
+    return {
+        "status": "sent",
+        "keys": data.keys,
+        "trace_id": trace_id,
+        "backend": result.get("backend"),
+    }
 
 
 @router.get("/trace/status")
