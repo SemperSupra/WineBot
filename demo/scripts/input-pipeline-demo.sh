@@ -247,19 +247,20 @@ sleep 2
 docker exec compose-winebot-interactive-1 sh -c "ls -lh $SESSDIR/*.mkv 2>/dev/null" || true
 echo ""
 
-# Auto-trim: remove blank first 40s, generate GIF
-TRIM_SS="${TRIM_SS:-40}"
-echo "Trimming first ${TRIM_SS}s from video..."
-docker exec compose-winebot-interactive-1 sh -c "
-  ffmpeg -y -ss ${TRIM_SS} -i ${SESSDIR}/video_001.mkv -c copy -avoid_negative_ts make_zero /tmp/trimmed.mkv 2>/dev/null && \
-  ffmpeg -y -i /tmp/trimmed.mkv -vf 'fps=8,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse' -loop 0 /tmp/trimmed.gif 2>/dev/null && \
-  echo \"  Trimmed MKV: \$(ls -lh /tmp/trimmed.mkv | awk '{print \$5}')\" && \
-  echo \"  Trimmed GIF: \$(ls -lh /tmp/trimmed.gif | awk '{print \$5}')\"
+# Smart trim: find first chapter marker on host side, trim 3s before it
+VIDEO="${SESSDIR}/video_001.mkv"
+FIRST=$(MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "ffprobe -v quiet -show_chapters -print_format flat '$VIDEO' 2>/dev/null | grep 'chapter.1.start_time' | sed 's/.*=\"\([0-9.]*\)\"/\1/' | head -1" 2>/dev/null)
+FIRST="${FIRST:-0}"
+TRIM_START=$(python3 -c "print(max(0, int(float($FIRST)) - 2))")
+echo "  First content at ${FIRST}s, trimming ${TRIM_START}s"
+MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "
+  ffmpeg -y -ss ${TRIM_START} -i '$VIDEO' -c copy -avoid_negative_ts make_zero /tmp/trimmed.mkv 2>/dev/null
+  ffmpeg -y -i /tmp/trimmed.mkv -vf 'fps=8,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse' -loop 0 /tmp/trimmed.gif 2>/dev/null
+  echo \"  Trimmed: \$(ls -lh /tmp/trimmed.mkv | awk '{print \$5}') GIF: \$(ls -lh /tmp/trimmed.gif | awk '{print \$5}')\"
 "
 
 echo ""
-echo "Output files ready inside container at /tmp/trimmed.mkv and /tmp/trimmed.gif"
-echo "To save locally:"
+echo "To save:"
 echo "  docker cp compose-winebot-interactive-1:/tmp/trimmed.mkv demo/output/demo.mkv"
 echo "  docker cp compose-winebot-interactive-1:/tmp/trimmed.gif demo/output/demo.gif"
 echo "  docker cp compose-winebot-interactive-1:${SESSDIR}/events_001.vtt demo/output/demo.vtt"
