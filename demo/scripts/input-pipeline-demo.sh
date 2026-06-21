@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# WineBot Input Pipeline Demo v5 — Reliable Interception + cmd.exe Reg
-# Fixes: AHK Gui opened BEFORE Ctrl+S, Regedit removed, longer waits
+# WineBot Input Pipeline Demo v5 — AHK Pipe Dialog + cmd.exe Reg
+# No Wine Save As dialogs triggered. AHK Gui replaces them entirely.
 set -u
 
 API_URL="${API_URL:-http://localhost:8000}"
@@ -114,59 +114,42 @@ annotate "MODIFIER CHORD: Ctrl+A"
 
 sleep 0.5
 
-# ================ PART 2: INTERCEPTION ================
+# ================ PART 2: AHK PIPE DIALOG — no Wine dialog needed ================
 echo ""
-echo "=== PART 2: Save As Interception ==="
-chapter "Part 2: Ctrl+S -> AHK Interceptor -> Pipe Save"
-annotate "PART 2: Open AHK Gui preemptively, then press Ctrl+S"
+echo "=== PART 2: AHK Pipe Dialog Save ==="
+chapter "Part 2: AHK Pipe Dialog — open_gui -> set_filename -> click_save"
+annotate "PART 2: AHK Gui dialog replaces Save As entirely — no Wine comdlg32 needed"
 
-# STRATEGY: Open AHK Gui first. Then press Ctrl+S. Wine Save As appears
-# behind AHK Gui (AHK Gui has AlwaysOnTop). Interceptor auto-closes it.
+# Open the AHK Gui — this IS the dialog. No Ctrl+S. No Wine Save As.
 pipe_cmd "open_gui"
 sleep 2
 RESP=$(pipe_read)
 echo "  Gui: $RESP"
 
 GUI_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "WineBot Save Dialog" 2>/dev/null | wc -l)
-echo "  AHK Gui windows: $GUI_COUNT"
-annotate "AHK Gui opened (preemptive — will catch Wine Save As behind it)"
+echo "  AHK Gui visible: $GUI_COUNT"
+annotate "AHK Gui dialog open — replaces Save As entirely"
 
-# Now press Ctrl+S — Wine Save As dialog opens BEHIND the AHK Gui
-press_key "ctrl+s" "Notepad"
-echo "  Ctrl+S sent"
-sleep 6
-annotate "Ctrl+S: Wine Save As opened behind AHK Gui"
-
-# Report: did interceptor catch it?
-SAVE_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "Save As" 2>/dev/null | wc -l)
-GUI_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "WineBot Save Dialog" 2>/dev/null | wc -l)
-echo "  Wine Save As: $SAVE_COUNT (0=intercepted)  AHK Gui: $GUI_COUNT (1=active)"
-
-if [ "$GUI_COUNT" -gt 0 ]; then
-    echo "  INTERCEPTED: AHK Gui active, Wine dialog closed"
-    annotate "INTERCEPTED: Wine Save As closed, AHK replacement active"
-else
-    echo "  Gui may have closed; reopening..."
-    pipe_cmd "open_gui"; sleep 2
-fi
-
-# Set filename and save via clean pipe protocol
+# Set filename via pipe
 pipe_cmd "set_filename:WineBot_Demo_v5.txt"
 sleep 2
 echo "  set_filename: $(pipe_read)"
-annotate "Filename set: WineBot_Demo_v5.txt"
+annotate "Filename set via pipe: WineBot_Demo_v5.txt"
 
+# Save via pipe
 pipe_cmd "click_save"
 sleep 3
 RESP=$(pipe_wait "saved" 6)
 echo "  Save: ${RESP:-checking disk...}"
-annotate "FILE SAVED via AHK pipe protocol"
+annotate "FILE SAVED via AHK pipe protocol — no Wine dialog ever opened"
 
+# Verify on disk
 echo ""
 echo "  [VERIFY]:"
 docker exec compose-winebot-interactive-1 sh -c \
   'test -f /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt && echo "  FILE EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt' 2>/dev/null || echo "  (check manually)"
 
+# Close Notepad
 press_key "alt+F4" "Notepad"; sleep 1
 annotate "Alt+F4: Notepad closed"
 
@@ -258,7 +241,7 @@ annotate "CLEANUP COMPLETE"
 echo ""
 echo "======== Demo Complete (v5) ========"
 echo "  Inputs: Mouse click, keyboard text, named keys, modifier chords"
-echo "  Interception: Ctrl+S -> Wine Save As auto-closed -> AHK Gui save"
+echo "  Dialog: AHK Gui replaces Save As — no Wine comdlg32 needed"
 echo "  File ops: cmd.exe echo/redirect/type (no dialogs)"
 echo "  Registry: cmd.exe reg add/query/delete (deterministic, no GUI)"
 echo "  Batch: docker cp + cmd.exe execution"
