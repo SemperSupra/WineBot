@@ -246,4 +246,20 @@ api_post "/recording/stop" '{}' 2>/dev/null || true
 sleep 2
 docker exec compose-winebot-interactive-1 sh -c "ls -lh $SESSDIR/*.mkv 2>/dev/null" || true
 echo ""
-echo "Video: docker cp compose-winebot-interactive-1:$SESSDIR/video_001.mkv demo/output/demo.mkv"
+
+# Auto-trim: remove blank first 40s, generate GIF
+TRIM_SS="${TRIM_SS:-40}"
+echo "Trimming first ${TRIM_SS}s from video..."
+docker exec compose-winebot-interactive-1 sh -c "
+  ffmpeg -y -ss ${TRIM_SS} -i ${SESSDIR}/video_001.mkv -c copy -avoid_negative_ts make_zero /tmp/trimmed.mkv 2>/dev/null && \
+  ffmpeg -y -i /tmp/trimmed.mkv -vf 'fps=8,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse' -loop 0 /tmp/trimmed.gif 2>/dev/null && \
+  echo \"  Trimmed MKV: \$(ls -lh /tmp/trimmed.mkv | awk '{print \$5}')\" && \
+  echo \"  Trimmed GIF: \$(ls -lh /tmp/trimmed.gif | awk '{print \$5}')\"
+"
+
+echo ""
+echo "Output files ready inside container at /tmp/trimmed.mkv and /tmp/trimmed.gif"
+echo "To save locally:"
+echo "  docker cp compose-winebot-interactive-1:/tmp/trimmed.mkv demo/output/demo.mkv"
+echo "  docker cp compose-winebot-interactive-1:/tmp/trimmed.gif demo/output/demo.gif"
+echo "  docker cp compose-winebot-interactive-1:${SESSDIR}/events_001.vtt demo/output/demo.vtt"
