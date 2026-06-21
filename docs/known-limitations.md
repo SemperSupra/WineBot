@@ -98,22 +98,22 @@ GUI apps should accept command-line file path arguments to avoid dialogs entirel
 In the demo, file dialogs are bypassed: file creation uses `cmd.exe echo > file`,
 registry uses `reg add/query/delete`, and Notepad demonstrates pure input only.
 
-**Future path: AHK Pipe-Based Dialog Replacement.**
-A resident AHK script (`automation/core/dialog_replacement.ahk`) has been
-prototyped. The design:
-1. AHK script runs as a detached process, monitors for "Save As" / "Open" windows
-2. When detected, closes the Wine dialog (WinClose / Send Escape)  
-3. Opens an AHK Gui replacement with Edit controls and Save/Cancel buttons
-4. Accepts commands via a named pipe file (`C:\dialog_handler\pipe.txt`):
-   `set_filename:myfile.txt`, `click_save`, `click_cancel`, `get_state`
-5. Uses AHK's `GuiControl` to set control values internally (works in-process)
-6. Results written back to the pipe file as JSON
+**Solution: AHK Pipe-Based Dialog Replacement (WORKING).**
+A pipe-driven AHK Gui (`automation/core/dialog_replacement.ahk`) that accepts
+commands via `C:\dialog_handler\pipe.txt` and saves files without Wine dialogs.
 
-The controls ARE reachable via DllCall from within the AHK process (same
-wineserver connection). The AHK Gui responds to pipe commands because
-`GuiControl` operates in-process. External X11 injection still cannot
-reach the Edit controls (same comdlg32 USER32 child window limitation),
-but the pipe pathway bypasses this entirely.
+**How it works:**
+1. Launch AHK via `/apps/run {"path":"ahk","args":"C:/dr.ahk","detach":true}`
+2. Script opens AHK Gui: "WineBot Save Dialog" with Edit control + Save button
+3. Write commands via `su -s /bin/sh winebot -c "echo open_gui > pipe.txt"`
+4. Commands: `open_gui`, `set_filename:file.txt`, `click_save`, `click_cancel`
+5. Responses: `{"status":"gui_opened"}`, `{"status":"set_ok"}`, etc.
+6. `click_save` writes file directly via AHK `FileAppend` — no Wine dialog involved
+
+**Three mechanical requirements (discovered through testing):**
+- **Ownership:** Write pipe file as winebot user (not root) so AHK can delete it
+- **Paths:** Use forward slashes in AHK strings (`C:/artifacts/`, not `C:\artifacts\`) — `\a` is ASCII bell
+- **Variables:** Store filename in AHK global var, not Gui variable (timer callbacks can't read Gui vars)
 
 ### 4. XInput2 Disabled
 
