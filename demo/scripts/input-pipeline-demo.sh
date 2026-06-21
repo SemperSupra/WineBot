@@ -57,19 +57,28 @@ echo "  Session: $SESSION"
 echo ""
 
 # ================ SETUP ================
-echo "=== SETUP: Deploy AHK Interceptor ==="
-chapter "Setup: AHK Dialog Interceptor"
-annotate "SETUP: AHK pipe-driven dialog handler deployed"
+echo "=== SETUP: Deploy AHK Dialog Handler ==="
+chapter "Setup: AHK Dialog Handler + Watcher"
+annotate "SETUP: AHK pipe-driven dialog handler + dialog watcher deployed"
 
 docker exec compose-winebot-interactive-1 rm -rf //wineprefix/drive_c/dialog_handler 2>/dev/null
 docker exec compose-winebot-interactive-1 mkdir -p //wineprefix/drive_c/dialog_handler //wineprefix/drive_c/artifacts 2>/dev/null
 docker exec compose-winebot-interactive-1 chown -R winebot:winebot //wineprefix/drive_c/dialog_handler //wineprefix/drive_c/artifacts 2>/dev/null
 docker cp automation/core/dialog_replacement.ahk compose-winebot-interactive-1://wineprefix/drive_c/dr.ahk 2>/dev/null
-docker exec compose-winebot-interactive-1 chown winebot:winebot //wineprefix/drive_c/dr.ahk 2>/dev/null
+docker cp automation/core/dialog_watcher.ahk compose-winebot-interactive-1://wineprefix/drive_c/dw.ahk 2>/dev/null
+docker exec compose-winebot-interactive-1 chown winebot:winebot //wineprefix/drive_c/dr.ahk //wineprefix/drive_c/dw.ahk 2>/dev/null
 
+# Launch AHK pipe dialog
 api_post "/apps/run" '{"path":"ahk","args":"C:/dr.ahk","detach":true}' > /dev/null
 sleep 6
-echo "  Handler: $(pipe_read)"
+echo "  Pipe handler: $(pipe_read)"
+
+# Launch persistent dialog watcher (closes stray Save As / Open / Error dialogs)
+api_post "/apps/run" '{"path":"ahk","args":"C:/dw.ahk","detach":true}' > /dev/null
+sleep 3
+WATCHER_COUNT=$(docker exec compose-winebot-interactive-1 sh -c 'ps aux | grep dw.ahk | grep -v grep | grep -v start.exe | wc -l' 2>/dev/null)
+echo "  Watcher procs: $WATCHER_COUNT"
+annotate "Dialog watcher active — auto-closes stray Save As/Error dialogs"
 
 # ================ PART 1: MOUSE + KEYBOARD ================
 echo ""
@@ -149,23 +158,9 @@ echo "  [VERIFY]:"
 docker exec compose-winebot-interactive-1 sh -c \
   'test -f /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt && echo "  FILE EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt' 2>/dev/null || echo "  (check manually)"
 
-# Close Notepad — clear document content first to prevent "Save changes?" prompt
-press_key "ctrl+a" "Notepad"; sleep 0.3
-press_key "Delete" "Notepad"; sleep 0.3
-type_text " " "Notepad"; sleep 0.2  # one char to avoid empty-document edge case
-press_key "ctrl+a" "Notepad"; sleep 0.2
-press_key "Delete" "Notepad"; sleep 0.3
-# Now close — Notepad exits cleanly with no prompt
-press_key "alt+F4" "Notepad"; sleep 1
-# Belt-and-suspenders: dismiss any stray save prompt
-docker exec compose-winebot-interactive-1 sh -c '
-for title in "Notepad" "Save As" "Untitled"; do
-  wid=$(xdotool search --name "$title" 2>/dev/null | head -1)
-  [ -n "$wid" ] && xdotool windowclose "$wid" 2>/dev/null
-done
-' 2>/dev/null || true
-sleep 2
-annotate "Alt+F4: Notepad closed (document was cleared)"
+# Close Notepad — dialog watcher catches any "Save changes?" prompt
+press_key "alt+F4" "Notepad"; sleep 2
+annotate "Alt+F4: Notepad closed (watcher handles stray dialogs)"
 
 # ================ PART 3: FILE OPS via cmd.exe ================
 echo ""
