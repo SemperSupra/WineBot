@@ -98,10 +98,22 @@ GUI apps should accept command-line file path arguments to avoid dialogs entirel
 In the demo, file dialogs are bypassed: file creation uses `cmd.exe echo > file`,
 registry uses `reg add/query/delete`, and Notepad demonstrates pure input only.
 
-**Future path: AHK Gui replacement dialog.** Since AHK Gui controls ARE mapped to
-X11 windows and ARE injectable, a future enhancement could build a resident AHK
-script that detects comdlg32 dialog windows via `WinWait`, closes them, and opens
-AHK Gui replacements with fully injectable Edit controls.
+**Future path: AHK Pipe-Based Dialog Replacement.**
+A resident AHK script (`automation/core/dialog_replacement.ahk`) has been
+prototyped. The design:
+1. AHK script runs as a detached process, monitors for "Save As" / "Open" windows
+2. When detected, closes the Wine dialog (WinClose / Send Escape)  
+3. Opens an AHK Gui replacement with Edit controls and Save/Cancel buttons
+4. Accepts commands via a named pipe file (`C:\dialog_handler\pipe.txt`):
+   `set_filename:myfile.txt`, `click_save`, `click_cancel`, `get_state`
+5. Uses AHK's `GuiControl` to set control values internally (works in-process)
+6. Results written back to the pipe file as JSON
+
+The controls ARE reachable via DllCall from within the AHK process (same
+wineserver connection). The AHK Gui responds to pipe commands because
+`GuiControl` operates in-process. External X11 injection still cannot
+reach the Edit controls (same comdlg32 USER32 child window limitation),
+but the pipe pathway bypasses this entirely.
 
 ### 4. XInput2 Disabled
 
