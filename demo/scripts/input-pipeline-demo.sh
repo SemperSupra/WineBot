@@ -158,66 +158,55 @@ echo "  [VERIFY]:"
 docker exec compose-winebot-interactive-1 sh -c \
   'test -f /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt && echo "  FILE EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Demo_v5.txt' 2>/dev/null || echo "  (check manually)"
 
-# Close Notepad — dialog watcher catches any "Save changes?" prompt
+# Close Notepad — select-all + delete first to avoid "Save changes?" prompt
+press_key "ctrl+a" "Notepad"; sleep 0.3
+press_key "Delete" "Notepad"; sleep 0.3
+type_text " " "Notepad"; sleep 0.2
 press_key "alt+F4" "Notepad"; sleep 2
-annotate "Alt+F4: Notepad closed (watcher handles stray dialogs)"
+annotate "Alt+F4: Notepad closed (document was cleared)"
 
-# ================ PART 3: FILE OPS via cmd.exe ================
+# ================ PART 3: FILE OPS via cmd.exe /c (no keyboard) ================
 echo ""
 echo "=== PART 3: File Create, Verify, Edit via cmd.exe ==="
-chapter "Part 3: File Operations via cmd.exe"
-annotate "PART 3: File operations via cmd.exe (no dialogs needed)"
+chapter "Part 3: File Operations via cmd.exe /c"
+annotate "PART 3: File operations via cmd.exe /c (no keyboard, no window targeting)"
 
-api_post "/apps/run" '{"path":"cmd.exe","detach":true}' > /dev/null; sleep 2
-type_text "echo WineBot cmd.exe demo > C:\\artifacts\\CmdDemo_v5.txt" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
-type_text "echo Line 2: Created via cmd.exe API >> C:\\artifacts\\CmdDemo_v5.txt" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
+# cmd.exe has no X11 window in Wine — use /apps/run with args directly
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c echo WineBot cmd.exe demo > C:/artifacts/CmdDemo_v5.txt & echo Line 2: Created via cmd.exe API >> C:/artifacts/CmdDemo_v5.txt","detach":false}' > /dev/null
+sleep 1
 annotate "FILE CREATED: CmdDemo_v5.txt"
 
-type_text "type C:\\artifacts\\CmdDemo_v5.txt" "cmd"; sleep 0.3
-press_key "Return" "cmd"; sleep 1.5
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c type C:/artifacts/CmdDemo_v5.txt","detach":false}' > /dev/null
+sleep 1
 annotate "FILE VERIFIED: Content displayed"
-
-type_text "exit" "cmd"; sleep 0.2
-press_key "Return" "cmd"; sleep 1
 
 echo "  [VERIFY] $(docker exec compose-winebot-interactive-1 wc -l //wineprefix/drive_c/artifacts/CmdDemo_v5.txt 2>/dev/null) lines"
 
-# ================ PART 4: REGISTRY via cmd.exe reg ================
+# ================ PART 4: REGISTRY via cmd.exe /c reg ================
 echo ""
 echo "=== PART 4: Registry via cmd.exe reg add/query/delete ==="
 chapter "Part 4: Registry Operations via reg.exe"
-annotate "PART 4: Registry via cmd.exe reg commands (deterministic, no GUI)"
+annotate "PART 4: Registry via cmd.exe /c reg (deterministic, no GUI, no keyboard)"
 
-api_post "/apps/run" '{"path":"cmd.exe","detach":true}' > /dev/null; sleep 2
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c reg add HKCU\\\\Software\\WineBotDemo /v Version /t REG_SZ /d v5.0 /f","detach":false}' > /dev/null
+sleep 0.5
+annotate "REG ADD: HKCU\\\\Software\\WineBotDemo Version=v5.0"
 
-# CREATE string value
-type_text "reg add HKCU\\Software\\WineBotDemo /v Version /t REG_SZ /d v5.0 /f" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
-annotate "REG ADD: HKCU\\Software\\WineBotDemo Version=v5.0"
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c reg add HKCU\\\\Software\\WineBotDemo /v Count /t REG_DWORD /d 5 /f","detach":false}' > /dev/null
+sleep 0.5
+annotate "REG ADD: HKCU\\\\Software\\WineBotDemo Count=5 (DWORD)"
 
-# CREATE DWORD value
-type_text "reg add HKCU\\Software\\WineBotDemo /v Count /t REG_DWORD /d 5 /f" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
-annotate "REG ADD: HKCU\\Software\\WineBotDemo Count=5 (DWORD)"
-
-# CREATE second string
-type_text "reg add HKCU\\Software\\WineBotDemo /v Status /t REG_SZ /d Active /f" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c reg add HKCU\\\\Software\\WineBotDemo /v Status /t REG_SZ /d Active /f","detach":false}' > /dev/null
+sleep 0.5
 annotate "REG ADD: Status=Active"
 
-# QUERY to verify
-type_text "reg query HKCU\\Software\\WineBotDemo" "cmd"; sleep 0.3
-press_key "Return" "cmd"; sleep 2
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c reg query HKCU\\\\Software\\WineBotDemo","detach":false}' > /dev/null
+sleep 1
 annotate "REG QUERY: All values confirmed"
 
-# DELETE
-type_text "reg delete HKCU\\Software\\WineBotDemo /f" "cmd"; sleep 0.3
-press_key "Return" "cmd"; sleep 0.5
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c reg delete HKCU\\\\Software\\WineBotDemo /f","detach":false}' > /dev/null
+sleep 0.5
 annotate "REG DELETE: Key removed"
-type_text "exit" "cmd"; sleep 0.2
-press_key "Return" "cmd"; sleep 1
 
 # ================ PART 5: BATCH SCRIPT ================
 echo ""
@@ -228,12 +217,9 @@ annotate "PART 5: Batch script deployed and executed"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 docker cp "$SCRIPT_DIR/CmdScript_Demo.bat" compose-winebot-interactive-1://wineprefix/drive_c/artifacts/CmdScript_Demo.bat 2>/dev/null
 
-api_post "/apps/run" '{"path":"cmd.exe","detach":true}' > /dev/null; sleep 2
-type_text "C:\\artifacts\\CmdScript_Demo.bat" "cmd"; sleep 0.3
-press_key "Return" "cmd"; sleep 4
-annotate "BATCH SCRIPT EXECUTED"
-type_text "exit" "cmd"; sleep 0.2
-press_key "Return" "cmd"; sleep 1
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c C:/artifacts/CmdScript_Demo.bat","detach":false}' > /dev/null
+sleep 3
+annotate "BATCH SCRIPT EXECUTED via cmd.exe /c"
 
 # ================ CLEANUP ================
 echo ""
@@ -241,9 +227,8 @@ echo "=== PART 6: Cleanup ==="
 chapter "Part 6: Cleanup"
 annotate "PART 6: Cleanup"
 
-api_post "/apps/run" '{"path":"cmd.exe","detach":true}' > /dev/null; sleep 2
-type_text "del C:\\artifacts\\WineBot_Demo_v5.txt 2>nul & del C:\\artifacts\\CmdDemo_v5.txt 2>nul & del C:\\artifacts\\CmdScript_Demo.bat 2>nul & del C:\\artifacts\\CmdScript_Output.txt 2>nul & echo Cleanup done" "cmd"; sleep 0.5
-press_key "Return" "cmd"; sleep 0.5
+api_post "/apps/run" '{"path":"cmd.exe","args":"/c del C:/artifacts/WineBot_Demo_v5.txt 2>nul & del C:/artifacts/CmdDemo_v5.txt 2>nul & del C:/artifacts/CmdScript_Demo.bat 2>nul & del C:/artifacts/CmdScript_Output.txt 2>nul","detach":false}' > /dev/null
+sleep 0.5
 annotate "CLEANUP COMPLETE"
 
 # ================ SUMMARY ================
