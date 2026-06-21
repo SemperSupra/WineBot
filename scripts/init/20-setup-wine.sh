@@ -135,6 +135,20 @@ if [ -n "${WINE_WINETRICKS:-}" ]; then
     wineserver -w
     echo "--> winetricks complete."
 fi
+
+# Optional MS Core Fonts (Arial, Times New Roman, Courier New, Verdana, etc.)
+# Provides pixel-identical rendering for OCR/CV templates captured on Windows
+if [ "${WINE_INSTALL_MS_FONTS:-0}" = "1" ]; then
+    echo "--> Installing Microsoft Core Fonts (winetricks corefonts)..."
+    winetricks --unattended corefonts >/dev/null 2>&1 || echo "    [WARN] corefonts install failed"
+    # Remove Liberation font replacements so MS fonts take priority
+    wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements" /v "Arial" /f >/dev/null 2>&1 || true
+    wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements" /v "Times New Roman" /f >/dev/null 2>&1 || true
+    wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements" /v "Courier New" /f >/dev/null 2>&1 || true
+    wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements" /v "Verdana" /f >/dev/null 2>&1 || true
+    wineserver -w
+    echo "--> MS Core Fonts installed."
+fi
 wineserver -k
 if ! timeout 30s wineserver -w; then
     echo "--> [WARN] wineserver wait timed out after optimization; continuing." >&2

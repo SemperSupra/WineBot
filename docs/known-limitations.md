@@ -4,58 +4,30 @@ This document catalogs fundamental limitations of the tools and subsystems
 used by WineBot. These are not bugs — they are constraints of the underlying
 platforms (Wine, X11, AHK, xdotool) that agents and users should understand.
 
-## 1. Window Identification Systems
+Each section describes the limitation, its impact, and the workaround or
+adaptation already in place.
 
-WineBot has **two independent window ID systems** that do not map to each other:
+---
+
+## Input & Window Management
+
+### 1. Window Identification: Two Incompatible ID Systems
+
+WineBot has two independent window ID systems that do not map to each other:
 
 | System | Source | Format | Used By |
 |:---|:---|:---|:---|
 | **X11 Window IDs** | `xdotool search`, `/health/windows` | Decimal (`23068673`) | Mouse clicks, xdotool, window listing |
 | **Wine HWNDs** | AHK `WinExist()`, `WinGet` | Hex (`0x160034`) | AHK window targeting with `ahk_id` |
 
-**Do not pass X11 window IDs to AHK's `ahk_id` parameter.** They are different
-numbering systems. The `/input/key` API endpoint uses **native AHK title matching**
-via `WinActivate`/`WinWaitActive` with the title string, which works correctly
-across both systems. Always use **window titles** as the stable identifier.
+**Do not pass X11 window IDs to AHK's `ahk_id`.** The `/input/key` API endpoint
+uses AHK native title matching (`WinActivate`/`WinWaitActive` with the title
+string). Always use **window titles** as the stable identifier.
 
-```bash
-# CORRECT: Use title for both mouse and keyboard
-POST /input/mouse/click {"x": 400, "y": 300, "window_title": "Notepad"}
-POST /input/key {"keys": "Hello", "window_title": "Notepad"}
+### 2. Explorer.exe /desktop Keyboard Barrier
 
-# WRONG: Using X11 numeric IDs with keyboard (AHK won't match)
-POST /input/key {"keys": "Hello", "window_id": "23068673"}  # AHK can't use this
-```
-
-## 2. comdlg32 File Dialogs
-
-Wine's common dialog implementation (`comdlg32`) creates modal windows that
-have **fundamental input limitations**:
-
-- **AHK `Send` cannot type into file dialog edit controls.** The Save As, Open,
-  and similar dialogs are drawn as a single monolithic X11 window with zero
-  children. All controls (filename field, buttons, tree view) exist only
-  inside Wine's internal windowing — they are not exposed as separate X11
-  or AHK-accessible subwindows.
-
-- **`xdotool type` cannot type into dialog controls either.** `xdotool` can
-  only send keystrokes to the parent X11 window, not to Wine's internal
-  control hierarchy.
-
-- **WinSpy** can inspect dialog controls but cannot inject text.
-
-- **Workaround for file dialogs:**
-  - Use `cmd.exe` or `reg.exe` for file and registry operations via the API
-  - Write files programmatically via `/run/python` (Linux Python writes to
-    the Wine prefix's filesystem directly)
-  - Use `docker cp` to inject files at the Linux filesystem level
-  - For GUI apps that require Save/Open: use apps that accept command-line
-    arguments for file paths, bypassing the dialog entirely
-
-## 3. Explorer.exe /desktop Keyboard Barrier
-
-Wine's `explorer.exe /desktop` creates a virtual desktop window that
-**intercepts all X11 keyboard events** from VNC and xdotool.
+Wine's `explorer.exe /desktop` creates a virtual desktop window that intercepts
+all X11 keyboard events from VNC and xdotool:
 
 ```
 VNC Client -> x11vnc(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
@@ -63,81 +35,236 @@ VNC Client -> x11vnc(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
                                           KEYBOARD EVENTS STOP HERE
 ```
 
-**Solution:** The `/input/key` endpoint uses AHK `Send` by default,
-which operates inside the Wine process space and bypasses this barrier.
-Mouse clicks (`/input/mouse/click`) work through xdotool regardless.
+**Adaptation:** `/input/key` uses AHK `Send` which operates inside the Wine process
+space, bypassing this barrier. Mouse clicks work through xdotool regardless.
+Configurable via `WINEBOT_SUPERVISE_EXPLORER` and `WINEBOT_INPUT_KEY_BACKEND`.
 
-If you need xdotool-based keyboard:
-```bash
-# Option A: Disable the desktop supervisor
-WINEBOT_SUPERVISE_EXPLORER=0
+### 3. comdlg32 File Dialogs Cannot Accept Text Input
 
-# Option B: Set keyboard backend to xdotool
-WINEBOT_INPUT_KEY_BACKEND=xdotool
-```
+Wine's common dialog implementation creates modal windows with zero X11 children.
+AHK `Send`, `xdotool type`, `winpy ctypes`, and `WinSpy` all cannot inject text
+into Save As/Open dialog filename fields.
 
-## 4. AHK Send Character Escaping
+**Adaptation:** File and registry operations use `cmd.exe` (echo/redirect, reg add/query),
+`/run/python` (Linux Python writes to prefix), or `docker cp` for file injection.
+GUI apps should accept command-line file path arguments to avoid dialogs entirely.
 
-AHK's `Send` command interprets certain characters as control sequences:
+### 4. XInput2 Disabled
 
-| Character | AHK Meaning | API Behavior |
-|:---|:---|:---|
-| `%` | Variable dereference | Escaped to `` `% `` |
-| `+` | Shift modifier | Escaped to `{+}` in plain text |
-| `^` | Ctrl modifier | Escaped to `{^}` in plain text |
-| `!` | Alt modifier | Escaped to `{!}` in plain text |
-| `#` | Win modifier | Escaped to `{#}` in plain text |
+Wine's XInput2 support is unstable with xdotool and VNC input injection. WineBot
+sets `UseXInput2=N` at startup (verified by `diagnose-wine-registry.sh`). This
+sacrifices touch/pen input and high-precision scroll events. For GUI automation,
+this is the correct tradeoff.
 
-The translation layer handles these automatically. When using `/run/ahk`
-directly (not through `/input/key`), you must handle escaping yourself.
+**Managed keys:** `UseXInput2=N`, `Managed=Y`, `GrabFullscreen=N`, `UseTakeFocus=N`.
 
-## 5. /run/python Runs Linux Python
+### 5. Desktop Supervisor Required
 
-The `/run/python` endpoint executes **Linux Python**, not Windows Python
-(`winpy`). This means:
-- `ctypes.windll` is not available
-- Paths should use Linux conventions (`/wineprefix/drive_c/...`)
-- No access to Wine's Windows API from Python
+Wine's `explorer.exe` (desktop shell) can crash, leaving the screen as blue X11 root
+("ghost desktop"). A supervisor loop monitors the process and restarts it with
+exponential backoff and a circuit breaker. Configurable via:
+- `WINEBOT_SUPERVISE_EXPLORER` (enable/disable)
+- `WINEBOT_SUPERVISOR_RESTART_WINDOW_SECONDS` (reset window)
+- `WINEBOT_SUPERVISOR_MAX_RESTARTS_PER_WINDOW` (circuit breaker threshold)
 
-For Windows API access, use `/run/ahk` with a script that invokes `winpy`.
+### 6. Window Focus Management
 
-## 6. AutoIt/AHK Startup Delay
+Wine lacks Windows' sophisticated foreground window management. WineBot provides
+`WINE_FORCE_FOCUS=1` which sets aggressive registry keys:
+`ForegroundFlashCount=0`, `ActiveWndTrkTimeout=0`, `BlockSendInputResets=0`.
 
-AHK and AutoIt scripts have a startup overhead of **~2-3 seconds** per call
-due to Wine process initialization. The `SetKeyDelay` of 20ms adds ~20ms
-per keystroke. For bulk text entry, send the full string in one call rather
-than individual keystrokes.
+Window titles in Wine may differ by locale or Wine version. Always verify titles
+with `GET /health/windows` before targeting.
 
-## 7. No VNC Keyboard Passthrough in Headless Mode
+### 7. WinSpy Exists But Cannot Inject
 
-In headless mode, VNC keyboard events are intercepted by the desktop barrier
-(see #3). VNC mouse events work. For programmatic keyboard control, always
-use the `/input/key` API endpoint.
+WinSpy can inspect dialog control class names and positions but cannot inject text
+into Wine's internal control hierarchy. Use it only for inspection during debugging.
 
-## 8. Window Focus and Title Matching
+---
 
-AHK `WinWaitActive` has a 2-second default timeout. If the target window
-doesn't exist or has a slightly different title, the keystroke is sent
-to whatever window currently has focus.
+## Process Model
 
-Window titles in Wine may differ from their Windows equivalents:
-- "Untitled - Notepad" vs "Untitled - Notepad"
-- "Save As" (Wine) vs "Save As" (same in Wine, but may differ by locale)
+### 8. wineserver as User-Space Daemon
 
-Always verify window titles with `GET /health/windows` before targeting.
+Unlike Windows where the kernel is always present, Wine's `wineserver` runs as a
+user-space daemon that can crash, hang, or fail to start. WineBot manages this with:
+- Stale socket cleanup at startup (`/tmp/.wine-*/server-*`)
+- `wineserver -k` and `wineserver -p` lifecycle orchestration
+- 30-second timeout waits with warning fallback
+- Crash detection in the supervisor loop
 
-## 9. XInput2 Disabled
+### 9. No Windows Services
 
-WineBot disables XInput2 (`UseXInput2=N`) for input stability with xdotool
-and VNC. This means Wine applications cannot use touch/pen input or
-high-precision scroll events. For the vast majority of GUI automation,
-this is the correct setting.
+Wine does not run Windows services natively. No Services Control Manager exists.
+All applications are launched directly via `wine <exe>` with no dependency
+resolution. If an app requires a running service, it must be launched manually.
 
-## 10. mDNS Port Conflicts
+### 10. AHK/AutoIt Startup Overhead (~2-3s per call)
 
-WineBot runs mDNS on port 5353/UDP for service discovery. On Windows hosts
-with Docker Desktop, this port may conflict with the host's Bonjour/mDNS
-service. Workaround: remap the port in docker-compose.
+Every AHK or AutoIt invocation requires a full Wine process initialization through
+wineserver. Each `/input/key` call with the AHK backend incurs this overhead.
+Mitigation: send the full text string in one call rather than per-character calls.
+The `WINEBOT_TIMEOUT_INPUT_KEY_SECONDS` config (default: 10s) accounts for this.
+
+### 11. cmd.exe /c Return Codes
+
+`cmd.exe /c` with `detach=false` may report `status: failed` even when the
+actual command succeeded. Wine's cmd.exe can return exit code 1 for startup
+diagnostics before executing the command. **Recommendation:** use `detach=true`
+for cmd.exe operations and verify output via `docker exec` or file content checks.
+
+### 12. wineserver Zombie Sockets
+
+If wineserver crashes hard, it can leave a stale socket at
+`/tmp/.wine-1000/server-*` that blocks future wineserver startup. The entrypoint
+cleans these on boot. In severe cases, container recreation is required.
+
+---
+
+## File System
+
+### 13. Z:\ Drive Mapping and Path Conversion
+
+Wine maps the Linux root filesystem to `Z:\`. The API's `to_wine_path()` function
+handles conversion. Windows tools receive `Z:\path\to\file` paths. When using
+`/run/python` (Linux Python), use Linux paths (`/wineprefix/drive_c/...`).
+
+### 14. Backslash Handling
+
+Wine accepts both `\` and `/` in most contexts (cmd.exe, reg.exe). However,
+when passing paths through JSON APIs, backslashes require double-escaping (`\\\\`).
+Prefer forward slashes where possible: `C:/artifacts/file.txt`.
+
+### 15. WINEPREFIX as Single Directory
+
+Wine stores all system state in the `WINEPREFIX` directory (registry as `.reg`
+files, installed apps, user profiles). This is different from real Windows
+where state is distributed across the filesystem. The prefix is backed by a
+pre-warmed template that saves ~60s of startup time.
+
+### 16. WINEPREFIX Ownership
+
+The prefix must be world-writable (`chmod 777`) due to UID mapping in containers.
+wineserver sockets are user-specific. Running wineserver as root then switching
+users creates stale sockets that must be cleaned.
+
+### 17. winetricks Available But Not Automatic
+
+Winetricks is installed (pinned to v20260125) but does not run automatically.
+Set `WINE_WINETRICKS=vcrun2019,dotnet48` to auto-install components at startup.
+Components install sequentially with `--unattended` mode.
+
+---
+
+## Registry
+
+### 18. Registry Stored as Flat Files
+
+Wine stores the registry as text files (`system.reg`, `user.reg`) rather than
+binary hives. The init script reads these directly to check prefix readiness.
+`wine reg query` output format can vary between Wine versions; diagnostic
+scripts handle this with fallback parsing.
+
+### 19. DLL Overrides Required
+
+Wine requires explicit `WINEDLLOVERRIDES="mscoree,mshtml="` during initialization
+to disable Mono (.NET) and Gecko (HTML) engine prompts. These engines are not
+needed for WineBot's automation use case and disabling them speeds up startup.
+
+---
+
+## Fonts & Rendering
+
+### 20. No Proprietary Windows Fonts
+
+Wine does not include Microsoft fonts (Segoe UI, Tahoma, Verdana, etc.).
+WineBot substitutes them with metric-compatible Liberation fonts (Liberation Sans,
+Liberation Serif, Liberation Mono). These are installed at build time
+(`fonts-liberation` package).
+
+For pixel-identical OCR/CV template matching with real Windows:
+- **Option A:** Capture OCR templates on WineBot itself (the Liberation fonts are
+  consistent within the same environment)
+- **Option B:** Set `WINE_INSTALL_MS_FONTS=1` to run `winetricks corefonts` at
+  startup, installing Microsoft's freely redistributable Core Fonts (Arial,
+  Times New Roman, Courier New, Verdana, etc.)
+
+### 21. No Desktop Window Manager (DWM)
+
+Wine has no DWM compositor. WineBot provides Openbox for window management
+(decoration, focus, keyboard bindings) and tint2 for the taskbar panel.
+Window decorations are controlled via Openbox `rc.xml` and Motif hints.
+
+### 22. No Hardware Acceleration in Headless Mode
+
+Headless mode (no physical GPU) means no D3D/OpenGL hardware acceleration.
+Wine falls back to software rendering. This is correct for automation use
+cases where rendering fidelity is secondary to input reliability.
+
+### 23. Font Smoothing Configurable
+
+`WINE_FONT_SMOOTHING` controls text rendering quality:
+- `grayscale` (default): best for CV/OCR and automation
+- `cleartype`: better for human VNC viewers
+- `off`: raw rendering, lowest resource usage
+
+---
+
+## UI Automation
+
+### 24. UI Automation (UIA) Not Functional
+
+Wine 10.0's UI Automation support is incomplete. `pywinauto`'s `uia` backend
+fails during `comtypes`/UIA typelib initialization even with `UIAutomationCore.dll`
+present. WineBot does not use pywinauto or UIA-based automation.
+
+**Adaptation:** AHK, AutoIt, xdotool, and computer vision (CV/OCR) provide
+equivalent automation capabilities without UIA dependency.
+
+**Future:** Tracked in GitHub issue for UIA support monitoring. Wine has been
+improving UIA since v10.0; re-evaluate with each major Wine release.
+
+### 25. WinSpy Inspection Only
+
+The `WinSpy` tool can inspect window class names, control IDs, and positions.
+However, it cannot inject text or interact with Wine's internal controls.
+Use it for debugging window structure, not for automation.
+
+---
+
+## Networking
+
+### 26. mDNS Port Conflicts
+
+WineBot runs mDNS on port 5353/UDP. On Windows hosts with Docker Desktop, this
+may conflict with the host's Bonjour/mDNS service. Workaround: remap the port
+in `docker-compose.yml`.
+
+### 27. Architecture Decision: Debian Trixie
+
+Alpine (musl libc) is incompatible with Wine's glibc dependency. Ubuntu + WineHQ
+introduces third-party repository risk. Debian Trixie was selected for native
+Wine packages without external repos, providing the most recent stable Wine
+available through Debian's own channels.
+
+---
+
+## Diagnostics
+
+### 28. winedbg Limitations
+
+`winedbg --gdb` and `winedbg --auto` have known flakiness in headless Xvfb
+environments. Process inspection may fail silently. For crash diagnostics,
+prefer session logs and Wine debug channels (`WINEDEBUG=+seh,+tid`).
+
+### 29. Wine Registry Output Format Variability
+
+`wine reg query` output format varies between Wine versions. Diagnostic scripts
+use fallback `awk` parsing to handle this. The `diagnose-wine-registry.sh` script
+validates key registry settings are applied correctly.
+
+---
 
 ## Summary: When to Use Which Tool
 
@@ -151,3 +278,8 @@ service. Workaround: remap the port in docker-compose.
 | Save/Open file dialog | **Avoid** — use cmd.exe args instead | `docker cp` file injection |
 | Read a window title | `GET /health/windows` | `xdotool getwindowname` |
 | Run a batch script | `/apps/run` `cmd.exe /c script.bat` | `/run/python` write then execute |
+| Windows API access | `/run/ahk` invoking `winpy` | N/A |
+| Inspect window structure | `WinSpy` (read-only) | `xwininfo -tree` |
+| Crash diagnostics | Session logs + `WINEDEBUG=+seh` | `winedbg --auto` |
+| Install runtimes | `WINE_WINETRICKS=vcrun2019,dotnet48` | Manual `winetricks` via docker exec |
+| Install MS fonts | `WINE_INSTALL_MS_FONTS=1` | Manual `winetricks corefonts` |

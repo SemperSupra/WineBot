@@ -43,6 +43,7 @@ x-winebot-env: &winebot_env
   WINE_FONT_SMOOTHING: ${WINE_FONT_SMOOTHING:-grayscale}
   WINE_FORCE_FOCUS: ${WINE_FORCE_FOCUS:-0}
   WINE_WINETRICKS: ${WINE_WINETRICKS:-}
+  WINE_INSTALL_MS_FONTS: ${WINE_INSTALL_MS_FONTS:-0}
   WINEDEBUG: ${WINEDEBUG:-}
 
 x-winebot-base: &winebot_base
