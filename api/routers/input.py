@@ -203,6 +203,7 @@ def _desktop_absent() -> bool:
 async def _send_keys(
     keys: str,
     window_id: Optional[str],
+    window_title: Optional[str],
     backend_preference: str,
     session_dir: str,
     timeout: int,
@@ -210,6 +211,8 @@ async def _send_keys(
     """Dispatch key injection to the configured backend.
 
     AHK backend: writes a one-shot AHK script and executes it via wine.
+    Uses AHK native title matching (window_title) preferentially over
+    xdotool-derived X11 IDs, since X11 window IDs do not map to AHK HWNDs.
     xdotool backend: uses xdotool key command directly.
     auto: uses xdotool if explorer.exe desktop is absent, otherwise AHK.
     """
@@ -250,7 +253,14 @@ async def _send_keys(
         "#SingleInstance Force",
         "SetKeyDelay, 20, 20",
     ]
-    if window_id:
+    # Prefer AHK native title matching (window_title) over X11 IDs.
+    # X11 window IDs from xdotool do not correspond to AHK HWNDs.
+    if window_title:
+        script_lines.extend([
+            'WinActivate, %s' % window_title,
+            'WinWaitActive, %s,, 2' % window_title,
+        ])
+    elif window_id:
         hex_id = window_id
         if window_id.startswith("0x"):
             hex_id = window_id  # already hex
@@ -541,6 +551,7 @@ async def key_press(data: KeyModel):
     result = await _send_keys(
         keys=data.keys,
         window_id=target_win_id,
+        window_title=target_win_title,
         backend_preference=backend,
         session_dir=session_dir,
         timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,

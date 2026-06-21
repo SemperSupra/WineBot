@@ -174,3 +174,41 @@ python3 scripts/diagnostics/analyze-trace-latency.py --mode keyboard
 See [docs/tracing.md](docs/tracing.md) for the full trace event schema and cross-layer
 correlation guide.
 
+## 8. Window Identification Systems
+
+WineBot has two distinct window ID systems that do **not** map to each other:
+
+| System | Source | Example | Used By |
+|:---|:---|:---|:---|
+| **X11 Window IDs** | `xdotool search --name "Title"` | `23068673` (decimal) | `/input/mouse/click`, `xdotool key`, `GET /health/windows` |
+| **Wine HWNDs** | AHK `WinExist("Title")` | `0x160034` (hex) | `/input/key` (AHK backend) via native title matching |
+
+**Rule:** When calling `/input/key` with a `window_title`, the AHK backend uses
+AHK's native `WinActivate/WinWaitActive` with the title string — NOT the X11 ID.
+This is correct because X11 window IDs are not AHK HWNDs and cannot be used
+with `ahk_id`.
+
+When calling `/input/mouse/click`, the xdotool backend uses X11 window IDs,
+which ARE correct for X11-level operations.
+
+To discover window titles:
+```bash
+GET /health/windows   # Returns X11 IDs and titles for all windows
+```
+
+To target a specific window in a script, use its **title** (visible in the window list),
+not its numeric ID. The API resolves the title to the correct system internally.
+
+### Cross-system coordination
+
+In scripts and agents that use both mouse and keyboard:
+1. **Get window list** via `GET /health/windows` — titles are the source of truth
+2. **Mouse clicks**: Use `window_title` from the window list (xdotool resolves to X11 ID)
+3. **Keyboard input**: Use the same `window_title` (AHK resolves by Wine title matching)
+4. **Dialogs**: After launching a dialog (Save As, Open), switch window_title to the
+   dialog's title. Example: `"Save As"` not `"Notepad"` after Ctrl+S opens the save dialog.
+
+**See [docs/known-limitations.md](docs/known-limitations.md) for the full catalog of platform constraints**
+including comdlg32 dialog keyboard limitations, AHK Send character escaping rules,
+`/run/python` Linux vs Windows behavior, and tool selection guidance.
+
