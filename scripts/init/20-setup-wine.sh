@@ -174,6 +174,11 @@ if [ -x "/scripts/setup/install-hooks.sh" ]; then
     /scripts/setup/install-hooks.sh
 fi
 
+# Install usecase loadout (curated tool stack for specific automation tasks)
+if [ -x "/scripts/setup/install-loadout.sh" ] && [ -n "${WINEBOT_LOADOUT:-}" ]; then
+    /scripts/setup/install-loadout.sh
+fi
+
 echo "--> Pass 3 complete."
 set -e
 # wineserver -w removed (blocking)
