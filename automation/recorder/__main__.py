@@ -560,6 +560,10 @@ def finalize_recording(
                 output_file=final_output,
             )
             concat_parts(parts_file, final_output)
+    # Generate chapter markers from annotation events
+    from .chapters import generate_chapter_file
+    chapters_file = generate_chapter_file(session_dir)
+
     write_finalization_state(
         session_dir,
         "mux",
@@ -567,9 +571,10 @@ def finalize_recording(
         output_file=final_output,
         ass_file=ass_path,
         vtt_file=vtt_path,
+        chapters_file=chapters_file,
     )
     muxer = FFMpegRecorder(display, resolution, fps, final_output)
-    muxer.mux_subtitles(ass_path, vtt_path, metadata=meta)
+    muxer.mux_subtitles(ass_path, vtt_path, metadata=meta, chapters_file=chapters_file)
 
 
 def adjust_events_for_pauses(events):

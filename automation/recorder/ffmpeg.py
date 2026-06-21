@@ -77,9 +77,10 @@ class FFMpegRecorder:
         self.process = None
 
     def mux_subtitles(
-        self, ass_file: str, vtt_file: str, metadata: Optional[Dict[Any, Any]] = None
+        self, ass_file: str, vtt_file: str, metadata: Optional[Dict[Any, Any]] = None,
+        chapters_file: Optional[str] = None,
     ):
-        """Embeds external subtitle files into the MKV container with global metadata."""
+        """Embeds external subtitle and chapter files into the MKV container."""
         if not os.path.exists(self.output_file):
             logger.error(f"Cannot mux: {self.output_file} not found.")
             return
@@ -95,21 +96,23 @@ class FFMpegRecorder:
             ass_file,
             "-i",
             vtt_file,
-            "-map",
-            "0:v",
-            "-map",
-            "1:s",
-            "-map",
-            "2:s",
-            "-c",
-            "copy",
-            "-metadata:s:s:0",
-            "title=Overlays (ASS)",
-            "-metadata:s:s:1",
-            "title=Events (VTT)",
-            "-disposition:s:0",
-            "default",
         ]
+
+        if chapters_file and os.path.exists(chapters_file):
+            cmd.extend(["-f", "ffmetadata", "-i", chapters_file])
+            # Map: 0=video, 1=ASS, 2=VTT, 3=chapters (not a stream, handled below)
+            cmd.extend(["-map", "0:v", "-map", "1:s", "-map", "2:s"])
+            cmd.extend(["-map_metadata", "3"])
+            cmd.extend(["-map_chapters", "3"])
+        else:
+            cmd.extend(["-map", "0:v", "-map", "1:s", "-map", "2:s"])
+
+        cmd.extend([
+            "-c", "copy",
+            "-metadata:s:s:0", "title=Overlays (ASS)",
+            "-metadata:s:s:1", "title=Events (VTT)",
+            "-disposition:s:0", "default",
+        ])
 
         if metadata:
             for key, value in metadata.items():
