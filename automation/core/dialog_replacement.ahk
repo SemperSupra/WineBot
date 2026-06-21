@@ -1,21 +1,14 @@
 ; dialog_replacement.ahk — AHK Save Dialog with Pipe Protocol
 ;
-; Launched via /apps/run with detach=true:
-;   POST /apps/run {"path": "ahk", "args": "C:/automation/core/dialog_replacement.ahk", "detach": true}
+; Launch: POST /apps/run {"path":"ahk","args":"C:/dr.ahk","detach":true}
 ;
-; Protocol via C:\dialog_handler\pipe.txt:
-;   open_gui                        — Shows the AHK Save dialog
-;   set_filename:name.txt           — Sets filename in Edit control
-;   click_save                       — Saves file and exits
-;   click_cancel                     — Cancels and exits
+; Commands (write to C:\dialog_handler\pipe.txt):
+;   open_gui              Show the dialog
+;   set_filename:name.txt  Set filename
+;   click_save             Save file and exit
+;   click_cancel           Cancel and exit
 ;
-; Responses (JSON-style, written back to pipe):
-;   {"status":"ready"}       — Script started, waiting
-;   {"status":"gui_opened"}   — Gui is visible
-;   {"status":"set_ok"}       — Filename set successfully
-;   {"status":"saved"}        — File saved to disk
-;   {"status":"cancelled"}    — User/agent cancelled
-;   {"status":"error:..."}     — Error with message
+; Responses: {"status":"ready|gui_opened|set_ok|saved|cancelled|error:..."}
 
 #NoTrayIcon
 #NoEnv
@@ -24,16 +17,17 @@
 SetWorkingDir, C:\
 
 global PIPE := "C:\dialog_handler\pipe.txt"
-global FILE_ARTIFACTS := "C:/artifacts/"
+global ARTIFACTS := "C:/artifacts/"
 global gFileName := "untitled.txt"
 
+; Startup: ensure dir and pipe exist, both owned by current user
 FileCreateDir, C:\dialog_handler
 FileDelete, %PIPE%
-Sleep, 200
+Sleep, 150
 FileAppend, {"status":"ready"}`n, %PIPE%
 
 SetTimer, PollPipe, 300
-SetTimer, SelfDestruct, -60000  ; 60s lifetime
+SetTimer, SelfDestruct, -120000
 return
 
 SelfDestruct:
@@ -45,12 +39,11 @@ PollPipe:
     if (!FileExist(PIPE))
         return
     FileRead, raw, %PIPE%
-    if (raw = "" or InStr(raw, "ready") or InStr(raw, """status"""))
+    if (raw = "" or InStr(raw, """status"""))
         return
 
     FileDelete, %PIPE%
-    raw := Trim(raw, " `r`n`t")
-    cmd := raw
+    cmd := Trim(raw, " `r`n`t")
 
     if (InStr(cmd, "open_gui")) {
         Gui, New, +AlwaysOnTop +ToolWindow, WineBot Save Dialog
@@ -63,12 +56,9 @@ PollPipe:
         Gui, Add, Button, x230 y80 w100 h30 gBtnCancel, andCancel
         Gui, Show, w400 h130, WineBot Save Dialog
         FileAppend, {"status":"gui_opened"}`n, %PIPE%
-        return
     }
-
-    if (InStr(cmd, "set_filename:")) {
-        name := SubStr(cmd, 14)
-        name := Trim(name, " `r`n`t")
+    else if (InStr(cmd, "set_filename:")) {
+        name := Trim(SubStr(cmd, 14), " `r`n`t")
         if (name != "") {
             gFileName := name
             GuiControl,, DlgFileName, %name%
@@ -76,23 +66,22 @@ PollPipe:
         } else {
             FileAppend, {"status":"error:empty_name"}`n, %PIPE%
         }
-        return
     }
-
-    if (InStr(cmd, "click_save")) {
+    else if (InStr(cmd, "click_save")) {
         if (gFileName = "" or gFileName = "untitled.txt") {
             FileAppend, {"status":"error:no_filename_set"}`n, %PIPE%
             return
         }
-        fullPath := FILE_ARTIFACTS . gFileName
+        fullPath := ARTIFACTS . gFileName
         FileDelete, %fullPath%
         FileAppend, Saved via AHK Pipe Protocol`n`nFile: %gFileName%`n, %fullPath%
         Sleep, 500
         Gui, Destroy
         FileAppend, {"status":"saved","path":"%fullPath%"}`n, %PIPE%
-        Sleep, 300
+        Sleep, 200
         ExitApp 0
     }
+    else if (InStr(cmd, "click_cancel")) {
         Gui, Destroy
         FileAppend, {"status":"cancelled"}`n, %PIPE%
         ExitApp 1
@@ -101,7 +90,7 @@ return
 
 BtnSave:
     Gui, Submit, NoHide
-    fullPath := FILE_ARTIFACTS . DlgFileName
+    fullPath := ARTIFACTS . DlgFileName
     FileDelete, %fullPath%
     FileAppend, Saved via AHK Button`n`nFile: %DlgFileName%`n, %fullPath%
     Sleep, 500

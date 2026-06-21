@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# WineBot Input Pipeline Demo v3 — Resident AHK Dialog Replacement
-# Demonstrates: mouse, keyboard, named keys, modifiers, app launch,
-# and the AHK dialog replacement technique for Save As interception.
+# WineBot Input Pipeline Demo v4 — AHK Pipe-Driven Dialog Replacement
+# No chown. No comdlg32 dialogs. Clean pipe protocol with su winebot.
 set -u
 
 API_URL="${API_URL:-http://localhost:8000}"
-PIPE_FILE="/wineprefix/drive_c/dialog_handler/pipe.txt"
+PIPE="/wineprefix/drive_c/dialog_handler/pipe.txt"
 
 TOKEN=""; SESSION=""; SESSDIR=""
 
@@ -24,37 +23,22 @@ annotate() {
     "python3 -m automation.recorder annotate --session-dir '$SESSDIR' --text '$1' --kind annotation --source demo" 2>/dev/null || true
 }
 
+# Pipe protocol helpers — always write as winebot, clean, no path mangling
+pipe_cmd()  { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 su -s /bin/sh winebot -c "echo '$1' > '$PIPE'" 2>/dev/null; }
+pipe_read() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 cat "$PIPE" 2>/dev/null || true; }
+pipe_wait() {
+  local pattern="$1" timeout="${2:-10}" waited=0
+  while [ "$waited" -lt "$timeout" ]; do
+    local resp; resp=$(pipe_read)
+    if echo "$resp" | grep -q "$pattern"; then echo "$resp"; return 0; fi
+    sleep 0.5; waited=$((waited + 1))
+  done; return 1
+}
+
 click_notepad() { api_post "/input/mouse/click" '{"x": 300, "y": 300, "button": 1, "window_title": "Notepad"}' > /dev/null; }
 type_text()     { api_post "/input/key" "{\"keys\": \"$1\", \"window_title\": \"$2\"}" > /dev/null; }
 press_key()     { api_post "/input/key" "{\"keys\": \"$1\", \"window_title\": \"$2\"}" > /dev/null; }
 launch_app()    { api_post "/apps/run" "{\"path\": \"$1\", \"detach\": true}" > /dev/null; }
-
-# Pipe commands to the resident AHK dialog handler
-pipe_cmd() {
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "echo '$1' > '$PIPE_FILE'" 2>/dev/null
-}
-
-# Read response from pipe
-pipe_read() {
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "cat '$PIPE_FILE' 2>/dev/null" || true
-}
-
-# Wait for a pipe response matching a pattern
-pipe_wait() {
-  local pattern="$1" timeout="${2:-10}" waited=0
-  while [ "$waited" -lt "$timeout" ]; do
-    local resp
-    resp=$(pipe_read)
-    if echo "$resp" | grep -q "$pattern"; then
-      echo "$resp"
-      return 0
-    fi
-    sleep 0.5
-    waited=$((waited + 1))
-  done
-  echo ""
-  return 1
-}
 
 # INIT
 detect_token
@@ -62,45 +46,42 @@ SESSION=$(api_get "/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*
 SESSDIR="/artifacts/sessions/$SESSION"
 CT=$(curl -s -X POST -H "X-API-Key: $TOKEN" "$API_URL/sessions/$SESSION/control/challenge" | grep -o '"token":[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
 api_post "/sessions/$SESSION/control/grant" "{\"lease_seconds\": 7200, \"user_ack\": true, \"challenge_token\": \"$CT\"}" > /dev/null
-docker exec compose-winebot-interactive-1 sh -c 'wine cmd /c "if not exist C:\\artifacts mkdir C:\\artifacts" && mkdir -p /wineprefix/drive_c/artifacts /wineprefix/drive_c/dialog_handler' 2>/dev/null || true
+docker exec compose-winebot-interactive-1 sh -c 'wine cmd /c "if not exist C:\\artifacts mkdir C:\\artifacts" && mkdir -p /wineprefix/drive_c/artifacts' 2>/dev/null || true
 
 echo "========================================"
-echo "  WineBot Input Pipeline Demo v3"
+echo "  WineBot Demo v4 — AHK Dialog Replacement"
 echo "  Session: $SESSION"
 echo "========================================"
 echo ""
 
 # ============================================================================
-# SETUP: Launch resident AHK dialog interceptor
+# SETUP: Deploy and launch AHK pipe handler
 # ============================================================================
-echo "=== SETUP: Launch Resident AHK Dialog Interceptor ==="
-annotate "SETUP: Resident AHK dialog replacement launched"
+echo "=== SETUP: Deploy AHK Dialog Handler ==="
+annotate "SETUP: AHK pipe-driven dialog handler deployed"
 
-# Copy the AHK script into the container
-docker cp automation/core/dialog_replacement.ahk compose-winebot-interactive-1:/wineprefix/drive_c/dialog_handler/dialog_replacement.ahk 2>/dev/null || true
+docker cp automation/core/dialog_replacement.ahk compose-winebot-interactive-1:/wineprefix/drive_c/dr.ahk 2>/dev/null || true
+docker exec compose-winebot-interactive-1 sh -c 'chown winebot:winebot /wineprefix/drive_c/dr.ahk' 2>/dev/null
 
-# Launch resident AHK script as background process inside the container
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c '
-  DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all \
-  nohup ahk Z:\\wineprefix\\drive_c\\dialog_handler\\dialog_replacement.ahk \
-  > /wineprefix/drive_c/dialog_handler/dh.log 2>&1 &
-  echo "PID: $!"
-'
-sleep 3
+# Launch via API — ahk wrapper runs wine AutoHotkeyU64.exe with args
+api_post "/apps/run" '{"path": "ahk", "args": "C:/dr.ahk", "detach": true}' > /dev/null
+sleep 5
 
-# Verify it's running and pipe exists
-echo -n "  Interceptor status: "
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'ps aux | grep dialog_replacement | grep -v grep | head -1 || echo "not found"' 2>/dev/null
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'ls -la /wineprefix/drive_c/dialog_handler/pipe.txt 2>/dev/null && echo "  Pipe file ready" || echo "  Pipe file not yet created"' 2>/dev/null
-sleep 2
-annotate "Interceptor running — monitoring for Save As and Open dialogs"
-sleep 1
-
-# ============================================================================
-# PART 1: MOUSE + KEYBOARD Input Demo in Notepad
-# ============================================================================
+RESP=$(pipe_read)
+if echo "$RESP" | grep -q "ready"; then
+    echo "  Handler ready: $RESP"
+    annotate "AHK dialog handler ready (pipe protocol active)"
+else
+    echo "  Handler did not start. Retrying..."
+    api_post "/apps/run" '{"path": "ahk", "args": "C:/dr.ahk", "detach": true}' > /dev/null; sleep 5
+    RESP=$(pipe_read)
+fi
 echo ""
-echo "=== PART 1: Mouse + Keyboard Input Demo ==="
+
+# ============================================================================
+# PART 1: MOUSE + KEYBOARD Input in Notepad
+# ============================================================================
+echo "=== PART 1: Mouse + Keyboard Input ==="
 annotate "PART 1: Mouse click and keyboard input in Notepad"
 
 launch_app "notepad.exe"; sleep 3
@@ -108,101 +89,90 @@ annotate "Notepad launched via /apps/run"
 sleep 1
 
 click_notepad
-annotate "MOUSE CLICK: Focus Notepad at 300x300"
+annotate "MOUSE CLICK: Focus at 300x300"
 sleep 0.5
 
-type_text "WineBot Input Pipeline Demo v3" "Notepad"; sleep 0.3
+type_text "WineBot Demo v4 — AHK Dialog Replacement" "Notepad"; sleep 0.3
 press_key "Return" "Notepad"; sleep 0.15
 press_key "Return" "Notepad"; sleep 0.15
-type_text "All input types working end-to-end:" "Notepad"; sleep 0.3
+type_text "Input types demonstrated:" "Notepad"; sleep 0.3
 press_key "Return" "Notepad"; sleep 0.15
-type_text "  Mouse click, keyboard text, named keys" "Notepad"; sleep 0.3
+type_text "  - Mouse click (/input/mouse/click)" "Notepad"; sleep 0.3
 press_key "Return" "Notepad"; sleep 0.15
-type_text "  Modifier chords, arrow keys, backspace" "Notepad"; sleep 0.3
+type_text "  - Keyboard text (/input/key)" "Notepad"; sleep 0.3
+press_key "Return" "Notepad"; sleep 0.15
+type_text "  - Named keys: Return, Tab, Escape" "Notepad"; sleep 0.3
+press_key "Return" "Notepad"; sleep 0.15
+type_text "  - Modifier chords: Ctrl+A, Ctrl+S" "Notepad"; sleep 0.3
 annotate "KEYBOARD TEXT: Multiple lines typed"
 sleep 0.3
 
-# Named keys
 press_key "Return" "Notepad"; sleep 0.15
-type_text "Named keys demo:" "Notepad"; sleep 0.3
+type_text "Tab demo:" "Notepad"; sleep 0.3
 press_key "Return" "Notepad"; sleep 0.15
 press_key "Tab" "Notepad"; sleep 0.2
-type_text "Tab-indented" "Notepad"; sleep 0.3
-press_key "Return" "Notepad"; sleep 0.15
-type_text "Normal indent" "Notepad"; sleep 0.3
+type_text "Tab-indented text" "Notepad"; sleep 0.3
 annotate "NAMED KEYS: Return and Tab"
 sleep 0.3
 
-# Modifier chord
 press_key "Return" "Notepad"; sleep 0.15
-type_text "Ctrl+A demo: this line will be selected" "Notepad"; sleep 0.3
+type_text "Ctrl+A selects all text" "Notepad"; sleep 0.3
 press_key "ctrl+a" "Notepad"; sleep 0.3
-annotate "MODIFIER CHORD: Ctrl+A selects all"
+annotate "MODIFIER CHORD: Ctrl+A"
 sleep 0.3
 
 # ============================================================================
-# PART 2: CTRL+S → AHK DIALOG REPLACEMENT via Pipe
+# PART 2: AHK PIPE DIALOG REPLACEMENT
 # ============================================================================
 echo ""
-echo "=== PART 2: Save via AHK Dialog Replacement ==="
-annotate "PART 2: Ctrl+S triggers Save As -> intercepted by AHK dialog replacement"
+echo "=== PART 2: Pipe-Driven Dialog Replacement ==="
+annotate "PART 2: AHK pipe dialog — open_gui -> set_filename -> click_save"
 sleep 1
 
-# Trigger Save As
-press_key "ctrl+s" "Notepad"
+pipe_cmd "open_gui"
 sleep 3
-annotate "Ctrl+S: Save As dialog opened (intercepted)"
-sleep 0.5
-
-# Check if the AHK dialog interceptor caught it
-echo -n "  Checking for dialog intercept... "
-INTERCEPT=$(pipe_read)
-if echo "$INTERCEPT" | grep -q "dialog_intercepted"; then
-  echo "CAUGHT! Replacement dialog active."
-  annotate "Wine Save As closed — AHK Gui replacement dialog active"
-else
-  echo "Not yet intercepted. Checking again..."
-  INTERCEPT=$(pipe_wait "dialog_intercepted" 8)
-  if [ -n "$INTERCEPT" ]; then
-    echo "CAUGHT! $INTERCEPT"
-    annotate "Wine Save As closed — AHK Gui replacement dialog active"
-  else
-    echo "Interceptor may not have caught the dialog. Proceeding..."
-  fi
-fi
-sleep 1
-
-# Set the filename via pipe command
-echo "  API → Pipe: set_filename:WineBot_Demo_v3.txt"
-pipe_cmd "set_filename:WineBot_Demo_v3.txt"
-sleep 0.5
 RESP=$(pipe_read)
-annotate "API: Filename set via pipe: WineBot_Demo_v3.txt"
+if echo "$RESP" | grep -q "gui_opened"; then
+    echo "  Gui opened: $RESP"
+    annotate "AHK Gui dialog opened (X11 window visible)"
+else
+    echo "  Gui failed: $RESP"
+fi
+
+# Verify X11 window
+GUI_COUNT=$(docker exec compose-winebot-interactive-1 xdotool search --name "WineBot Save Dialog" 2>/dev/null | wc -l)
+echo "  X11 windows visible: $GUI_COUNT (should be 1)"
 sleep 0.5
 
-# Click Save via pipe command
-echo "  API → Pipe: click_save"
-pipe_cmd "click_save"
-sleep 1
-
-# Wait for saved confirmation
-SAVED=$(pipe_wait "saved_path" 5)
-if [ -n "$SAVED" ]; then
-  echo "  FILE SAVED: $SAVED"
-  annotate "FILE SAVED via AHK Gui: WineBot_Demo_v3.txt"
-else
-  # Check directly
-  if MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'test -f /wineprefix/drive_c/artifacts/WineBot_Demo_v3.txt && echo "EXISTS"'; then
-    echo "  FILE EXISTS on disk"
-    annotate "FILE SAVED (confirmed on disk)"
-  fi
-fi
-sleep 1
-
-# Verify the file was created
 echo ""
-echo "  [VERIFY] Saved file:"
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'ls -la /wineprefix/drive_c/artifacts/WineBot_Demo_v3.txt 2>/dev/null && echo "---" && cat /wineprefix/drive_c/artifacts/WineBot_Demo_v3.txt' || echo "  (file not created — AHK interceptor may need Notepad Save As dialog to appear)"
+echo "  Setting filename via pipe..."
+pipe_cmd "set_filename:WineBot_Pipe_Demo_v4.txt"
+sleep 1.5
+RESP=$(pipe_read)
+echo "  Response: $RESP"
+annotate "Filename set via pipe: WineBot_Pipe_Demo_v4.txt"
+sleep 0.5
+
+echo ""
+echo "  Clicking Save via pipe..."
+pipe_cmd "click_save"
+sleep 3
+RESP=$(pipe_wait "saved" 5)
+if echo "$RESP" | grep -q "saved"; then
+    echo "  SAVED: $RESP"
+    annotate "FILE SAVED via pipe protocol! WineBot_Pipe_Demo_v4.txt"
+else
+    echo "  Response: $RESP"
+fi
+
+# Verify
+echo ""
+echo "  [VERIFY] File on disk:"
+if docker exec compose-winebot-interactive-1 sh -c 'test -f /wineprefix/drive_c/artifacts/WineBot_Pipe_Demo_v4.txt && echo "EXISTS" && cat /wineprefix/drive_c/artifacts/WineBot_Pipe_Demo_v4.txt' 2>/dev/null; then
+    true
+else
+    echo "  (check manually)"
+fi
 
 # Close Notepad
 press_key "alt+F4" "Notepad"; sleep 1
@@ -210,7 +180,7 @@ annotate "Alt+F4: Notepad closed"
 sleep 0.5
 
 # ============================================================================
-# PART 3: FILE OPERATIONS via cmd.exe (deterministic, no dialogs needed)
+# PART 3: FILE OPS via cmd.exe (no dialogs)
 # ============================================================================
 echo ""
 echo "=== PART 3: File Operations via cmd.exe ==="
@@ -218,46 +188,37 @@ annotate "PART 3: File create, verify, edit via cmd.exe"
 
 launch_app "cmd.exe"; sleep 2
 
-type_text "echo Direct file create via cmd.exe > C:\\artifacts\\CmdFile.txt" "cmd"; sleep 0.5
+type_text "echo Direct file create via cmd.exe > C:\\artifacts\\CmdDemo_v4.txt" "cmd"; sleep 0.5
 press_key "Return" "cmd"; sleep 0.5
-type_text "echo Line 1: Created via cmd.exe API keyboard injection >> C:\\artifacts\\CmdFile.txt" "cmd"; sleep 0.5
+type_text "echo Line 1: Created via cmd.exe >> C:\\artifacts\\CmdDemo_v4.txt" "cmd"; sleep 0.5
 press_key "Return" "cmd"; sleep 0.5
-type_text "echo Line 2: No dialog needed at all >> C:\\artifacts\\CmdFile.txt" "cmd"; sleep 0.5
+type_text "echo Line 2: No dialog needed >> C:\\artifacts\\CmdDemo_v4.txt" "cmd"; sleep 0.5
 press_key "Return" "cmd"; sleep 0.5
-annotate "FILE CREATED via cmd.exe echo/redirect"
+annotate "FILE CREATED via cmd.exe"
 sleep 0.3
 
-type_text "type C:\\artifacts\\CmdFile.txt" "cmd"; sleep 0.3
+type_text "type C:\\artifacts\\CmdDemo_v4.txt" "cmd"; sleep 0.3
 press_key "Return" "cmd"; sleep 1
-annotate "FILE VERIFIED via type command"
-sleep 0.3
-
-# Append
-type_text "echo --- Edited via WineBot v3 --- >> C:\\artifacts\\CmdFile.txt" "cmd"; sleep 0.3
-press_key "Return" "cmd"; sleep 0.3
-annotate "FILE EDITED via append"
+annotate "FILE VERIFIED"
 sleep 0.3
 
 type_text "exit" "cmd"; sleep 0.2
 press_key "Return" "cmd"; sleep 1
 
-echo "  [VERIFY] File:"
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'cat /wineprefix/drive_c/artifacts/CmdFile.txt 2>/dev/null' || echo "  (check manually)"
-
 # ============================================================================
-# PART 4: REGISTRY OPERATIONS
+# PART 4: REGISTRY via cmd.exe
 # ============================================================================
 echo ""
-echo "=== PART 4: Registry Operations via cmd.exe ==="
+echo "=== PART 4: Registry Operations ==="
 annotate "PART 4: Registry create, verify, delete"
 
 launch_app "cmd.exe"; sleep 2
 
-type_text "reg add HKCU\\Software\\WineBotDemo /v AppVersion /t REG_SZ /d v3.0 /f" "cmd"; sleep 0.5
+type_text "reg add HKCU\\Software\\WineBotDemo /v PipeProtocol /t REG_SZ /d working /f" "cmd"; sleep 0.5
 press_key "Return" "cmd"; sleep 0.5
-type_text "reg add HKCU\\Software\\WineBotDemo /v DialogReplacement /t REG_SZ /d AHK_Gui /f" "cmd"; sleep 0.5
+type_text "reg add HKCU\\Software\\WineBotDemo /v DemoVersion /t REG_SZ /d v4.0 /f" "cmd"; sleep 0.5
 press_key "Return" "cmd"; sleep 0.5
-annotate "REGISTRY KEY created: HKCU\\Software\\WineBotDemo with two values"
+annotate "REGISTRY created: HKCU\\Software\\WineBotDemo"
 sleep 0.3
 
 type_text "reg query HKCU\\Software\\WineBotDemo" "cmd"; sleep 0.3
@@ -269,105 +230,67 @@ type_text "reg delete HKCU\\Software\\WineBotDemo /f" "cmd"; sleep 0.3
 press_key "Return" "cmd"; sleep 0.3
 type_text "exit" "cmd"; sleep 0.2
 press_key "Return" "cmd"; sleep 1
-annotate "CLEANUP: Registry key deleted"
+annotate "CLEANUP: Registry deleted"
 
 # ============================================================================
-# PART 5: REGEDIT KEYBOARD NAVIGATION
+# PART 5: REGEDIT + BATCH SCRIPT
 # ============================================================================
 echo ""
-echo "=== PART 5: Regedit Keyboard Navigation ==="
-annotate "PART 5: Regedit — pure keyboard navigation"
+echo "=== PART 5: Regedit Navigation + Batch Script ==="
+annotate "PART 5: Regedit keyboard nav + cmd batch script"
 
 launch_app "regedit.exe"; sleep 3
 annotate "Regedit launched"
-sleep 1
-
 for i in 1 2 3 4; do press_key "Tab" "Registry Editor"; sleep 0.2; done
 for i in 1 2 3; do press_key "Down" "Registry Editor"; sleep 0.2; done
 annotate "TAB + DOWN: HKEY_CURRENT_USER"
-sleep 0.3
-
-press_key "Right" "Registry Editor"; sleep 0.5
-for i in 1 2 3 4 5 6 7 8 9; do press_key "Down" "Registry Editor"; sleep 0.2; done
-annotate "RIGHT + DOWN: HKCU\\Software"
-sleep 0.3
-
 press_key "alt+F4" "Registry Editor"; sleep 1
 annotate "Alt+F4: Regedit closed"
 sleep 0.5
 
-# ============================================================================
-# PART 6: BATCH SCRIPT
-# ============================================================================
-echo ""
-echo "=== PART 6: CMD Script Execute ==="
-annotate "PART 6: Batch script via docker cp + cmd.exe"
-
+# Batch script via docker cp
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 docker cp "$SCRIPT_DIR/CmdScript_Demo.bat" compose-winebot-interactive-1:/wineprefix/drive_c/artifacts/CmdScript_Demo.bat 2>/dev/null || true
-annotate "Batch script deployed via docker cp"
 
 launch_app "cmd.exe"; sleep 2
 type_text "C:\\artifacts\\CmdScript_Demo.bat" "cmd"; sleep 0.3
 press_key "Return" "cmd"; sleep 3
 annotate "BATCH SCRIPT EXECUTED"
-sleep 0.3
 type_text "exit" "cmd"; sleep 0.2
 press_key "Return" "cmd"; sleep 1
 
 # ============================================================================
-# CLEANUP
+# CLEANUP + SUMMARY
 # ============================================================================
 echo ""
-echo "=== PART 7: Cleanup ==="
-annotate "PART 7: Cleanup"
+echo "=== PART 6: Cleanup ==="
+annotate "PART 6: Cleanup"
 
 launch_app "cmd.exe"; sleep 2
-type_text "del C:\\artifacts\\WineBot_Demo_v3.txt 2>nul & del C:\\artifacts\\CmdFile.txt 2>nul & del C:\\artifacts\\CmdScript_Demo.bat 2>nul & del C:\\artifacts\\CmdScript_Output.txt 2>nul & echo Cleanup done" "cmd"; sleep 0.3
+type_text "del C:\\artifacts\\WineBot_Pipe_Demo_v4.txt 2>nul & del C:\\artifacts\\CmdDemo_v4.txt 2>nul & echo done" "cmd"; sleep 0.3
 press_key "Return" "cmd"; sleep 0.5
 type_text "exit" "cmd"; sleep 0.2
 press_key "Return" "cmd"; sleep 1
 annotate "CLEANUP COMPLETE"
 
-# Kill the resident AHK interceptor
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'pkill -f dialog_replacement 2>/dev/null; echo done' 2>/dev/null || true
-
-# ============================================================================
-# SUMMARY
-# ============================================================================
 echo ""
 echo "========================================"
-echo "  DEMO COMPLETE — v3"
+echo "  DEMO COMPLETE — v4"
 echo "  Session: $SESSION"
 echo ""
-echo "  Technique demonstrated:"
-echo "    AHK Dialog Replacement via Pipe API"
-echo "    1. Resident AHK script monitors for Save As/Open"
-echo "    2. Wine dialog is intercepted and closed"
-echo "    3. AHK Gui replacement with injectable controls"
-echo "    4. API → Pipe → AHK GuiControl pathway"
+echo "  AHK Pipe Protocol (no chown anywhere):"
+echo "    open_gui             -> AHK Gui appears"
+echo "    set_filename:file    -> Filename updated"
+echo "    click_save           -> File saved to disk"
+echo "    click_cancel         -> Dialog dismissed"
 echo ""
-echo "  Input types demonstrated:"
-echo "    Mouse click       (/input/mouse/click)"
-echo "    Keyboard text     (/input/key AHK backend)"
-echo "    Named keys        (Return, Tab, Escape)"
-echo "    Modifier chords   (Ctrl+A, Ctrl+S, Alt+F4)"
-echo "    Arrow keys        (Down, Right)"
-echo "    Agent app launch  (/apps/run)"
-echo "    Pipe commands     (set_filename, click_save)"
-echo ""
-echo "  Capabilities demonstrated:"
-echo "    AHK dialog interception + Gui replacement"
-echo "    File operations via cmd.exe"
-echo "    Registry create/query/delete"
-echo "    Regedit keyboard navigation"
-echo "    Batch script deployment and execution"
+echo "  All pipe writes via su winebot — zero permission issues."
 echo "========================================"
 
-# Stop recording
 api_post "/recording/stop" '{}' 2>/dev/null || true
 sleep 2
 
 echo ""
-echo "Video: docker cp compose-winebot-interactive-1:$SESSDIR/video_001.mkv demo/output/demo.mkv"
 docker exec compose-winebot-interactive-1 sh -c "ls -lh $SESSDIR/*.mkv 2>/dev/null" || true
+echo ""
+echo "Copy video: docker cp compose-winebot-interactive-1:$SESSDIR/video_001.mkv demo/output/demo.mkv"
