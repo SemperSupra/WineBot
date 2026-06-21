@@ -33,9 +33,11 @@ RUN bash /download_tool.sh "Python" \
     && find /opt/winebot/windows-tools -name "*.txt" -delete
 
 FROM tool-base AS builder-winspy
-RUN bash /download_tool.sh "WinSpy" \
-    "https://github.com/strobejb/winspy/releases/download/v1.8.4/WinSpy_Release_x86.zip" \
-    "f3ec87e83d038c812dc7a0628a7d0890aec88dff7a262c2ddfe2b52559e1b069" \
+# WinInspect v0.1.1 — UIA-enabled window inspection tool
+# Replaces original strobejb/winspy v1.8.4 (no UIA support, 2022 vintage)
+RUN bash /download_tool.sh "WinInspect" \
+    "https://github.com/SemperSupra/WinInspect/releases/download/v0.1.1/WinInspectPortable-v0.1.1.zip" \
+    "6120b204f49636f8d407cc8fbced5ee78402c49fb20c664609ba01fe8d944036" \
     "/opt/winebot/windows-tools/WinSpy" \
     && find /opt/winebot/windows-tools -name "*.txt" -delete
 
