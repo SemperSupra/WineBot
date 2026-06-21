@@ -39,31 +39,69 @@ VNC Client -> x11vnc(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
 space, bypassing this barrier. Mouse clicks work through xdotool regardless.
 Configurable via `WINEBOT_SUPERVISE_EXPLORER` and `WINEBOT_INPUT_KEY_BACKEND`.
 
-### 3. comdlg32 File Dialogs — No Text Injection Path Exists
+### 3. comdlg32 File Dialogs — Definitively Impossible to Inject Text
 
-Wine's common dialog implementation (`comdlg32`) creates modal windows that
-are **monolithic single X11 windows with zero child windows**. All controls
-(filename fields, buttons, dropdowns, tree views) exist only inside Wine's
-internal windowing — they are not exposed to X11, AHK, or any external tool.
+Wine's common dialog implementation (`comdlg32`) creates modal windows whose
+controls are **fully visible via DllCall/EnumChildWindows** but whose text
+is **impossible to set through any external mechanism**.
 
-**Exhaustively tested and confirmed NOT working:**
-- AHK `Send` / `SendInput` / `SendPlay` — keystrokes land on the dialog window, not the edit control
-- AHK `ControlSend` / `ControlSetText` to `Edit1`, `ComboBox1` — ErrorLevel set, no effect
-- AHK clipboard + `^v` paste — paste goes to the window, not the control
-- `xdotool type` / `xdotool key` — blocked by the `explorer.exe /desktop` keyboard barrier
-- `winpy` with `ctypes.windll` + `FindWindowExW` + `SetWindowTextW` — times out
-- `WinSpy` — can inspect control classes/positions but cannot inject text
-- Mouse click to focus field + AHK Send to focused window — focus doesn't transfer to Wine internal controls
+**Wine Windowing Architecture:**
+```
+X11 Root Window
+└── X11 Window "Save As" (WM_CLASS: notepad.exe)  ← The ONLY X11-mapped window
+    └── Wine Internal Controls (NOT X11 windows, NOT AHK-accessible normally):
+        ├── Static: "File &name:"
+        ├── ComboBoxEx32 (hwnd accessible via DllCall only)
+        │   └── ComboBox
+        │       └── Edit (hwnd accessible, BUT text is stored internally)
+        ├── Static: "Save &in:"
+        ├── ComboBox (dropdown, hwnd accessible)
+        ├── Button: "&Save" (hwnd accessible, CLICKABLE via BM_CLICK)
+        ├── Button: "Cancel" (hwnd accessible)
+        ├── ToolbarWindow32 (breadcrumb bar)
+        └── SysListView32 (file list)
+```
+
+**Internal state problem:** The ComboBoxEx32 stores the filename string in
+a Wine-internal data member (`lpEditInfo->wszText`), NOT in the Edit HWND's
+window text buffer. Any `SetWindowTextW` or `WM_SETTEXT` call on the Edit
+or ComboBoxEx32 HWND succeeds at the API level (returns TRUE) but has zero
+effect on `GetWindowTextW` — the edit control recomputes its display from
+the internal data member on every `WM_PAINT`, overwriting any external change.
+
+**All 12 methods tested — 0 work for text injection:**
+
+| Method | Controls Enumerable | Sets Text | Button Click |
+|:---|:---:|:---:|:---:|
+| DllCall `EnumChildWindows` + manual traversal | ✅ | N/A | N/A |
+| DllCall `FindWindowExW` chain (CBEx→CB→Edit) | ✅ | N/A | N/A |
+| DllCall `SetWindowTextW` (Edit HWND) | ✅ | ❌ Sets HWND text, GetWindowText empty | N/A |
+| DllCall `WM_SETTEXT` (ComboBoxEx32) | ✅ | ❌ Returns 1, no effect | N/A |
+| DllCall `WM_SETTEXT` (Edit) | ✅ | ❌ Returns 1, no effect | N/A |
+| AHK `ControlSend` to Edit HWND | ✅ | ❌ No effect | N/A |
+| AHK `Send` / `SendInput` | ❌ | ❌ Keystrokes go to window, not control | N/A |
+| AHK `ControlSetText` to named control | ❌ | ❌ ErrorLevel set | N/A |
+| AHK clipboard set + `^v` | ❌ | ❌ Paste goes to window | N/A |
+| `xdotool type` (with/without `explorer.exe`) | ❌ | ❌ No keyboard routing to internal controls | N/A |
+| Mouse click field + `xdotool type` | ❌ | ❌ Focus doesn't reach internal controls | N/A |
+| `winpy` `ctypes.windll` + `SetWindowTextW` | ❌ | ❌ Wine Python process times out | N/A |
+| `SendMessage BM_CLICK` on Save button | ✅ | N/A | ✅ **CLICKABLE** |
 
 **What DOES work:**
-- Mouse clicks on dialog buttons (Save, Cancel, Open) via xdotool — these pass through
-- Mouse clicks to focus the filename field — the field gets visual focus, but text still cannot be injected
+- Enumerating all dialog controls via DllCall `EnumChildWindows` — all HWNDs, classes, and labels are visible
+- Clicking dialog buttons via `SendMessage(hBtn, BM_CLICK, 0, 0)` — Save, Cancel, Open, Help buttons all work
+- The architecture for building an **AHK Gui replacement dialog** is proven: controls are discoverable, buttons are clickable, a resident AHK script can monitor for dialog appearance and react
 
 **Adaptation:** File and registry operations use `cmd.exe` (echo/redirect, reg add/query),
 `/run/python` (Linux Python writes to prefix), or `docker cp` for file injection.
 GUI apps should accept command-line file path arguments to avoid dialogs entirely.
 In the demo, file dialogs are bypassed: file creation uses `cmd.exe echo > file`,
 registry uses `reg add/query/delete`, and Notepad demonstrates pure input only.
+
+**Future path: AHK Gui replacement dialog.** Since AHK Gui controls ARE mapped to
+X11 windows and ARE injectable, a future enhancement could build a resident AHK
+script that detects comdlg32 dialog windows via `WinWait`, closes them, and opens
+AHK Gui replacements with fully injectable Edit controls.
 
 ### 4. XInput2 Disabled
 

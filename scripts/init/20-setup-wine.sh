@@ -160,6 +160,11 @@ sleep 2
 # Cleanup
 pkill -f "explorer.exe" || true
 pkill -f "start.exe" || true
+# If supervisor disabled, remove virtual desktop so wineserver does not auto-restart explorer
+if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "0" ]; then
+    echo "--> Disabling virtual desktop (WINEBOT_SUPERVISE_EXPLORER=0)..."
+    wine reg delete "HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops" /v "Default" /f >/dev/null 2>&1 || true
+fi
 # wineserver -k removed
 sleep 1
 wineserver -p >/dev/null 2>&1 &
