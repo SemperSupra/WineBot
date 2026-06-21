@@ -7,7 +7,19 @@
 - **Base Runtime:** `ghcr.io/sempersupra/winebot-base:base-2026-05-04` is the active pinned fallback base image. `base-latest` and `base-stable` were updated by the Base Image workflow.
 
 ## Completed This Session
-- Created a new minimal Debian Trixie slim base image path using a digest-pinned Debian base and the required Wine/X11/Python runtime packages.
+- **Input pipeline fix:** Added `POST /input/key` API endpoint with AHK Send backend that bypasses the X11 `explorer.exe /desktop` keyboard interception barrier.
+- Added xdotool-to-AHK key syntax translation supporting modifier chords (`ctrl+c`), named keys (`Return`, `Escape`), function keys, arrow keys, and plain text.
+- Added `WINEBOT_INPUT_KEY_BACKEND` config (ahk/xdotool/auto) and `WINEBOT_TIMEOUT_INPUT_KEY_SECONDS` with defaults.
+- Exposed `WINEBOT_ALLOW_HEADLESS_HYBRID` and `WINEBOT_SUPERVISE_EXPLORER` in docker-compose headless profile.
+- Documented keyboard barrier root cause, input pipeline, and solutions in `docs/troubleshooting.md`.
+- Added 20 unit tests for key translation + e2e test for full keyboard pipeline.
+- Closed superseded PRs #52 and #53.
+- Verified: Ruff passes, Mypy passes (23 source files), 162 unit tests pass (0 new failures).
+
+## Handover Point
+- `main` at commit `a7184c8` (pending push).
+- The new `/input/key` endpoint is ready for use by agents and users.
+- E2E test (`tests/e2e/test_input_keyboard.py`) requires a running interactive WineBot instance to execute.
 - Added base-image patching/upgrade steps so required patched packages are refreshed during base and application image builds.
 - Updated release, smoke, soak, compose, README, and policy-check fallbacks to `ghcr.io/sempersupra/winebot-base:base-2026-05-04`.
 - Corrected GitHub Actions Node.js 20 warnings by moving actions to Node 24-compatible pinned SHAs.
@@ -57,9 +69,9 @@
   - Current impact: superseded by the successful Base Image and Release workflows.
 
 ## Known Issues / Follow-Up
-- Decide whether CI should authenticate to GHCR or order base-image publication before CI image builds when the pinned base tag changes. This would avoid transient failures like run `25330798122`.
-- Local Trivy is not installed, so local lint skips the filesystem vulnerability scan. GitHub Trivy gates are passing.
-- Confirm whether a separate GitHub Release object is desired for `v0.9.7a`; this session published release containers through workflow dispatch but did not create a GitHub Release object.
+- GHCR authentication for CI when new pinned base tags are introduced (transient 403 from run 25330798122).
+- Local Trivy is not installed; GitHub Trivy gates pass.
+- E2E keyboard test requires running interactive WineBot instance to execute.
 
 ## Next Session Proposed Steps
 1. Review GHCR package visibility/authentication and decide whether CI should log in before pulling private or organization-scoped base images.
