@@ -6,8 +6,14 @@ import sys
 from typing import Dict, List, Set
 
 
-def analyze(log_path: str) -> Dict:
-    """Parse watcher.jsonl and return issues found."""
+def analyze(log_path: str, start_frame: int = 0) -> Dict:
+    """Parse watcher.jsonl and return issues found.
+
+    Args:
+        log_path: Path to watcher.jsonl
+        start_frame: 0 = auto-detect content start (first frame with >10Kpx change).
+                     N > 0 = skip first N frames.
+    """
     snapshots: List[Dict] = []
     with open(log_path) as f:
         for line in f:
@@ -15,6 +21,16 @@ def analyze(log_path: str) -> Dict:
                 snapshots.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+
+    # Auto-detect content start if start_frame == 0
+    content_start = start_frame
+    if start_frame == 0:
+        for snap in snapshots:
+            if snap.get("event") != "snapshot":
+                continue
+            if snap.get("pixels_changed", 0) > 10000:
+                content_start = max(0, snap["index"] - 2)  # 2 frames before big change
+                break
 
     issues = []
     warning_windows = {"Save As", "Open", "Error", "Warning", "Critical",
@@ -27,6 +43,10 @@ def analyze(log_path: str) -> Dict:
             continue
 
         idx = snap["index"]
+        # Skip frames before content starts (stale windows from prior sessions)
+        if idx < content_start:
+            continue
+
         interesting = set(snap.get("interesting_windows", []))
         all_titles = {w["title"] for w in snap.get("windows", [])}
         pixels = snap.get("pixels_changed", 0)
@@ -109,9 +129,12 @@ def analyze(log_path: str) -> Dict:
             })
         last_windows = current
 
+    content_frames = len([s for s in snapshots if s.get("event") == "snapshot" and s.get("index", 0) >= content_start])
     return {
         "summary": {
             "total_frames": len(snapshots),
+            "content_frames": content_frames,
+            "content_start": content_start,
             "total_issues": len(issues),
             "high_severity": len([i for i in issues if i["severity"] == "HIGH"]),
             "medium_severity": len([i for i in issues if i["severity"] == "MEDIUM"]),
