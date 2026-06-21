@@ -112,9 +112,22 @@ ENV WINEPREFIX=/wineprefix \
 WORKDIR /
 EXPOSE 8000
 
+# --- Stage 2.6a: comdlg32 Hook DLL Builder ---
+FROM base-system AS comdlg32-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY automation/core/comdlg32_hook.c /tmp/
+RUN x86_64-w64-mingw32-gcc -shared -o /tmp/comdlg32_64.dll /tmp/comdlg32_hook.c \
+      -nostartfiles -lkernel32 -luser32 -lshell32 \
+    && i686-w64-mingw32-gcc -shared -o /tmp/comdlg32_32.dll /tmp/comdlg32_hook.c \
+      -nostartfiles -lkernel32 -luser32 -lshell32
+
 # --- Stage 2.7: Base Ready (Standard foundation with prefix) ---
 FROM base-logic AS base-ready
 # Prefix template is already present in /opt/winebot/prefix-template from the BASE_IMAGE
+COPY --from=comdlg32-builder /tmp/comdlg32_64.dll /opt/winebot/comdlg32_hook_64.dll
+COPY --from=comdlg32-builder /tmp/comdlg32_32.dll /opt/winebot/comdlg32_hook_32.dll
 
 # --- Stage 3: Base Interactive ---
 FROM base-ready AS base-interactive
@@ -128,6 +141,8 @@ COPY docker/tint2/tint2rc /etc/xdg/tint2/tint2rc
 
 # SLIM: No pre-warmed prefix, saves 1.4GB. Minimal production-hardened intent.
 FROM base-logic AS intent-slim
+COPY --from=comdlg32-builder /tmp/comdlg32_64.dll /opt/winebot/comdlg32_hook_64.dll
+COPY --from=comdlg32-builder /tmp/comdlg32_32.dll /opt/winebot/comdlg32_hook_32.dll
 ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_REPO
