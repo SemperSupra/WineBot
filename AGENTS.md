@@ -120,3 +120,57 @@ To ensure system stability and reliability, agents must adhere to the following 
 3.  **Graceful Termination:** Always attempt to call `POST /lifecycle/shutdown` before exiting to ensure video artifacts are finalized and resources are reaped.
 4.  **Least Privilege:** Do not attempt to modify files outside of `/wineprefix` or `/artifacts`. The `apps` and `automation` directories are mounted as Read-Only for safety.
 
+## 7. Diagnosing Input Issues
+
+### Is the input pipeline healthy?
+
+```bash
+# Check keyboard injection works
+scripts/winebotctl input key "test" --window-title "Notepad"
+
+# Check trace layers
+scripts/winebotctl input trace status --layer x11
+scripts/winebotctl input trace status --layer windows
+
+# Run full diagnostic suite (requires interactive mode)
+scripts/diagnostics/diagnose-input-suite.sh
+
+# Run 5-layer trace bisect
+scripts/diagnostics/diagnose-input-trace.sh --layers x11,windows
+
+# Analyze keyboard latency
+python3 scripts/diagnostics/analyze-trace-latency.py --mode keyboard
+```
+
+### Keyboard events not reaching the app?
+
+The Wine desktop shell (`explorer.exe /desktop`) intercepts X11 keyboard events.
+The `/input/key` endpoint uses AHK Send by default, bypassing this barrier.
+Verify the backend in the response: `{"backend": "ahk", "status": "sent"}`.
+
+If key events arrive at X11 but not Windows:
+```bash
+# Enable Windows trace
+POST /input/trace/windows/start
+# Send a test key
+POST /input/key {"keys": "Test", "window_title": "Notepad"}
+# Query Windows trace for the key
+GET /input/events?source=windows&origin=agent&limit=50
+# Look for key_down/key_up events with matching trace_id
+```
+
+### Input latency investigation
+
+```bash
+# Start all trace layers
+scripts/diagnostics/diagnose-input-trace.sh --layers x11,windows
+# Send several keystrokes
+scripts/winebotctl input key "test1"
+scripts/winebotctl input key "test2"
+# Analyze latency
+python3 scripts/diagnostics/analyze-trace-latency.py --mode keyboard
+```
+
+See [docs/tracing.md](docs/tracing.md) for the full trace event schema and cross-layer
+correlation guide.
+

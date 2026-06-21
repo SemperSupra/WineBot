@@ -135,6 +135,12 @@ if [ "${DEBUG:-0}" = "1" ]; then
     (winpy -c "import sys; print(sys.version)" | head -n 1) || true
 fi
 
+# 5. Optional: Input pipeline self-test (WINEBOT_INPUT_SELF_TEST=1)
+if [ "${WINEBOT_INPUT_SELF_TEST:-0}" = "1" ]; then
+    echo "--> Pass 5: Input pipeline self-test..."
+    source /scripts/init/35-self-test-input.sh || true
+fi
+
 # Keep container alive or run app
 if [ $# -eq 0 ]; then
     if [ -n "${APP_EXE:-}" ]; then

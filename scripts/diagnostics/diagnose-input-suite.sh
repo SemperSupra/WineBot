@@ -23,6 +23,109 @@ annotate() {
   fi
 }
 
+# --- API keyboard injection helpers ---
+
+API_URL="${API_URL:-http://localhost:8000}"
+API_TOKEN=""
+
+load_api_token() {
+  if [ -n "${API_TOKEN:-}" ]; then
+    return 0
+  fi
+  for token_file in /tmp/winebot_api_token /winebot-shared/winebot_api_token; do
+    if [ -f "$token_file" ]; then
+      API_TOKEN="$(tr -d '[:space:]' <"$token_file")"
+      export API_TOKEN
+      if [ -n "$API_TOKEN" ]; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+api_send_keys() {
+  local keys="$1"
+  local window_title="${2:-}"
+  local backend="${3:-}"
+  local json_body
+
+  load_api_token || true
+
+  if [ -n "$backend" ]; then
+    json_body=$(printf '{"keys": "%s", "window_title": "%s", "backend": "%s"}' \
+      "$keys" "$window_title" "$backend")
+  elif [ -n "$window_title" ]; then
+    json_body=$(printf '{"keys": "%s", "window_title": "%s"}' \
+      "$keys" "$window_title")
+  else
+    json_body=$(printf '{"keys": "%s"}' "$keys")
+  fi
+
+  local curl_args=(-s -X POST -H "Content-Type: application/json" -d "$json_body")
+  if [ -n "$API_TOKEN" ]; then
+    curl_args+=(-H "X-API-Key: ${API_TOKEN}")
+  fi
+
+  curl "${curl_args[@]}" "${API_URL}/input/key" 2>/dev/null || true
+}
+
+is_api_available() {
+  local code
+  load_api_token || true
+  if [ -n "$API_TOKEN" ]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-API-Key: ${API_TOKEN}" "${API_URL}/health" 2>/dev/null || echo "000")
+  else
+    code=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null || echo "000")
+  fi
+  [ "$code" = "200" ]
+}
+
+test_keyboard_via_api() {
+  local win_id="$1"
+  local keys="$2"
+  local window_title="$3"
+  local label="${4:-keyboard_api}"
+
+  local base_img="$LOG_DIR/${label}_base.png"
+  import -window "$win_id" "$base_img"
+
+  log "  Sending keys via API /input/key: \"$keys\" (window: $window_title)"
+  local response
+  response=$(api_send_keys "$keys" "$window_title" "")
+  local status
+  status=$(printf '%s' "$response" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("status") or "").strip())
+except Exception:
+ print("")')
+  local backend
+  backend=$(printf '%s' "$response" | python3 -c 'import sys,json
+try:
+ d=json.load(sys.stdin); print((d.get("backend") or "").strip())
+except Exception:
+ print("")')
+
+  log "  API response: status=$status backend=$backend"
+
+  sleep 0.5
+  local after_img="$LOG_DIR/${label}_after.png"
+  import -window "$win_id" "$after_img"
+  local diff
+  diff=$(compare_shots "$base_img" "$after_img")
+
+  if [ "$diff" -gt 0 ]; then
+    log "  API Keyboard ($backend): PASS (diff=$diff)"
+    return 0
+  elif [ "$status" = "error" ] || [ "$status" = "failed" ]; then
+    log "  API Keyboard: FAIL (API error, status=$status)"
+    return 1
+  else
+    log "  API Keyboard: INCONCLUSIVE (no visual change, diff=0)"
+    return 1
+  fi
+}
+
 cleanup() {
   log "Cleaning up..."
   pkill -f "notepad.exe" || true
@@ -238,23 +341,37 @@ test_notepad() {
   xdotool windowactivate "$win_id"
   sleep 0.2
   
-  # 2. Keyboard
-  local kb_base="$LOG_DIR/notepad_kb_base.png"
-  import -window "$win_id" "$kb_base"
-  xdotool type --window "$win_id" "Test"
-  sleep 0.5
-  local kb_after="$LOG_DIR/notepad_kb_after.png"
-  import -window "$win_id" "$kb_after"
-  local diff
-  diff=$(compare_shots "$kb_base" "$kb_after")
-  if [ "$diff" -gt 0 ]; then
-      log "Notepad Keyboard: PASS"
-  else
-      log "Notepad Keyboard: FAIL"
-      keyboard_result="fail"
-      failed=1
+  # 2. Keyboard — prefer API /input/key, fall back to xdotool
+  local kb_api_ok=0
+  if is_api_available; then
+    if test_keyboard_via_api "$win_id" "Test" "Notepad" "notepad_kb"; then
+      kb_api_ok=1
+      log "Notepad Keyboard (API /input/key): PASS"
+    fi
   fi
-  
+  if [ "$kb_api_ok" -eq 0 ]; then
+    if is_api_available; then
+      log "API keyboard test failed or inconclusive; falling back to xdotool..."
+    else
+      log "API not available; using xdotool keyboard..."
+    fi
+    local kb_base="$LOG_DIR/notepad_kb_base.png"
+    import -window "$win_id" "$kb_base"
+    xdotool type --window "$win_id" "Test"
+    sleep 0.5
+    local kb_after="$LOG_DIR/notepad_kb_after.png"
+    import -window "$win_id" "$kb_after"
+    local diff
+    diff=$(compare_shots "$kb_base" "$kb_after")
+    if [ "$diff" -gt 0 ]; then
+        log "Notepad Keyboard (xdotool): PASS"
+    else
+        log "Notepad Keyboard: FAIL"
+        keyboard_result="fail"
+        failed=1
+    fi
+  fi
+
   xdotool windowclose "$win_id"
   sleep 1
   NOTEPAD_MOUSE_RESULT="$mouse_result"
@@ -292,23 +409,37 @@ test_regedit() {
   xdotool windowactivate "$win_id"
   sleep 0.2
   
-  # 2. Keyboard (Nav)
-  local kb_base="$LOG_DIR/regedit_kb_base.png"
-  import -window "$win_id" "$kb_base"
-  xdotool key --window "$win_id" Down Right
-  sleep 0.5
-  local kb_after="$LOG_DIR/regedit_kb_after.png"
-  import -window "$win_id" "$kb_after"
-  local diff
-  diff=$(compare_shots "$kb_base" "$kb_after")
-  if [ "$diff" -gt 0 ]; then
-      log "Regedit Keyboard: PASS"
-  else
-      log "Regedit Keyboard: FAIL"
-      keyboard_result="fail"
-      failed=1
+  # 2. Keyboard — prefer API /input/key, fall back to xdotool
+  local kb_api_ok=0
+  if is_api_available; then
+    if test_keyboard_via_api "$win_id" "Down" "Registry Editor" "regedit_kb"; then
+      kb_api_ok=1
+      log "Regedit Keyboard (API /input/key): PASS"
+    fi
   fi
-  
+  if [ "$kb_api_ok" -eq 0 ]; then
+    if is_api_available; then
+      log "API keyboard test failed; falling back to xdotool..."
+    else
+      log "API not available; using xdotool keyboard..."
+    fi
+    local kb_base="$LOG_DIR/regedit_kb_base.png"
+    import -window "$win_id" "$kb_base"
+    xdotool key --window "$win_id" Down Right
+    sleep 0.5
+    local kb_after="$LOG_DIR/regedit_kb_after.png"
+    import -window "$win_id" "$kb_after"
+    local diff
+    diff=$(compare_shots "$kb_base" "$kb_after")
+    if [ "$diff" -gt 0 ]; then
+        log "Regedit Keyboard (xdotool): PASS"
+    else
+        log "Regedit Keyboard: FAIL"
+        keyboard_result="fail"
+        failed=1
+    fi
+  fi
+
   xdotool windowclose "$win_id"
   sleep 1
   REGEDIT_MOUSE_RESULT="$mouse_result"
@@ -346,29 +477,42 @@ test_winefile() {
   xdotool windowactivate "$win_id"
   sleep 0.2
   
-  # 2. Keyboard (F5 Refresh)
-  local kb_base="$LOG_DIR/winefile_kb_base.png"
-  import -window "$win_id" "$kb_base"
-  xdotool key --window "$win_id" F5
-  sleep 0.5
-  local kb_after="$LOG_DIR/winefile_kb_after.png"
-  import -window "$win_id" "$kb_after"
-  local diff
-  diff=$(compare_shots "$kb_base" "$kb_after")
-  # Refresh might not change pixels if idle. Use Alt+V (View menu) instead.
-  if [ "$diff" -eq 0 ]; then
-      xdotool key --window "$win_id" Alt+v
-      sleep 0.5
-      import -window "$win_id" "$kb_after"
-      diff=$(compare_shots "$kb_base" "$kb_after")
+  # 2. Keyboard — prefer API /input/key, fall back to xdotool
+  local kb_api_ok=0
+  if is_api_available; then
+    if test_keyboard_via_api "$win_id" "F5" "Wine File Manager" "winefile_kb"; then
+      kb_api_ok=1
+      log "Winefile Keyboard (API /input/key): PASS"
+    fi
   fi
-  
-  if [ "$diff" -gt 0 ]; then
-      log "Winefile Keyboard: PASS"
-  else
-      log "Winefile Keyboard: FAIL"
-      keyboard_result="fail"
-      failed=1
+  if [ "$kb_api_ok" -eq 0 ]; then
+    if is_api_available; then
+      log "API keyboard test failed; falling back to xdotool..."
+    else
+      log "API not available; using xdotool keyboard..."
+    fi
+    local kb_base="$LOG_DIR/winefile_kb_base.png"
+    import -window "$win_id" "$kb_base"
+    xdotool key --window "$win_id" F5
+    sleep 0.5
+    local kb_after="$LOG_DIR/winefile_kb_after.png"
+    import -window "$win_id" "$kb_after"
+    local diff
+    diff=$(compare_shots "$kb_base" "$kb_after")
+    # Refresh might not change pixels if idle. Use Alt+V (View menu) instead.
+    if [ "$diff" -eq 0 ]; then
+        xdotool key --window "$win_id" Alt+v
+        sleep 0.5
+        import -window "$win_id" "$kb_after"
+        diff=$(compare_shots "$kb_base" "$kb_after")
+    fi
+    if [ "$diff" -gt 0 ]; then
+        log "Winefile Keyboard (xdotool): PASS"
+    else
+        log "Winefile Keyboard: FAIL"
+        keyboard_result="fail"
+        failed=1
+    fi
   fi
   
   xdotool windowclose "$win_id"

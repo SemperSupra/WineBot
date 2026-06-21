@@ -12,6 +12,7 @@ pytest \
   tests/test_config_strict_validation.py \
   tests/test_invariants.py \
   tests/test_input_validation.py \
+  tests/test_input_keyboard_conformance.py \
   tests/test_input_lifecycle_regression.py \
   tests/test_lifecycle_hardened.py \
   tests/test_profile_matrix.py \
