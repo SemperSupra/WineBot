@@ -81,6 +81,60 @@ wine reg add "HKEY_CURRENT_USER\\Software\\Wine\\X11 Driver" /v Managed /t REG_S
 if [ -x "/scripts/setup/install-theme.sh" ]; then
     /scripts/setup/install-theme.sh >/dev/null 2>&1
 fi
+# Apply DPI and keyboard layout if configured
+if [ -n "${WINE_DPI:-}" ]; then
+    echo "--> Setting Wine DPI to ${WINE_DPI}..."
+    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v LogPixels /t REG_DWORD /d "${WINE_DPI}" /f >/dev/null 2>&1
+    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics" /v AppliedDPI /t REG_DWORD /d "${WINE_DPI}" /f >/dev/null 2>&1
+fi
+if [ -n "${WINE_KEYBOARD_LAYOUT:-}" ]; then
+    echo "--> Setting keyboard layout to ${WINE_KEYBOARD_LAYOUT}..."
+    wine reg add "HKEY_CURRENT_USER\\Keyboard Layout\\Preload" /v 1 /t REG_SZ /d "${WINE_KEYBOARD_LAYOUT}" /f >/dev/null 2>&1
+    wine reg add "HKEY_CURRENT_USER\\Keyboard Layout\\Substitutes" /v "${WINE_KEYBOARD_LAYOUT}" /t REG_SZ /d "${WINE_KEYBOARD_LAYOUT}" /f >/dev/null 2>&1
+fi
+
+# Font smoothing: grayscale (default, good for CV/automation), cleartype (better for human VNC), or off
+if [ -n "${WINE_FONT_SMOOTHING:-}" ]; then
+    case "${WINE_FONT_SMOOTHING}" in
+        off)
+            echo "--> Disabling font smoothing..."
+            wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d "0" /f >/dev/null 2>&1
+            ;;
+        cleartype)
+            echo "--> Enabling ClearType font smoothing..."
+            wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d "2" /f >/dev/null 2>&1
+            wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1
+            ;;
+        grayscale|*)
+            echo "--> Enabling grayscale font smoothing..."
+            wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d "2" /f >/dev/null 2>&1
+            wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 1 /f >/dev/null 2>&1
+            ;;
+    esac
+fi
+
+# Aggressive focus assistance for agents (reduces "lost focus" issues)
+if [ "${WINE_FORCE_FOCUS:-0}" = "1" ]; then
+    echo "--> Enabling aggressive focus assistance..."
+    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v ForegroundFlashCount /t REG_DWORD /d 0 /f >/dev/null 2>&1
+    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v ActiveWndTrkTimeout /t REG_DWORD /d 0 /f >/dev/null 2>&1
+    wine reg add "HKEY_CURRENT_USER\\Control Panel\\Desktop" /v BlockSendInputResets /t REG_SZ /d "0" /f >/dev/null 2>&1
+fi
+
+# Runtime winetricks: install common components (e.g., WINE_WINETRICKS=vcrun2019,dotnet48)
+if [ -n "${WINE_WINETRICKS:-}" ]; then
+    echo "--> Running winetricks for: ${WINE_WINETRICKS}..."
+    IFS=',' read -ra TRICKS <<< "${WINE_WINETRICKS}"
+    for trick in "${TRICKS[@]}"; do
+        trick="$(echo "$trick" | xargs)"  # trim whitespace
+        if [ -n "$trick" ]; then
+            echo "    winetricks --unattended ${trick}..."
+            winetricks --unattended "$trick" >/dev/null 2>&1 || echo "    [WARN] winetricks ${trick} failed (may be harmless)"
+        fi
+    done
+    wineserver -w
+    echo "--> winetricks complete."
+fi
 wineserver -k
 if ! timeout 30s wineserver -w; then
     echo "--> [WARN] wineserver wait timed out after optimization; continuing." >&2

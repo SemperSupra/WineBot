@@ -62,6 +62,11 @@ WineBot uses a unified, validated configuration system based on environment vari
 | `WINEBOT_TELEMETRY_FEATURE_SETS` | (Unset) | Optional allowlist of feature sets. |
 | `WINEBOT_TELEMETRY_SAMPLE_RATE` | `1.0` | Probability of event emission (0.0-1.0). |
 | `WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN` | `600` | Global telemetry emission cap per minute. |
+| `WINE_DPI` | `96` | Wine DPI setting for consistent UI layout across sessions. |
+| `WINE_KEYBOARD_LAYOUT` | `00000409` | Wine keyboard layout (hex LCID). Default: US English. |
+| `WINE_FONT_SMOOTHING` | `grayscale` | Font smoothing mode: `off`, `grayscale` (CV-friendly), or `cleartype` (human-friendly). |
+| `WINE_FORCE_FOCUS` | `0` | Aggressive focus assistance for agents. Set to `1` to prevent lost-focus issues. |
+| `WINE_WINETRICKS` | (Unset) | Comma-separated list of winetricks components to install at startup (e.g., `vcrun2019,dotnet48`). |
 
 Invalid environment values now fail closed at startup with explicit validation errors.
 For full runtime/scalability controls, see `docs/scalability.md`.
