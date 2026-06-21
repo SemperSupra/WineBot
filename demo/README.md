@@ -1,87 +1,135 @@
-# WineBot Input Pipeline Demo
+# WineBot Demos
 
-This directory contains a comprehensive demonstration of the WineBot input pipeline,
-showing every input type and capability working end-to-end.
+This directory contains focused demo scripts that exercise WineBot capabilities
+end-to-end. Each demo downloads software, installs it, interacts via the API,
+verifies artifacts, and cleans up — all with recorded video, chapter markers,
+and subtitle annotations.
 
 ## Quick Start
 
 ```bash
-# 1. Start WineBot in interactive mode (recording enabled by default)
+# 1. Start WineBot in interactive mode
 docker compose -f compose/docker-compose.yml --profile interactive up -d
 
 # 2. Wait for healthy
-docker compose -f compose/docker-compose.yml --profile interactive exec winebot-interactive \
-  bash -c 'for i in $(seq 1 60); do curl -sf http://localhost:8000/health > /dev/null && break; sleep 2; done'
+for i in $(seq 1 60); do
+  docker compose -f compose/docker-compose.yml --profile interactive exec winebot-interactive \
+    curl -sf http://localhost:8000/health > /dev/null && break
+  sleep 5
+done
 
-# 3. Run the demo
-bash demo/scripts/input-pipeline-demo.sh
+# 3. Run any demo
+bash demo/scripts/input-pipeline-demo.sh        # Core input pipeline
+bash demo/scripts/demo-7zip.sh                  # 7-Zip install → archive → verify
+bash demo/scripts/demo-notepadpp.sh             # Notepad++ install → edit → save
+bash demo/scripts/demo-vlc.sh                   # VLC install → menu navigation
+bash demo/scripts/demo-supertux.sh              # SuperTux game install → play → close
 
-# 4. Copy the recording
-docker cp compose-winebot-interactive-1:/artifacts/sessions/SESSION_ID/video_001.mkv demo/output/
-
-# 5. Convert to GIF (optional)
-docker exec compose-winebot-interactive-1 sh -c \
-  'ffmpeg -i /artifacts/sessions/SESSION_ID/video_001.mkv \
-   -vf "fps=10,scale=640:-1:flags=lanczos" -loop 0 /tmp/demo.gif'
-docker cp compose-winebot-interactive-1:/tmp/demo.gif demo/output/
+# 4. Copy output (auto-trimmed to remove blank intro)
+docker cp compose-winebot-interactive-1:/tmp/trimmed.mkv demo/output/demo.mkv
+docker cp compose-winebot-interactive-1:/tmp/trimmed.gif demo/output/demo.gif
+docker cp compose-winebot-interactive-1:/artifacts/sessions/SESSION_ID/events_001.vtt demo/output/demo.vtt
 ```
 
-## What the Demo Shows
+## Demo Catalog
 
-The demo exercises the full input pipeline across 5 parts in ~5 minutes:
+### 1. Input Pipeline Demo (`input-pipeline-demo.sh`)
+The core demo. Exercises every input type and capability.
 
-| Part | Operations | Input Types |
+| Part | Operations | API Endpoints |
 |:---|:---|:---|
-| **1. File Create** | Launch Notepad, type content, Ctrl+S save, Alt+F4 close | Agent launch, Mouse click, Keyboard text, Return key, Modifier chords (Ctrl+S, Alt+F4) |
-| **2. File Edit** | Re-open Notepad, Ctrl+O open file, edit content, save, close | Agent launch, Modifier chord (Ctrl+O), Keyboard text, Mouse click |
-| **3. Registry Create** | Launch Regedit, Tab+Arrow navigate to HKCU\Software, Alt+E menu, create key + string value + DWORD value, verify with reg.exe | Agent launch, Tab key (×4), Arrow keys (×12), Modifier chords (Alt+E, Alt+F4), Keyboard text |
-| **4. CMD Script** | Write .bat programmatically via /run/python, execute via /apps/run, verify output — **script reads registry value from Part 3** | Python script execution, App launch with args |
-| **5. Cleanup** | Delete all files and registry keys via cmd.exe | App launch with args |
+| Setup | AHK pipe handler + dialog watcher | `/apps/run` |
+| Mouse + Keyboard | Type text, named keys (Return, Tab), modifier chords (Ctrl+A) | `/input/key`, `/input/mouse/click` |
+| AHK Dialog | Pipe protocol: `open_gui` → `set_filename` → `click_save` | Pipe file |
+| File Ops | cmd.exe /c echo/redirect/type | `/apps/run` |
+| Registry | cmd.exe /c reg add/query/delete | `/apps/run` |
+| Batch Script | docker cp + cmd.exe /c execution | `/apps/run` |
+| Cleanup | All files and registry keys removed | `/apps/run` |
 
-### Input Types Demonstrated
+### 2. 7-Zip Archive Demo (`demo-7zip.sh`)
+Pure cmd.exe /c operations, no GUI needed.
 
-- **Mouse:** Click targeting via xdotool (`/input/mouse/click`)
-- **Keyboard plain text:** Typed strings via AHK Send (`/input/key`)
-- **Named keys:** Return, Tab, Escape, Down, Right
-- **Modifier chords:** Ctrl+S, Ctrl+O, Alt+E, Alt+F4
-- **Agent app launch:** `/apps/run` with detach and args
-- **Agent script execution:** `/run/python` for programmatic file creation
+| Step | What It Tests |
+|:---|:---|
+| Download | curl inside Wine container |
+| Silent install | `installer.exe /S` |
+| Archive create | `7z a` via cmd.exe /c |
+| Archive extract | `7z x` via cmd.exe /c |
+| File verification | Compare original vs extracted |
+| Uninstall | `Uninstall.exe /S` cleanup |
 
-### Capabilities Demonstrated
+### 3. Notepad++ Demo (`demo-notepadpp.sh`)
+GUI text editor with MessageBox hook and Save dialog.
 
-- File create, edit, and delete
-- Registry key creation with REG_SZ and REG_DWORD values
-- Registry verification via reg.exe
-- Programmatic batch script: write, execute, verify
-- Batch script reads registry values created in prior steps
-- Clean artifact removal
+| Step | What It Tests |
+|:---|:---|
+| Download | GitHub release download |
+| Silent install | `installer.exe /S` — **MessageBox hook dismisses prompts** |
+| Launch | `/apps/run` notepad++.exe |
+| Keyboard input | `/input/key` types content into editor |
+| Save dialog | **AHK pipe dialog** replaces Wine Save As |
+| File verification | Read saved file from disk |
+| Uninstall | Silent uninstall + cleanup |
 
-## Customizing the Demo
+### 4. VLC Media Player Demo (`demo-vlc.sh`)
+Complex GUI with menu navigation and Open File dialog.
 
-Edit the CONFIG section at the top of `scripts/input-pipeline-demo.sh`:
+| Step | What It Tests |
+|:---|:---|
+| Download | ~20MB installer from videolan.org |
+| Silent install | `installer.exe /S` |
+| Launch | `cmd.exe /c vlc.exe` with flags |
+| Menu navigation | Alt+M (Media), Alt+H (Help), arrow keys |
+| Keyboard chords | Alt+key combos on GUI menus |
+| Open File dialog | Ctrl+O — **Shell32 hook intercepts** |
+| Close + uninstall | Alt+F4 + silent uninstall |
 
-```bash
-API_URL="http://localhost:8000"       # WineBot API URL
-DEMO_TEXT_FILE="C:\\artifacts\\..."   # File to create/edit
-DEMO_REG_KEY="HKCU\\Software\\..."    # Registry key to create
-DEMO_REG_STRING_VALUE="..."           # String value content
-DEMO_REG_DWORD_VALUE="42"             # DWORD value
-```
+### 5. SuperTux Game Demo (`demo-supertux.sh`)
+Full game lifecycle: MSI installer, GPU rendering, complex input.
+
+| Step | What It Tests |
+|:---|:---|
+| Download | ~200MB MSI from GitHub |
+| Install via MSI | **msiexec /quiet /qn** (MSI hook) |
+| Launch | `/apps/run` supertux2.exe |
+| Keyboard nav | Up/Down/Return on game menus |
+| Mouse click | `/input/mouse/click` on game window |
+| Screenshot | `/screenshot` captures game rendering |
+| Close + uninstall | Escape + Alt+F4 + msiexec /x |
+| Full lifecycle | Download → Install → Play → Verify → Remove |
+
+## Demo Features
+
+All demos include:
+- **Chapter markers** — navigable in VLC/MPV timeline
+- **Subtitle annotations** — every step labeled
+- **Auto-trim** — blank intro seconds removed (configurable via `TRIM_SS`)
+- **GIF generation** — animated preview alongside MKV video
+- **Recording** — full desktop captured by WineBot recorder
 
 ## Files
 
 ```
 demo/
-├── README.md                         # This file
+├── README.md                           # This file
 ├── scripts/
-│   └── input-pipeline-demo.sh        # Main demo script (editable)
-└── output/                           # Recording output (gitignored)
-    ├── demo.mkv                      # Video recording with subtitles
-    └── demo.gif                      # Animated GIF preview
+│   ├── input-pipeline-demo.sh          # Core input pipeline demo
+│   ├── hook-demo.sh                    # API hook DLL demonstration
+│   ├── demo-7zip.sh                    # 7-Zip install/archive demo
+│   ├── demo-notepadpp.sh               # Notepad++ text editor demo
+│   ├── demo-vlc.sh                     # VLC media player demo
+│   ├── demo-supertux.sh                # SuperTux game demo
+│   └── CmdScript_Demo.bat              # Batch script template
+└── output/                             # Generated files (gitignored)
+    ├── .gitignore
+    ├── demo.mkv                        # Trimmed video with chapters
+    ├── demo.gif                        # Animated GIF preview
+    └── demo.vtt                        # Subtitle track
 ```
 
 ## Requirements
 
 - Docker Desktop running
 - WineBot container started in interactive mode
-- `curl`, `docker` CLI tools available
+- Container needs internet access (for download demos)
+- `curl`, `docker` CLI tools available on host
