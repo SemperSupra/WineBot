@@ -67,6 +67,8 @@ RUN apt-get update \
       libvpx9 \
       openssl \
       openssl-provider-legacy \
+      tesseract-ocr \
+      tesseract-ocr-eng \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
