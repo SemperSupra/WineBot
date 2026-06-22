@@ -273,9 +273,67 @@ Window decorations are controlled via Openbox `rc.xml` and Motif hints.
 
 ### 22. No Hardware Acceleration in Headless Mode
 
-Headless mode (no physical GPU) means no D3D/OpenGL hardware acceleration.
-Wine falls back to software rendering. This is correct for automation use
-cases where rendering fidelity is secondary to input reliability.
+Headless mode uses Xvfb (X Virtual Framebuffer) — a purely software memory
+framebuffer. Xvfb provides a 2D pixel buffer at a fixed resolution but has
+**no GPU, no OpenGL, and no Direct3D or Vulkan support**. This is the most
+significant architectural difference between WineBot and WinBot.
+
+#### Impact by Application Type
+
+| Application Type | WineBot (Xvfb) | WinBot (Windows GPU) |
+|:---|:---|:---|
+| Standard Win32 GUI (Notepad, cmd, regedit) | ✅ Works | ✅ Works |
+| 2D GDI applications | ✅ Works | ✅ Works |
+| 2D DirectDraw games (Alpha Centauri, Civ II) | ✅ with `DirectDraw=0` | ✅ Works |
+| OpenGL 2D games (Baldur's Gate, StarCraft) | ✅ Software fallback | ✅ Hardware |
+| OpenGL 3D games (SuperTux, 0 A.D.) | ❌ No GL context | ✅ Hardware |
+| Direct3D 9/10/11 applications | ❌ Requires GPU | ✅ Hardware |
+| CAD / 3D modeling tools | ❌ Requires GPU | ✅ Hardware |
+| Games with software renderer option | ✅ CPU rendering only | ✅ Hardware |
+
+#### Wine Configuration for Software Rendering
+
+To maximize Xvfb compatibility, Wine can be forced to use the GDI software
+renderer for all Direct3D calls:
+
+```
+wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /t REG_SZ /d gdi /f
+```
+
+This setting is **not applied by default** in WineBot — it is set per-session
+by demo scripts that need it. Games that require OpenGL 3.x+ will fail
+regardless because Xvfb provides no GLX (GL extension) support whatsoever.
+
+#### Xvfb Technical Constraints
+
+- No `GLX` extension — `glxinfo` returns nothing
+- No `/dev/dri` device — no GPU passthrough
+- LLVMpipe not installed — no software OpenGL
+- `virgl` not configured — no virtualized GPU
+- Wine's `opengl32` built-in maps to Xvfb's software surface only
+
+#### Games Tested Against Xvfb
+
+| Game | Result | Failure Mode |
+|:---|:---|:---|
+| SuperTux (OpenGL 3.3) | ❌ | Creates window, initializes GL context → crashes silently when GLX not found |
+| Alpha Centauri (DirectDraw 2D) | ✅ with `DirectDraw=0` | Forces GDI software path |
+| Civilization II (2D) | ✅ Expected | GDI-based rendering |
+| Diablo II (DirectDraw 2D) | ✅ with `-w -nofixaspect` | DirectDraw software fallback |
+| StarCraft (2D) | ✅ Expected | 2D sprite-based |
+
+#### Future Options for 3D Support
+
+- **LLVMpipe** — CPU-based OpenGL implementation. Adds ~10MB to image. Enables
+  OpenGL 4.5 in software. Available via `apt install libgl1-mesa-dri`.
+- **virgl** — Virtualized GPU for QEMU/KVM containers. Requires host GPU.
+- **GPU passthrough** — Mount `/dev/dri` into container. Requires Linux host
+  with GPU. Non-portable (breaks macOS/Windows Docker Desktop hosts).
+- **VNC with VirtualGL** — Render on host GPU, stream to container. Complex.
+
+For WinBot parity, games and 3D applications should run on WinBot where the
+native Windows GPU driver is available. For WineBot, use the GDI software
+renderer and test each application individually.
 
 ### 23. Font Smoothing Configurable
 

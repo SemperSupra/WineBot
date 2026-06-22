@@ -63,14 +63,33 @@
 
 | Issue | Impact | Mitigation |
 |:---|:---|:---|
-| **Supertux cv_wait times out** | Game needs GPU rendering for window detection | `cv_wait` falls back to `sleep 8` |
+| **Supertux cv_wait times out** | Game needs **OpenGL 3.3** — Xvfb provides no GPU context | Documented as expected; `cv_wait` falls back to `sleep 8`. 3D games → WinBot |
+| **Xvfb: no GPU rendering** | All 3D apps (OpenGL/D3D) fail in WineBot | **Architectural limitation** — documented in `docs/known-limitations.md` and contracts |
 | **Notepad++ OCR poor** | Dark theme produces low-contrast text for Tesseract | Invert colors or use PaddleOCR |
 | **Installer file checks** | Wine 10.0 installer paths don't match expected | Known Wine limitation, not our code |
-| **YOLO in Docker** | `pip install ultralytics` fails on `--index-url` (fixed with `--extra-index-url`) | Builds with `WITH_YOLO=1` |
-| **PaddleOCR not tested** | Not installed in container | `WITH_PADDLE=1` build arg available |
-| **OmniParser Florence-2** | Needs GPU, adds 2GB | `WITH_OMNIPARSER=1` build arg available |
+| **PaddleOCR not tested** | Build running (~500MB); comparative benchmark pending | `WITH_PADDLE=1` build arg available, results pending |
+| **OmniParser Florence-2** | Needs GPU, adds 2GB | `WITH_OMNIPARSER=1` build arg available, build queued |
 | **Sidecar `urllib` needs `host.docker.internal`** | Docker Desktop DNS quirk | `fresh_session` translates `localhost` to `host.docker.internal` |
 | **CV watcher @ 1fps** | Misses fast dialog transitions | Acceptable — raise fps if needed |
+
+## WineBot vs WinBot — Rendering Divergence
+
+This is the **single largest architectural difference** between the two platforms.
+
+| Aspect | WineBot | WinBot |
+|:---|:---|:---|
+| Display | Xvfb `:99` (software framebuffer) | Native Windows display |
+| GPU | **None** — no OpenGL, no D3D, no Vulkan | Full GPU with DirectX/Vulkan |
+| 2D apps (Notepad, cmd, regedit) | ✅ Full compatibility | ✅ Full compatibility |
+| 2D DirectDraw games | ✅ with `DirectDraw=0` (GDI fallback) | ✅ Native DirectDraw |
+| Alpha Centauri | ✅ with `DirectDraw=0` in .ini | ✅ Native |
+| SuperTux / 3D games | ❌ No GL context available | ✅ Native OpenGL |
+| CAD / 3D modeling | ❌ No GPU | ✅ Native GPU |
+
+Documented in:
+- `docs/known-limitations.md` §22 — full Xvfb constraints and game compatibility matrix
+- `docs/contracts/architecture.md` — platform differences table
+- Contracts `tests/conformance/` — `gpu_available` field check added
 
 ## CI Gates
 
