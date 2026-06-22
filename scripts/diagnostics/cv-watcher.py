@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# EXECUTION: IN_CONTAINER — requires Wine desktop screenshot (ImageMagick/xwd), API access
+# STATUS: ACTIVE — pixel-diff desktop monitor; auto-started by _demo_common.sh init_session()
 """CV Watcher: monitors the WineBot desktop during automation.
 
 Takes periodic screenshots, diffs consecutive frames to detect visual
@@ -28,6 +30,13 @@ class CVWatcher:
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(os.path.join(output_dir, "frames"), exist_ok=True)
 
+        # Check screenshot capability at startup
+        self._has_import = self._check_cmd(["import", "-version"])
+        self._has_xwd = self._check_cmd(["xwd", "-version"])
+        if not self._has_import and not self._has_xwd:
+            print("WARNING: Neither 'import' (ImageMagick) nor 'xwd' found — screenshots may fail",
+                  file=sys.stderr)
+
         # Write header
         self._log_path = os.path.join(output_dir, "watcher.jsonl")
         with open(self._log_path, "w") as f:
@@ -41,6 +50,15 @@ class CVWatcher:
                 )
                 + "\n"
             )
+
+    @staticmethod
+    def _check_cmd(cmd: list) -> bool:
+        """Check if a command is available."""
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=3)
+            return True
+        except Exception:
+            return False
 
     def _token_from_container(self) -> Optional[str]:
         """Read API token from container filesystem."""

@@ -164,6 +164,38 @@ services:
       - wineprefix:/wineprefix
     command: ["/work/scripts/ci/smoke-test.sh"]
 
+  # ── CV/OCR Sidecar (optional, built from docker/Dockerfile.cv-analyzer) ──
+  winebot-cv:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.cv-analyzer
+      args:
+        WITH_YOLO: ${WITH_YOLO:-0}
+    image: winebot-cv:${WINEBOT_IMAGE_VERSION:-local}
+    profiles:
+      - interactive
+      - test
+    ports:
+      - "8001:8001"
+    volumes:
+      # Mount artifacts for offline batch analysis of session recordings
+      - ../artifacts:/artifacts:ro
+      # Mount demo output for batch CV analysis
+      - ../demo/output:/demo-output:ro
+      # Host model cache (persists YOLO weights across container rebuilds)
+      - ../models/yolo:/models:ro
+      # Host tessdata cache (persists Tesseract language data)
+      - ../models/tessdata:/usr/share/tesseract-ocr/5/tessdata:ro
+    environment:
+      YOLO_MODEL_PATH: /models/yolov8n.pt
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    command: ["--serve", "--host", "0.0.0.0", "--port", "8001"]
+
 volumes:
   wineprefix:
   winebot-shared:

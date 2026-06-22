@@ -3,57 +3,27 @@
 # Use case: Windows build tools running in headless container, controlled by API
 # No downloads — uses only Wine built-in tools
 set -u
-API_URL="http://localhost:8000"
-PREFIX="/wineprefix/drive_c"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_demo_common.sh"
+init_session
+ensure_dirs
+
 PROJECT="ci_demo"
 SRC="$PREFIX/$PROJECT"
-PIPE="//wineprefix/drive_c/dialog_handler/pipe.txt"
-BAT="$PREFIX/__cmd.bat"
 
-detect_token() { [ -n "${API_TOKEN:-}" ] && { TOKEN="$API_TOKEN"; return; }
-  TOKEN=$(MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c 'cat /tmp/winebot_api_token 2>/dev/null || cat /winebot-shared/winebot_api_token 2>/dev/null' 2>/dev/null | tr -d '[:space:]' || true)
-  [ -z "$TOKEN" ] && { echo "ERROR: No token"; exit 1; } }
-api_post() { curl -sfS -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" -d "$2" "$API_URL$1" 2>/dev/null; }
-ann() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "python3 -m automation.recorder annotate --session-dir '$SESSDIR' --text \"$1\" --kind annotation --source demo" 2>/dev/null || true; }
-ch()   { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "python3 -m automation.recorder annotate --session-dir '$SESSDIR' --text \"$1\" --kind chapter --source demo" 2>/dev/null || true; }
-vf() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "test -f $1 && echo EXISTS \$(wc -c < $1)bytes || echo MISSING" 2>/dev/null; }
-pipe_cmd() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 su -s /bin/sh winebot -c "echo '$1' > '$PIPE'" 2>/dev/null; }
-pipe_read() { MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 su -s /bin/sh winebot -c "cat '$PIPE' 2>/dev/null" || true; }
-
-# Write .bat file, execute via wine cmd.exe /c (no bash redirection issues)
-bat() { local name="$1" content="$2"
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "cat > ${BAT} << 'BATEOF'
-${content}
-BATEOF
-chown winebot:winebot ${BAT}"
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "
-    gosu winebot env DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all \
-    wine cmd.exe /c 'C:\\\\__cmd.bat' 2>/dev/null"
-}
-
-# Write a file directly from Linux (faster, avoids cmd.exe overhead)
-write_file() { local path="$1" content="$2"
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "echo '$content' > '$path' && chown winebot:winebot '$path'" 2>/dev/null; }
-
-detect_token
-SESSION=$(curl -s -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-SESSDIR="/artifacts/sessions/$SESSION"
-CT=$(curl -s -X POST -H "X-API-Key: $TOKEN" "$API_URL/sessions/$SESSION/control/challenge" | grep -o '"token":[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-api_post "/sessions/$SESSION/control/grant" "{\"lease_seconds\":7200,\"user_ack\":true,\"challenge_token\":\"$CT\"}" > /dev/null
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 mkdir -p "$SRC" "$PREFIX" //wineprefix/drive_c/dialog_handler 2>/dev/null
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 chown -R winebot:winebot "$SRC" "$PREFIX" //wineprefix/drive_c/dialog_handler 2>/dev/null
-
-MSYS_NO_PATHCONV=1 docker cp automation/core/dialog_replacement.ahk compose-winebot-interactive-1://wineprefix/drive_c/dr.ahk 2>/dev/null
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 chown winebot:winebot //wineprefix/drive_c/dr.ahk 2>/dev/null
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c '
-  gosu winebot env DISPLAY=:99 WINEPREFIX=/wineprefix WINEDEBUG=-all nohup ahk C:/dr.ahk > /wineprefix/drive_c/dh.log 2>&1 &'
-sleep 5
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" mkdir -p "$SRC" //wineprefix/drive_c/dialog_handler 2>/dev/null
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" chown -R winebot:winebot "$SRC" //wineprefix/drive_c/dialog_handler 2>/dev/null
 
 echo "=============================================="
 echo "  CI Pipeline Demo — Headless Windows Build"
 echo "=============================================="
 echo ""
 
+echo "=== Setup: Deploy AHK Pipe Handler ==="
+ch "AHK handler setup"
+setup_ahk_handler 0
+
+echo ""
 echo "=== Phase 1: Build source files ==="
 ch "Phase 1: Build source artifacts"
 ann "METHOD: write_file (Linux direct) — fastest approach for file creation"
@@ -73,43 +43,51 @@ Build Tool: WineBot CI Pipeline
 Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "  $(vf "$SRC/build_manifest.txt")"
 ann "Build manifest written"
+snap "phase1_source_files"
+ann_expect "Build sources created" ""
 
 echo ""
 echo "=== Phase 2: Verify checksums (certutil via .bat) ==="
 ch "Phase 2: SHA256 checksums"
 ann "METHOD: wine cmd.exe /c certutil -hashfile (Windows built-in)"
 
-bat "hash" "certutil -hashfile C:/$PROJECT/src_file_1.txt SHA256 > C:/$PROJECT/checksums.txt
+# hash: generate SHA256 checksums
+bat "certutil -hashfile C:/$PROJECT/src_file_1.txt SHA256 > C:/$PROJECT/checksums.txt
 certutil -hashfile C:/$PROJECT/src_file_2.txt SHA256 >> C:/$PROJECT/checksums.txt
 certutil -hashfile C:/$PROJECT/src_file_3.txt SHA256 >> C:/$PROJECT/checksums.txt"
 sleep 2
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 chown winebot:winebot "$SRC/checksums.txt" 2>/dev/null
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" chown winebot:winebot "$SRC/checksums.txt" 2>/dev/null
 echo "  $(vf "$SRC/checksums.txt")"
 ann "SHA256 checksums generated"
+snap "phase2_checksums"
+ann_expect "Checksums verified" ""
 
-# Verify: re-hash and compare
-bat "verify" "certutil -hashfile C:/$PROJECT/src_file_1.txt SHA256 > C:/$PROJECT/verify.txt
+# verify: re-hash and compare
+bat "certutil -hashfile C:/$PROJECT/src_file_1.txt SHA256 > C:/$PROJECT/verify.txt
 certutil -hashfile C:/$PROJECT/src_file_2.txt SHA256 >> C:/$PROJECT/verify.txt
 certutil -hashfile C:/$PROJECT/src_file_3.txt SHA256 >> C:/$PROJECT/verify.txt"
 sleep 2
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 chown winebot:winebot "$SRC/verify.txt" 2>/dev/null
-MATCH=$(MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 diff "$SRC/checksums.txt" "$SRC/verify.txt" 2>/dev/null && echo "MATCH" || echo "DIFFER")
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" chown winebot:winebot "$SRC/verify.txt" 2>/dev/null
+MATCH=$(MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" diff "$SRC/checksums.txt" "$SRC/verify.txt" 2>/dev/null && echo "MATCH" || echo "DIFFER")
 echo "  Verification: $MATCH"
-[ "$MATCH" = "MATCH" ] && ann "Checksums verified: MATCH — build integrity confirmed"
+if [ "$MATCH" = "MATCH" ]; then
+  ann "Checksums verified: MATCH — build integrity confirmed"
+fi
 
 echo ""
 echo "=== Phase 3: Package into CAB archive ==="
 ch "Phase 3: Package artifacts"
 ann "METHOD: cabarc via cmd.exe — Windows native CAB format"
 
-bat "package" "cabarc -r N C:/$PROJECT/build_output.cab C:/$PROJECT/src_file_* C:/$PROJECT/build_manifest.txt C:/$PROJECT/checksums.txt"
+# package: create CAB archive
+bat "cabarc -r N C:/$PROJECT/build_output.cab C:/$PROJECT/src_file_* C:/$PROJECT/build_manifest.txt C:/$PROJECT/checksums.txt"
 sleep 2
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 chown winebot:winebot "$SRC/build_output.cab" 2>/dev/null
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" chown winebot:winebot "$SRC/build_output.cab" 2>/dev/null
 echo "  $(vf "$SRC/build_output.cab")"
 ann "Build output packaged: build_output.cab"
 
-# List contents
-bat "list_cab" "cabarc L C:/$PROJECT/build_output.cab"
+# list_cab: verify CAB contents
+bat "cabarc L C:/$PROJECT/build_output.cab"
 sleep 1
 ann "CAB contents verified — all files present"
 
@@ -118,12 +96,14 @@ echo "=== Phase 4: Registry build metadata ==="
 ch "Phase 4: Registry metadata"
 ann "METHOD: reg add via .bat — persistent build metadata"
 
-bat "reg_meta" "reg add HKCU\\Software\\WineBotCI /v BuildProject /t REG_SZ /d $PROJECT /f
+# reg_meta: store build metadata
+bat "reg add HKCU\\Software\\WineBotCI /v BuildProject /t REG_SZ /d $PROJECT /f
 reg add HKCU\\Software\\WineBotCI /v FileCount /t REG_DWORD /d 3 /f
 reg add HKCU\\Software\\WineBotCI /v BuildTimestamp /t REG_SZ /d %DATE% /f"
 sleep 1
 
-bat "reg_query" "reg query HKCU\\Software\\WineBotCI"
+# reg_query: verify metadata
+bat "reg query HKCU\\Software\\WineBotCI"
 sleep 1
 ann "Build metadata stored in Windows registry"
 
@@ -133,8 +113,10 @@ ch "Phase 5: GUI report generation"
 ann "METHOD: Notepad + /input/key — alternative GUI approach"
 
 api_post "/apps/run" '{"path":"notepad.exe","detach":true}' > /dev/null
-sleep 3
+cv_wait "Notepad" 10 || sleep 3
 ann "Notepad launched"
+snap "phase5_gui_report"
+ann_expect "Notepad report window" "Notepad"
 
 API="/input/key"
 for line in "WineBot CI Pipeline Report" "=========================" " " "Build Project: $PROJECT" "Source Files: 3" "Checksums: SHA256 verified" "Package: build_output.cab" " " "Build completed by WineBot CI Pipeline" "Headless Windows build automation"; do
@@ -164,7 +146,7 @@ ch "Phase 6: Final validation"
 ann "METHOD: docker exec — Linux-side verification"
 
 for f in src_file_1.txt src_file_2.txt src_file_3.txt; do
-  MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 cat "$SRC/$f" 2>/dev/null | head -1
+  MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" cat "$SRC/$f" 2>/dev/null | head -1
 done
 echo "  Archive: $(vf "$SRC/build_output.cab")"
 echo "  Report:  $(vf "$PREFIX/build_report.txt")"
@@ -173,8 +155,9 @@ ann "All build artifacts verified"
 echo ""
 echo "=== Phase 7: Cleanup ==="
 ch "Phase 7: Cleanup"
-MSYS_NO_PATHCONV=1 docker exec compose-winebot-interactive-1 sh -c "rm -rf $SRC $PREFIX/build_report.txt $BAT 2>/dev/null"
-bat "reg_cleanup" "reg delete HKCU\\Software\\WineBotCI /f 2>nul"
+MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c "rm -rf $SRC $PREFIX/build_report.txt $BAT_PATH 2>/dev/null"
+# reg_cleanup: remove registry metadata
+bat "reg delete HKCU\\Software\\WineBotCI /f 2>nul"
 ann "Build artifacts cleaned"
 
 echo ""
@@ -188,6 +171,4 @@ echo "  Tools used:    certutil, cabarc, reg, notepad"
 echo "  All operations headless. No user interaction."
 echo "=============================================="
 
-api_post "/recording/stop" '{}' 2>/dev/null || true
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" 2>/dev/null || SCRIPT_DIR="."
-[ -f "$SCRIPT_DIR/_trim.sh" ] && source "$SCRIPT_DIR/_trim.sh" && smart_trim "$SESSDIR"
+stop_recording

@@ -219,10 +219,13 @@ scripts/diagnostics/
 ├── cv-watcher.py              # Pixel diff + window inventory (built-in)
 ├── cv-analyze.py              # Warning/error detection (built-in)
 ├── cv-element-detect.py       # OCR + element detection (built-in)
-└── cv-omni-analyze.py        # Offline YOLOv8+Tesseract analyzer
+├── cv-omni-analyze.py        # Offline YOLOv8+Tesseract analyzer
+├── cv-test-runner.py          # Unified test harness: frames, OCVR, regions, annotated report
+├── cv-batch-analyze.py        # Bulk analyzer for all demo videos (CI gate)
+└── merge-timeline.py          # Unified timeline: recording + API + CV + trace → JSONL
 
 demo/scripts/
-├── _cv_helpers.sh             # OCR-based button/window finders for demos
+├── run-cv-analysis.sh         # Batch script to run CV pipeline over all demo videos
 
 docker/
 ├── Dockerfile                  # WineBot image (OpenCV + Tesseract)
@@ -230,5 +233,6 @@ docker/
 
 docs/
 ├── computer-vision.md          # This file
+├── log-correlation.md          # Timeline merge design
 └── demo-feature-matrix.md      # Feature coverage
 ```

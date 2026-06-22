@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — long-running trace stress test; requires Wine+X11+trace layers
+# STATUS: LEGACY — manually invoked for soak testing; not part of CI pipeline
 set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"

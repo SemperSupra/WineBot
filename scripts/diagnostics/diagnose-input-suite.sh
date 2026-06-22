@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — comprehensive input pipeline diagnostic suite; requires Wine+X11
+# STATUS: ACTIVE — called by diagnose-master.sh (phase=cv); validates mouse+keyboard input
 set -euo pipefail
 
 # diagnose-input-suite.sh

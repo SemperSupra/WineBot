@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — starts/analyzes input trace layers; requires Wine+X11+API
+# STATUS: ACTIVE — trace layer activation and event verification; core debugging tool
 set -euo pipefail
 
 if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1; then

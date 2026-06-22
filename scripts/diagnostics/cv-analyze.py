@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# EXECUTION: IN_CONTAINER — reads CV watcher output from container filesystem
+# STATUS: ACTIVE — warning detection for CV watcher data; run by stop_recording() auto-analysis
 """Analyze CV watcher JSONL output. Reports warnings, failures, errors."""
 
 import json

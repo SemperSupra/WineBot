@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — checks Wine, X11, API health inside the container
+# STATUS: DEPRECATED — use GET /health, GET /health/system, GET /health/x11 endpoints instead
 set -euo pipefail
 
 if [ "${WINEBOT_SUPPRESS_DEPRECATION:-0}" != "1" ]; then

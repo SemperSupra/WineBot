@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — exercises Wine registry via reg.exe; requires Wine runtime
+# STATUS: ACTIVE — called by diagnose-master.sh (phase=health); registry integrity check
 set -uo pipefail
 
 # diagnose-wine-registry.sh: Verify integrity of core WineBot settings

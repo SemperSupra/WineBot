@@ -53,6 +53,10 @@ RUN id -u winebot >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash winebot \
     && chown -R winebot:winebot /apps /automation /api /opt/winebot
 
 # Keep base OS packages at patched security levels for release gates.
+# FUTURE: tesseract-ocr + imagemagick can be removed from BASE_IMAGE
+# when cv-watcher.py moves to winebot-cv sidecar (see #58).
+# Today they're baked into the pre-built ghcr.io/sempersupra/winebot-base image
+# and must be patched here for CVEs.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
       imagemagick \

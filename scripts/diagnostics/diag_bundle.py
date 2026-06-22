@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# EXECUTION: HOST — collects and bundles diagnostic artifacts from session dirs
+# STATUS: ACTIVE — support bundle generator for debugging and issue reports
 """Generate a bounded, redacted WineBot support bundle."""
 
 from __future__ import annotations

@@ -1,33 +1,87 @@
 FROM python:3.12-slim
 
-# System dependencies for OpenCV + Tesseract + ffmpeg
+# ── System dependencies ──────────────────────────────────────────────────────
+# Tesseract OCR (baseline, always available), ffmpeg, OpenCV deps
+# PaddleOCR needs additional libs if enabled (see Tier 1b below)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     tesseract-ocr tesseract-ocr-eng \
     libgl1 libglib2.0-0 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies
+# ── Tier 1a: Base CV + Baseline OCR (always available) ───────────────────────
+# Tesseract via pytesseract. PaddleOCR replaces it when enabled.
 RUN pip install --no-cache-dir \
     opencv-python-headless==4.13.0.92 \
     Pillow==12.0.0 \
     pytesseract==0.3.13 \
     numpy==2.4.6 \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    ultralytics \
-    transformers
+    fastapi==0.129.0 \
+    uvicorn==0.41.0
 
-# Copy analysis scripts
-COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py
+# ── Tier 1b: PaddleOCR (optional, replaces Tesseract as default when enabled) ─
+# Enable with --build-arg WITH_PADDLE=1. Adds ~500MB.
+ARG WITH_PADDLE=0
+RUN if [ "$WITH_PADDLE" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 libx11-6 libxext6 libice6 libsm6 libxrender1 \
+        libfontconfig1 libglib2.0-0 \
+        && apt-get clean && rm -rf /var/lib/apt/lists/* \
+      && pip install --no-cache-dir \
+        paddlepaddle \
+        paddleocr \
+      && echo "PaddleOCR installed (OCR_BACKEND=paddle to use)"; \
+    else \
+      echo "PaddleOCR skipped — set WITH_PADDLE=1 to enable (OCR_BACKEND=paddle)"; \
+    fi
+
+# ── Tier 2: YOLOv8 + PyTorch (optional, adds ~2GB) ──────────────────────────
+# Enable with --build-arg WITH_YOLO=1
+# Model weights mounted at runtime: ./models/yolo:/models:ro
+ARG WITH_YOLO=0
+# ultralytics auto-resolves torch + torchvision CPU versions on CPU-only host
+RUN if [ "$WITH_YOLO" = "1" ]; then \
+      pip install --no-cache-dir ultralytics \
+      && mkdir -p /models \
+      && python3 -c "from ultralytics import YOLO; print('YOLO OK')" \
+      && echo "YOLOv8 + PyTorch installed (UI_DETECTOR=yolo to use)"; \
+    else \
+      echo "Tier 2 (YOLOv8+PyTorch) skipped — set WITH_YOLO=1 for YOLO/OmniParser UI detection"; \
+      mkdir -p /models; \
+    fi
+
+# ── Tier 2b: OmniParser v2 (optional, adds Florence-2 + transformers ~2GB) ───
+# Enable with --build-arg WITH_OMNIPARSER=1 (requires WITH_YOLO=1)
+ARG WITH_OMNIPARSER=0
+RUN if [ "$WITH_OMNIPARSER" = "1" ]; then \
+      pip install --no-cache-dir \
+        transformers \
+        accelerate \
+      && echo "OmniParser v2 support installed (UI_DETECTOR=omniparser to use)"; \
+    else \
+      echo "OmniParser v2 skipped — set WITH_OMNIPARSER=1 for functional element captions"; \
+    fi
+
+ENV YOLO_MODEL_PATH=/models/yolov8n.pt
+ENV UI_DETECTOR=contour
+ENV OCR_BACKEND=tesseract
+
+# ── Copy sidecar server, engines, and CV tools ───────────────────────────────
+COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
+COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
+COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
+COPY scripts/diagnostics/cv-test-runner.py /scripts/cv-test-runner.py
 COPY scripts/diagnostics/cv-element-detect.py /scripts/cv-element-detect.py
-
-# Download OmniParser v2 model weights on build
-RUN python3 -c "
-from ultralytics import YOLO
-# Download YOLOv8n UI-detection model
-YOLO('yolov8n.pt')
-print('YOLOv8n downloaded')
-"
+COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py
+COPY scripts/diagnostics/cv-analyze.py /scripts/cv-analyze.py
+COPY scripts/diagnostics/cv-watcher.py /scripts/cv-watcher.py
+COPY scripts/diagnostics/demo-expect.py /scripts/demo-expect.py
+COPY scripts/diagnostics/merge-timeline.py /scripts/merge-timeline.py
+COPY scripts/diagnostics/cv-batch-analyze.py /scripts/cv-batch-analyze.py
 
 WORKDIR /work
-ENTRYPOINT ["python3", "/scripts/cv-omni-analyze.py"]
+
+# Default: API server on port 8001
+EXPOSE 8001
+ENTRYPOINT ["python3", "/scripts/cv-sidecar-server.py"]
+CMD ["--serve", "--host", "0.0.0.0", "--port", "8001"]

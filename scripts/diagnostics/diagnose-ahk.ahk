@@ -1,3 +1,4 @@
+; EXECUTION: IN_CONTAINER — AHK script; requires Wine + AutoHotkey runtime
 ; diagnose-ahk.ahk
 ; Automates Notepad to verify keyboard input via AutoHotkey
 

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# EXECUTION: HOST — reads input trace JSONL files; pure data analysis
 import argparse
 import json
 import os

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — injects faults into running Wine processes
+# STATUS: LEGACY — manually invoked for resilience testing; not part of CI pipeline
 set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"

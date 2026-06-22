@@ -1,4 +1,7 @@
 # WineBot Runtime Python Dependencies (Pinned)
+# NOTE: opencv-python-headless + pytesseract moved to winebot-cv sidecar
+# (docker/Dockerfile.cv-analyzer). The main image retains Pillow for
+# screenshot/resize operations via /automation/screenshot.
 fastapi==0.129.0
 uvicorn==0.41.0
 python-multipart==0.0.22
@@ -8,7 +11,6 @@ cryptography==46.0.5
 Deprecated==1.2.18
 anyio==4.12.1
 pydantic==2.12.5
-opencv-python-headless==4.13.0.92
 Pillow==12.0.0
-pytesseract==0.3.13
+keyring==25.6.0
 zeroconf==0.148.0

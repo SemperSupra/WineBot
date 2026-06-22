@@ -1,0 +1,7 @@
+demo/output/analysis/
+artifacts/sessions/
+__pycache__/
+*.pyc
+.git/
+models/tessdata/
+

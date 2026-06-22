@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# EXECUTION: IN_CONTAINER — uses ctypes/Win32 API for input diagnosis; requires Wine runtime
+# STATUS: ACTIVE — Win32 input pipeline diagnosis; keyboard/mouse event tracing
 import argparse
 import ctypes
 import json

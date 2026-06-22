@@ -893,3 +893,75 @@ def recording_performance_summary(
         "parse_errors": parse_errors,
         "metrics": summary,
     }
+
+
+@router.get("/health")
+def recording_health():
+    """Health check for the background recorder process.
+
+    Returns recorder status, PID, video stats, and uptime.
+    Used by compose health checks and sidecar monitoring (winebot-cv).
+    """
+    from api.utils.files import read_pid as _read_pid, recorder_running, recorder_state
+    from api.core.models import RecorderState
+
+    session_dir = read_session_dir()
+    enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
+
+    if not enabled:
+        return {"status": "disabled", "running": False, "message": "Recording disabled by config"}
+
+    if not session_dir or not os.path.isdir(session_dir):
+        return {"status": "idle", "running": False, "message": "No active session"}
+
+    running = recorder_running(session_dir)
+    state = recorder_state(session_dir)
+    pid = _read_pid(session_dir)
+
+    # Find video file info
+    video_info = {}
+    import glob
+    video_files = sorted(glob.glob(os.path.join(session_dir, "video_001*.mkv")))
+    if video_files:
+        latest = max(video_files, key=os.path.getmtime)
+        try:
+            stat = os.stat(latest)
+            video_info = {
+                "video_path": latest,
+                "size_bytes": stat.st_size,
+                "last_modified_s": int(stat.st_mtime),
+            }
+            # Estimate frames from duration via ffprobe if available
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                     "-of", "csv=p=0", latest],
+                    capture_output=True, text=True, timeout=5,
+                )
+                duration_s = float(result.stdout.strip() or 0)
+                video_info["duration_s"] = round(duration_s, 1)
+                # Estimate frames at 30fps
+                video_info["estimated_frames"] = int(duration_s * 30)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # Calculate uptime from recorder.state file
+    uptime_s = 0
+    state_path = os.path.join(session_dir, "recorder.state")
+    if os.path.exists(state_path):
+        try:
+            uptime_s = int(time.time() - os.path.getmtime(state_path))
+        except Exception:
+            pass
+
+    return {
+        "status": state if running else "idle",
+        "running": running,
+        "pid": pid,
+        "uptime_s": uptime_s,
+        "session_dir": session_dir,
+        "video": video_info if video_info else None,
+    }

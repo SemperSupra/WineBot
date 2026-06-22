@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — resource soak test; requires Wine+X11 for sustained load
+# STATUS: LEGACY — manually invoked for capacity planning; superseded by Prometheus metrics
 set -euo pipefail
 
 PROFILE="${1:-pr}"

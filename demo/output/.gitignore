@@ -5,3 +5,7 @@
 *.vtt
 *.ass
 *.json
+*.jsonl
+
+# CV analysis output is generated
+analysis/

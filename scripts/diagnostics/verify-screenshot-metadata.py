@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# EXECUTION: HOST — reads session screenshot files; pure file validation
 import argparse
 import json
 import struct

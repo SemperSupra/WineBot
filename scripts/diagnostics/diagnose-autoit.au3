@@ -1,3 +1,4 @@
+; EXECUTION: IN_CONTAINER — AutoIt script; requires Wine + AutoIt runtime
 ; diagnose-autoit.au3
 ; Automates Notepad to verify keyboard input via AutoIt
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# EXECUTION: EITHER — works with screenshots from file or capture; needs OpenCV+Tesseract
+# STATUS: ACTIVE — OpenCV contour detection + Tesseract OCR for live/offline element detection
 """CV + OCR UI element detector for WineBot screenshots.
 
 Takes a screenshot (via import/xwd or image file), detects UI elements using
@@ -69,10 +71,13 @@ class UIElementDetector:
                 return cv2.imread(tmp)
         except Exception:
             pass
-        return np.zeros((720, 1280, 3), dtype=np.uint8)
+        return None
 
-    def load_image(self, path: str) -> np.ndarray:
-        return cv2.imread(path)
+    def load_image(self, path: str):
+        img = cv2.imread(path)
+        if img is None:
+            print(f"WARNING: Could not load image from {path}", file=sys.stderr)
+        return img
 
     def detect_rectangular_regions(self, img: np.ndarray) -> List[Dict]:
         """Find rectangular UI regions using contour analysis on edge map."""
@@ -194,8 +199,11 @@ class UIElementDetector:
         # Deduplicate nested windows
         return self._deduplicate_windows(windows)
 
-    def analyze(self, img: np.ndarray, label: str = "") -> Dict:
+    def analyze(self, img, label: str = "") -> Dict:
         """Full analysis: windows, text, elements. Returns structured result."""
+        if img is None:
+            return {"error": "capture_failed", "screen": "1280x720",
+                    "windows": [], "key_text": [], "timestamp": datetime.now(timezone.utc).isoformat()}
         self.screen_height, self.screen_width = img.shape[:2]
         ts = datetime.now(timezone.utc).isoformat()
 

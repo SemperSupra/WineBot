@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — master diagnostic orchestrator; runs all diagnose-* subtools
+# STATUS: ACTIVE — primary CI diagnostics entry point; run via /diagnose-master.sh [phase]
 set -euo pipefail
 
 # diagnose-master.sh

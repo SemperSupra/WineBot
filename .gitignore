@@ -21,3 +21,10 @@ WineBot-codex-starter-files.zip
 # Artifacts (keep empty dir)
 /artifacts/*
 !/artifacts/.gitkeep
+session.md
+
+# Generated screenshots and eval data
+Screenshot *.png
+/models/eval/
+/models/yolo/*.pt
+/models/tessdata/*.traineddata

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# EXECUTION: EITHER — offline batch processor; container gives YOLOv8, host gives filesystem access
+# STATUS: ACTIVE — full-session CV analysis with YOLOv8+Tesseract; annotation enrichment
 """Offline CV analyzer for WineBot recordings.
 
 Extracts frames from an MKV recording, detects UI elements using YOLOv8
@@ -51,14 +53,29 @@ class RecordingAnalyzer:
         self.yolo_model = self._load_yolo()
 
     def _load_yolo(self):
+        # Check for model in common locations
+        model_paths = [
+            os.environ.get("YOLO_MODEL_PATH", ""),
+            "/models/yolov8n.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..", "models", "yolov8n.pt"),
+        ]
+        model_path = None
+        for p in model_paths:
+            if p and os.path.exists(p):
+                model_path = p
+                break
+
         try:
             from ultralytics import YOLO
-            model = YOLO("yolov8n.pt")
-            print(f"  YOLOv8n loaded ({model.device})")
+            path = model_path or "yolov8n.pt"
+            model = YOLO(path)
+            print(f"  YOLOv8n loaded from {path} (device: {model.device})")
             return model
+        except ImportError:
+            print("  YOLOv8 not available: ultralytics not installed (requires PyTorch)")
         except Exception as e:
             print(f"  YOLOv8 not available: {e}")
-            return None
+        return None
 
     def _concat_parts(self, session_dir: str, parts: List[Path]) -> Path:
         """Concatenate segmented MKV parts."""
@@ -235,9 +252,9 @@ class RecordingAnalyzer:
 
     def generate_enriched_events(self) -> str:
         """Read existing events.jsonl, add position data from analysis."""
-        events_path = self.session_dir / "events.jsonl"
+        events_path = self.session_dir / "events_001.jsonl"
         if not events_path.exists():
-            events_path = self.session_dir / "events_001.jsonl"
+            events_path = self.session_dir / "events.jsonl"
         if not events_path.exists():
             return ""
 

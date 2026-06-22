@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# EXECUTION: IN_CONTAINER — mouse input diagnostic; requires X11+xdotool+API
+# STATUS: ACTIVE — coordinate-alignment verification for mouse click accuracy
 set -euo pipefail
 
 usage() {

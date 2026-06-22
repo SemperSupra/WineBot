@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# EXECUTION: HOST — Playwright browser automation against WineBot API
 import sys
 import os
 from playwright.sync_api import sync_playwright

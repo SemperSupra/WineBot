@@ -16,6 +16,10 @@ API_TOKEN="${WINEBOT_API_TOKEN:-${API_TOKEN:-}}"
 if [ -z "$API_TOKEN" ] && [ -f /tmp/winebot_api_token ]; then
     API_TOKEN=$(cat /tmp/winebot_api_token | tr -d '[:space:]')
 fi
+# Try credential store if still empty (Windows Credential Manager / macOS Keychain / Linux libsecret)
+if [ -z "$API_TOKEN" ]; then
+    API_TOKEN=$(python3 "${REPO_ROOT}/scripts/bin/winebot-credential.py" get api-token 2>/dev/null || echo "")
+fi
 IDEMPOTENT_DEFAULT="${WINEBOT_IDEMPOTENT:-1}"
 CACHE_FILE="${WINEBOT_IDEMPOTENT_CACHE:-/tmp/winebotctl-idempotent.json}"
 IDEMPOTENT_CACHE_MAX_ENTRIES="${WINEBOT_IDEMPOTENT_CACHE_MAX_ENTRIES:-500}"
@@ -55,6 +59,7 @@ Commands:
   tail [source] [--follow] [--lines N]
   run ahk|autoit|python|winedbg [opts]
   inspect window [opts]
+  credential list|get|store|remove|import-token [opts]
 
 Examples:
   scripts/winebotctl health
@@ -68,6 +73,9 @@ Examples:
   scripts/winebotctl perf summary
   scripts/winebotctl api POST /sessions/suspend --json '{"shutdown_wine":true}'
   scripts/winebotctl diag bundle --session-root /artifacts/sessions --max-mb 200
+  scripts/winebotctl credential import-token
+  scripts/winebotctl credential list
+  scripts/winebotctl credential store vnc-password mysecret
 EOF
 }
 
@@ -1595,6 +1603,32 @@ EOF
       exit 1
     fi
     printf '%s\n' "$body"
+    ;;
+
+  credential)
+    sub="${1:-}"
+    shift || true
+    CRED_HELPER="${REPO_ROOT}/scripts/bin/winebot-credential.py"
+    case "$sub" in
+      list)
+        python3 "$CRED_HELPER" list
+        ;;
+      get)
+        python3 "$CRED_HELPER" get "${1:-}" || exit 1
+        ;;
+      store)
+        python3 "$CRED_HELPER" store "${1:-}" "${2:-}" || exit 1
+        ;;
+      remove)
+        python3 "$CRED_HELPER" remove "${1:-}" || exit 1
+        ;;
+      import-token)
+        python3 "$CRED_HELPER" import-token || exit 1
+        ;;
+      *)
+        die "Unknown credential command: $sub. Use: list | get <name> | store <name> <value> | remove <name> | import-token"
+        ;;
+    esac
     ;;
 
   *)

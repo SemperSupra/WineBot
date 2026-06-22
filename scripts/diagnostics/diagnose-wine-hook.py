@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# EXECUTION: IN_CONTAINER — uses ctypes to interact with Wine/Win32 API; requires Wine runtime
+# STATUS: ACTIVE — IAT hook verification tool; tests MessageBox/GetSaveFileName/ShellBrowse hooks
 import argparse
 import ctypes
 import ctypes.wintypes as wt
