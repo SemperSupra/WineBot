@@ -4,6 +4,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_demo_common.sh"
+fresh_session
 init_session
 
 # Clean stale processes from prior runs

@@ -5,6 +5,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_demo_common.sh"
+fresh_session
 init_session
 
 MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c \

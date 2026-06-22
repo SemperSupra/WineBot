@@ -5,6 +5,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_demo_common.sh"
+fresh_session
 init_session
 ensure_dirs
 
@@ -126,10 +127,10 @@ for line in "WineBot CI Pipeline Report" "=========================" " " "Build 
 done
 ann "Report typed via /input/key (AHK Send)"
 
-# Save via pipe dialog
-api_post "$API" '{"keys":"ctrl+s","window_title":"Notepad"}' > /dev/null
-sleep 4
-ann "Ctrl+S pressed"
+# Save via AHK pipe dialog (no Ctrl+S — that triggers Wine's real Save As)
+pipe_cmd "open_gui"
+sleep 2
+ann "AHK pipe dialog opened (no Wine Save As triggered)"
 pipe_cmd "set_filename:build_report.txt"
 sleep 1.5
 pipe_cmd "click_save"

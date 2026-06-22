@@ -3,6 +3,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_demo_common.sh"
+fresh_session
 init_session
 ensure_dirs
 
@@ -51,9 +52,10 @@ ann "Content typed via /input/key (AHK Send backend)"
 echo ""
 echo "=== Step 4: Save via AHK pipe dialog ==="
 ch "Save via pipe dialog"
-api_post "$API" '{"keys":"ctrl+s","window_title":"Notepad"}' > /dev/null
-sleep 4
-ann "Ctrl+S pressed — AHK pipe dialog opened"
+# Open AHK dialog directly — no Ctrl+S (that triggers Wine's real Save As)
+pipe_cmd "open_gui"
+sleep 2
+ann "AHK pipe dialog opened (replaces Wine Save As)"
 snap "notepadpp_save_dialog"
 ann_expect "Save dialog replacement visible" "WineBot Save Dialog"
 pipe_cmd "set_filename:Notepadpp_Demo_v2.txt"

@@ -75,6 +75,7 @@ api_post() {
 
 init_session() {
   detect_token
+
   SESSION=$(api_get "/lifecycle/status" | grep -o '"session_id":[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
   if [ -z "$SESSION" ]; then
     echo "ERROR: Could not detect session ID — is WineBot running?" >&2
@@ -766,7 +767,7 @@ for b in benchmarks:
   api_post "/recording/stop" '{}' 2>/dev/null || true
   sleep 2
 
-  # Source _trim.sh for smart_trim
+  # Smart trim the video
   local trim_script
   trim_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_trim.sh"
   if [ -f "$trim_script" ]; then
@@ -774,6 +775,76 @@ for b in benchmarks:
     smart_trim "$SESSDIR"
   else
     echo "  (_trim.sh not found — skipping smart trim)" >&2
+  fi
+
+  # Copy trimmed output to host
+  # Use the main script name ($0) for output naming
+  local demo_name
+  demo_name="$(basename "${0:-demo}" .sh)"
+  case "$demo_name" in bash|sh|_demo_common|_trim) demo_name="demo" ;; esac
+
+  echo ""
+  echo "--- Copying Output (${demo_name}) ---"
+  local container="${WB_CONTAINER:-compose-winebot-interactive-1}"
+  # Use Windows-style path — MSYS2 mangles /c/Users/... to C:\c\Users\...
+  # Use pwd -W to get C:/Users/... format, then add ../output/<name>.mkv
+  local out_dir
+  out_dir="$(cd "$SCRIPT_DIR/../output" 2>/dev/null && pwd -W 2>/dev/null)"
+  out_dir="${out_dir:-${SCRIPT_DIR}/../output}"
+  if [ ! -d "$out_dir" ]; then
+    echo "  WARNING: Output directory not found: $out_dir"
+    return
+  fi
+
+  local mkv_path="${out_dir}/${demo_name}.mkv"
+  local gif_path="${out_dir}/${demo_name}.gif"
+  local vtt_path="${out_dir}/${demo_name}.vtt"
+
+  # Copy trimmed video — use MSYS_NO_PATHCONV to prevent double-conversion
+  if MSYS_NO_PATHCONV=1 docker cp "$container:/tmp/trimmed.mkv" "$mkv_path" 2>/dev/null; then
+    echo "  Saved: ${demo_name}.mkv ($(wc -c < "$mkv_path" 2>/dev/null | tr -d ' ') bytes)"
+  else
+    echo "  WARNING: Could not copy /tmp/trimmed.mkv → $mkv_path"
+    MSYS_NO_PATHCONV=1 docker exec "$container" test -f /tmp/trimmed.mkv 2>/dev/null || \
+      echo "  (source /tmp/trimmed.mkv not found in container)"
+  fi
+
+  MSYS_NO_PATHCONV=1 docker cp "$container:/tmp/trimmed.gif" "$gif_path" 2>/dev/null && \
+    echo "  Saved: ${demo_name}.gif"
+
+  local vtt_file
+  vtt_file=$(MSYS_NO_PATHCONV=1 docker exec "$container" sh -c \
+    "ls -t '${SESSDIR}/events_'*.vtt 2>/dev/null | head -1" 2>/dev/null)
+  if [ -n "$vtt_file" ]; then
+    MSYS_NO_PATHCONV=1 docker cp "$container:$vtt_file" "$vtt_path" 2>/dev/null && \
+      echo "  Saved: ${demo_name}.vtt"
+  fi
+}
+
+# Ensure recording is active before running a demo. Call before init_session.
+# Restarts the recording so each demo gets a clean segment in the session video.
+fresh_session() {
+  # Need token first since init_session hasn't run yet
+  if [ -z "$TOKEN" ]; then
+    if [ -n "${API_TOKEN:-}" ]; then
+      TOKEN="$API_TOKEN"
+    else
+      TOKEN=$(MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c \
+        'cat /tmp/winebot_api_token 2>/dev/null || cat /winebot-shared/winebot_api_token 2>/dev/null' \
+        2>/dev/null | tr -d '[:space:]' || true)
+    fi
+  fi
+
+  local current
+  current=$(curl -sfS -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" 2>/dev/null | \
+    python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
+  if [ -n "$current" ]; then
+    curl -sfS -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+      -d '{}' "$API_URL/recording/stop" > /dev/null 2>&1 || true
+    sleep 2
+    curl -sfS -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+      -d '{}' "$API_URL/recording/start" > /dev/null 2>&1 || true
+    sleep 3
   fi
 }
 
