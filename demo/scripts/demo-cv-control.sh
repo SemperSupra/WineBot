@@ -40,7 +40,10 @@ if cv_wait "Notepad" 15; then
   snap "notepad_detected_by_cv"
   ann "CV confirmed: Notepad window visible"
 else
-  echo "  FAILED: Notepad not detected — aborting"
+  echo "  FAILED: Notepad not detected — recording evidence then stopping"
+  snap "cv_control_failed_notepad"
+  ann "CV control failed: Notepad did not appear within 15s"
+  stop_recording
   exit 1
 fi
 

@@ -803,10 +803,21 @@ for b in benchmarks:
   fi
 
   # Copy trimmed output to host
-  # Use the main script name ($0) for output naming
+  # Use BASH_SOURCE to find the calling demo script name
   local demo_name
-  demo_name="$(basename "${0:-demo}" .sh)"
-  case "$demo_name" in bash|sh|_demo_common|_trim) demo_name="demo" ;; esac
+  demo_name="demo"
+  # Walk up the BASH_SOURCE stack to find the actual demo script
+  local _src
+  for _src in "${BASH_SOURCE[@]:1}"; do
+    case "$(basename "$_src")" in
+      _demo_common.sh|_trim.sh|run-cv-analysis.sh) continue ;;
+      *) demo_name="$(basename "$_src" .sh)"; break ;;
+    esac
+  done
+  # Fallback: use $0 if it's a demo script
+  if [ "$demo_name" = "demo" ] && [ -n "${0:-}" ]; then
+    case "$(basename "${0:-}" .sh)" in bash|sh|_*) ;; *) demo_name="$(basename "${0}" .sh)" ;; esac
+  fi
 
   echo ""
   echo "--- Copying Output (${demo_name}) ---"
