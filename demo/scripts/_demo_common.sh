@@ -470,8 +470,33 @@ write_file() {
 
 linux_dl() {
   local url="$1" dest="$2"
-  MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c \
-    "curl -sL '$url' -o '$dest' && chown winebot:winebot '$dest' && echo '  Downloaded: ' \$(wc -c < '$dest') ' bytes'" 2>/dev/null
+  MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" python3 -c "
+import urllib.request, shutil, os
+
+url = '${url}'
+dest = '${dest}'
+fname = url.rsplit('/', 1)[-1].split('?')[0]
+cache_dir = '/wineprefix/drive_c/.winebot_cache'
+cache_path = f'{cache_dir}/{fname}'
+
+os.makedirs(cache_dir, exist_ok=True)
+try: shutil.chown(cache_dir, 'winebot', 'winebot')
+except: pass
+
+if os.path.exists(cache_path) and os.path.getsize(cache_path) > 1000:
+    shutil.copy(cache_path, dest)
+    try: shutil.chown(dest, 'winebot', 'winebot')
+    except: pass
+    print(f'  Cached: {os.path.getsize(dest)} bytes (from .winebot_cache)')
+else:
+    urllib.request.urlretrieve(url, dest)
+    shutil.copy(dest, cache_path)
+    try:
+        shutil.chown(dest, 'winebot', 'winebot')
+        shutil.chown(cache_path, 'winebot', 'winebot')
+    except: pass
+    print(f'  Downloaded: {os.path.getsize(dest)} bytes (cached for reuse)')
+" 2>/dev/null
 }
 
 wine_install() {
@@ -821,8 +846,9 @@ for b in benchmarks:
   fi
 }
 
-# Ensure recording is active before running a demo. Call before init_session.
-# Restarts the recording so each demo gets a clean segment in the session video.
+# Ensure a clean desktop before running a demo.
+# Kills application windows from prior demos that would pollute the recording.
+# Stops and restarts recording for a clean video segment.
 fresh_session() {
   # Need token first since init_session hasn't run yet
   if [ -z "$TOKEN" ]; then
@@ -835,6 +861,34 @@ fresh_session() {
     fi
   fi
 
+  echo "  Cleaning desktop for fresh demo..."
+
+  # Kill all application windows from prior demos (preserve system windows)
+  MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c "
+    # Kill known app processes
+    for p in notepad.exe vlc.exe notepad++.exe supertux2.exe; do
+      wineserver -k \$p 2>/dev/null || true
+    done
+    # Close application windows via xdotool (skip system windows)
+    for title in 'Notepad' 'VLC' 'SuperTux' 'Save As' 'Error' 'Warning' \
+                'WineBot Save Dialog' 'Registry' 'cmd' '7-Zip' 'WinSpy' \
+                'Winefile' 'Regedit' 'Open' 'Browse' 'Confirm' 'Help' 'About'; do
+      xdotool search --name \"\$title\" 2>/dev/null | while read wid; do
+        xdotool windowclose \"\$wid\" 2>/dev/null || xdotool windowkill \"\$wid\" 2>/dev/null || true
+      done
+    done
+    # Kill all but system processes
+    pkill -f 'notepad.exe' 2>/dev/null || true
+    pkill -f 'vlc.exe' 2>/dev/null || true
+    pkill -f 'notepad++.exe' 2>/dev/null || true
+    pkill -f 'supertux2.exe' 2>/dev/null || true
+    pkill -f '7zFM.exe' 2>/dev/null || true
+
+    # Wait for windows to actually close
+    sleep 3
+  " 2>/dev/null || true
+
+  # Restart recording for a clean video segment
   local current
   current=$(curl -sfS -H "X-API-Key: $TOKEN" "$API_URL/lifecycle/status" 2>/dev/null | \
     python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
@@ -846,6 +900,7 @@ fresh_session() {
       -d '{}' "$API_URL/recording/start" > /dev/null 2>&1 || true
     sleep 3
   fi
+  echo "  Desktop cleaned, recording restarted"
 }
 
 print_copy_instructions() {
