@@ -18,10 +18,7 @@ echo ""
 echo "=== Phase 1: Acquire sample binary ==="
 ch "Phase 1: Acquire sample binary"
 ann "Downloading sample for analysis (7-Zip as target)"
-MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c "
-  curl -sL 'https://7-zip.org/a/7z2409-x64.exe' -o '$PREFIX/sample.exe'
-  chown winebot:winebot '$PREFIX/sample.exe'
-  echo 'Downloaded: ' \$(wc -c < '$PREFIX/sample.exe') ' bytes'"
+linux_dl "https://7-zip.org/a/7z2409-x64.exe" "$PREFIX/sample.exe"
 
 echo ""
 echo "=== Phase 2: Surface analysis (Linux toolchain) ==="
