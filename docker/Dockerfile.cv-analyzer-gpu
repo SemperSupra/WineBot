@@ -1,0 +1,87 @@
+# WineBot CV/OCR Sidecar — GPU-Accelerated
+# Build: docker build -f docker/Dockerfile.cv-analyzer-gpu -t winebot-cv:gpu .
+# Run:   docker run -d --gpus all --name winebot-cv -p 8001:8001 \
+#          -v ./models/yolo:/models:ro winebot-cv:gpu
+#
+# Requires: NVIDIA GPU + nvidia-container-toolkit (Docker Desktop with WSL2 GPU support)
+
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+
+# ── System dependencies ──────────────────────────────────────────────────────
+# Python 3.12, Tesseract OCR, ffmpeg, OpenCV deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-venv python3-pip \
+    ffmpeg \
+    tesseract-ocr tesseract-ocr-eng \
+    libgl1 libglib2.0-0 \
+    libgomp1 libx11-6 libxext6 libice6 libsm6 libxrender1 libfontconfig1 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── PyTorch 2.12 with CUDA 12.4+ support ──────────────────────────────────────
+# Installed first so ultralytics doesn't pull a duplicate.
+# PyTorch 2.12.1 unified package includes CUDA 13.x runtime via nvidia-* pip deps.
+# At runtime with --gpus all, torch.cuda.is_available() == True.
+RUN pip install --no-cache-dir --break-system-packages \
+    torch==2.12.1 \
+    torchvision==0.27.1
+
+# ── YOLOv8 + Ultralytics ─────────────────────────────────────────────────────
+RUN pip install --no-cache-dir --break-system-packages \
+    ultralytics==8.4.75 \
+    && mkdir -p /models \
+    && python3 -c "from ultralytics import YOLO; print('YOLO OK')"
+
+# ── OmniParser v2: Transformers + Florence-2 ──────────────────────────────────
+RUN pip install --no-cache-dir --break-system-packages \
+    transformers==5.12.1 \
+    accelerate==1.14.0 \
+    && echo "OmniParser v2 support installed (UI_DETECTOR=omniparser to use)"
+
+# ── OpenCV + Tesseract + FastAPI ──────────────────────────────────────────────
+RUN pip install --no-cache-dir --break-system-packages \
+    opencv-python-headless==4.13.0.92 \
+    Pillow==12.0.0 \
+    pytesseract==0.3.13 \
+    numpy==2.4.6 \
+    fastapi==0.129.0 \
+    uvicorn==0.41.0
+
+# ── (Future) PaddleOCR GPU — blocked, see note below ─────────────────────────
+# PaddleOCR 3.7.0 on PyPI only ships CPU wheels (paddlepaddle-3.3.1-*).
+# GPU wheels require PaddlePaddle's private index or self-build.
+# Once available: pip install paddlepaddle-gpu paddleocr
+# WORKAROUND: Tesseract OCR is the primary engine; PaddleOCR added when ready.
+
+# ── Verification ─────────────────────────────────────────────────────────────
+RUN python3 -c "import torch; print(f'PyTorch {torch.__version__} — CUDA available: {torch.cuda.is_available()} (will be True at runtime with --gpus all)')" \
+    && python3 -c "import cv2; print(f'OpenCV {cv2.__version__}')" \
+    && python3 -c "import pytesseract; print('Tesseract OK')" \
+    && python3 -c "from ultralytics import YOLO; print('YOLO OK')" \
+    && python3 -c "import transformers; print(f'Transformers {transformers.__version__}')" \
+    && echo "All engines verified — GPU acceleration active at runtime"
+
+ENV YOLO_MODEL_PATH=/models/yolov8n.pt
+ENV UI_DETECTOR=contour
+ENV OCR_BACKEND=tesseract
+
+# At runtime with --gpus all, PyTorch/CUDA auto-detects the GPU.
+# Override with: -e UI_DETECTOR=yolo -e OCR_BACKEND=tesseract
+
+# ── Copy sidecar server, engines, and CV tools ───────────────────────────────
+COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
+COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
+COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
+COPY scripts/diagnostics/cv-test-runner.py /scripts/cv-test-runner.py
+COPY scripts/diagnostics/cv-element-detect.py /scripts/cv-element-detect.py
+COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py
+COPY scripts/diagnostics/cv-analyze.py /scripts/cv-analyze.py
+COPY scripts/diagnostics/cv-watcher.py /scripts/cv-watcher.py
+COPY scripts/diagnostics/demo-expect.py /scripts/demo-expect.py
+COPY scripts/diagnostics/merge-timeline.py /scripts/merge-timeline.py
+COPY scripts/diagnostics/cv-batch-analyze.py /scripts/cv-batch-analyze.py
+
+WORKDIR /work
+EXPOSE 8001
+ENTRYPOINT ["python3", "/scripts/cv-sidecar-server.py"]
+CMD ["--serve", "--host", "0.0.0.0", "--port", "8001"]
