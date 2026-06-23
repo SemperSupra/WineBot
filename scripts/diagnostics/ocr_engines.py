@@ -199,14 +199,20 @@ class PaddleOCREngine(OCREngine):
         if self._engine is None and self.available:
             try:
                 from paddleocr import PaddleOCR
-                # use_angle_cls=True for rotated text detection
-                # lang='en' for English; add 'ch' etc. for multi-language
-                self._engine = PaddleOCR(
-                    use_angle_cls=True,
-                    lang=os.environ.get("PADDLEOCR_LANG", "en"),
-                    use_gpu=os.environ.get("PADDLEOCR_GPU", "false").lower() == "true",
-                    show_log=False,
-                )
+                # PaddleOCR 3.x (paddlex-based) has different init params than 2.x.
+                # Try 3.x-style init first, fall back to 2.x-style.
+                lang = os.environ.get("PADDLEOCR_LANG", "en")
+                try:
+                    # PaddleOCR 3.7+ — PaddleX backend, no use_gpu param
+                    self._engine = PaddleOCR(lang=lang, use_angle_cls=True)
+                except (TypeError, ValueError):
+                    # PaddleOCR 2.x — legacy params
+                    self._engine = PaddleOCR(
+                        use_angle_cls=True,
+                        lang=lang,
+                        use_gpu=os.environ.get("PADDLEOCR_GPU", "false").lower() == "true",
+                        show_log=False,
+                    )
                 print("[paddleocr] Engine initialized", file=sys.stderr)
             except Exception as e:
                 print(f"[paddleocr] Init error: {e}", file=sys.stderr)
@@ -221,7 +227,12 @@ class PaddleOCREngine(OCREngine):
         try:
             # PaddleOCR expects RGB, OpenCV gives BGR
             rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            results = engine.ocr(rgb, cls=True)
+            # PaddleOCR 3.x (PaddleX) doesn't accept cls/use_angle_cls in ocr()
+            # PaddleOCR 2.x accepts cls=True for text orientation classification
+            try:
+                results = engine.ocr(rgb, cls=True)
+            except (TypeError, ValueError):
+                results = engine.ocr(rgb)
         except Exception as e:
             print(f"[paddleocr] Detection error: {e}", file=sys.stderr)
             return []

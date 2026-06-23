@@ -105,12 +105,12 @@ init_session() {
     # Sidecar is available — start live CV watcher
     echo "  Starting CV watcher via sidecar ($CV_SIDECAR_URL)..."
     CV_WATCHER_SOURCE="sidecar"
-    # The sidecar needs to reach the WineBot API. From inside the sidecar container,
-    # the host's port 8000 is reachable via host.docker.internal (Docker Desktop)
-    # or 172.17.0.1 (default bridge gateway). Use the mapped host port.
+    # The sidecar needs to reach the WineBot API on the Docker bridge gateway.
+    # host.docker.internal resolves to Docker Desktop's VM proxy (unreliable for
+    # container-to-container routing). 172.17.0.1 is the default Linux bridge gateway.
     local sidecar_api_url
     if [ "$API_URL" = "http://localhost:8000" ] || [ "$API_URL" = "http://127.0.0.1:8000" ]; then
-      sidecar_api_url="http://host.docker.internal:8000"
+      sidecar_api_url="http://172.17.0.1:8000"
     else
       sidecar_api_url="$API_URL"
     fi

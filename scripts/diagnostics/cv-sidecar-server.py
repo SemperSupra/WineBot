@@ -56,15 +56,21 @@ except ImportError:
     HAS_FASTAPI = False
 
 
-def analyze_image(img: np.ndarray) -> Dict:
-    """Full analysis of a single image using configured engines. Returns structured JSON."""
+def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
+                  ocr_backend: Optional[str] = None) -> Dict:
+    """Full analysis of a single image using configured engines. Returns structured JSON.
+
+    Args:
+        ui_detector: Override UI detector (contour|yolo|omniparser). None uses env default.
+        ocr_backend: Override OCR engine (tesseract|paddleocr). None uses env default.
+    """
     h, w = img.shape[:2]
 
-    detector = get_ui_detector()
+    detector = get_ui_detector(ui_detector)
     ui_elements = detector.detect(img)
     ui_state = detector.classify_ui_state(img, ui_elements)
 
-    ocr = get_ocr_engine()
+    ocr = get_ocr_engine(ocr_backend)
     ocr_regions = ocr.detect_text(img)
 
     # Find click targets from OCR text
@@ -176,7 +182,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Cannot read image: {image_path}")
 
         # Allow per-request engine override for comparative analysis
-        result = analyze_image(img)
+        req_ui = request_data.get("ui_detector")
+        req_ocr = request_data.get("ocr_backend")
+        result = analyze_image(img, ui_detector=req_ui, ocr_backend=req_ocr)
         return JSONResponse(content=result)
 
     @app.post("/batch")

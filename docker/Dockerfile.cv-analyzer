@@ -66,6 +66,11 @@ ENV YOLO_MODEL_PATH=/models/yolov8n.pt
 ENV UI_DETECTOR=contour
 ENV OCR_BACKEND=tesseract
 
+# PaddlePaddle 3.x ONEDNN workaround: disable ONEDNN/MKL-DNN to avoid
+# "ConvertPirAttribute2RuntimeAttribute not support ArrayAttribute" compiler bug
+ENV FLAGS_use_onednn=0
+ENV FLAGS_use_mkldnn=0
+
 # ── Copy sidecar server, engines, and CV tools ───────────────────────────────
 COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
 COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
