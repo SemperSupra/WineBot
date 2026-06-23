@@ -514,6 +514,286 @@ class OmniParserDetector(UIDetector):
         return elements
 
 
+# ── UI-DETR-1 Detector ────────────────────────────────────────────────────────
+
+class UIDETR1Detector(UIDetector):
+    """UI-DETR-1 by racineai/TW3 — class-agnostic interactable element detector.
+
+    Uses RF-DETR-M (DINOv2 backbone, 33.7M params) fine-tuned on 2656 screenshots
+    with 150K+ bounding boxes. MIT license.
+
+    Finds 63% more elements than OmniParser (82.3 avg vs 50.6).
+    WebClick accuracy: 70.8% (vs OmniParser 58.8%).
+    """
+
+    name = "uidetr1"
+    available = False
+    uses_gpu = True
+
+    def __init__(self):
+        self._model = None
+        try:
+            import rfdetr  # noqa: F401
+            self._rfdetr_available = True
+        except ImportError:
+            self._rfdetr_available = False
+            return
+
+        self.available = True
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+
+        try:
+            from rfdetr import RFDETRBase
+
+            self._model = RFDETRBase(
+                device="cuda" if self._has_cuda() else "cpu",
+                model_name="racineai/UI-DETR-1",
+            )
+            print(f"[uidetr1] Loaded UI-DETR-1 from racineai/UI-DETR-1", file=sys.stderr)
+            self.uses_gpu = self._has_cuda()
+            return self._model
+
+        except Exception as e:
+            # Fallback: try loading from local path
+            print(f"[uidetr1] HF load failed ({e}), trying local...", file=sys.stderr)
+            try:
+                from rfdetr import RFDETRBase
+                local_path = os.environ.get(
+                    "UIDETR1_MODEL_PATH",
+                    os.path.join(os.path.dirname(__file__), "..", "..", "models", "uidetr1")
+                )
+                if os.path.isdir(local_path):
+                    self._model = RFDETRBase(
+                        device="cuda" if self._has_cuda() else "cpu",
+                        model_name=local_path,
+                    )
+                    print(f"[uidetr1] Loaded from {local_path}", file=sys.stderr)
+                    self.uses_gpu = self._has_cuda()
+                    return self._model
+            except Exception as e2:
+                print(f"[uidetr1] Local load also failed: {e2}", file=sys.stderr)
+
+        self.available = False
+        return None
+
+    def _has_cuda(self) -> bool:
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
+
+    def detect(self, image: np.ndarray) -> List[Dict]:
+        model = self._load_model()
+        if model is None:
+            return []
+
+        try:
+            detections = model.predict(image, threshold=0.3)
+        except Exception as e:
+            print(f"[uidetr1] Detection error: {e}", file=sys.stderr)
+            return []
+
+        elements = []
+        for i, det in enumerate(detections):
+            x1, y1, x2, y2 = det.get("bbox", [0, 0, 0, 0])
+            conf = det.get("confidence", 0)
+            label = det.get("label", "interactable")
+
+            bbox = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+            elem_type = self._classify_ui_type(label, bbox, image.shape)
+
+            elements.append({
+                "id": i,
+                "bbox": bbox,
+                "type": elem_type,
+                "label": label,
+                "confidence": round(float(conf), 3),
+                "interactive": True,  # UI-DETR-1 only returns interactable elements
+            })
+
+        return elements
+
+    def _classify_ui_type(self, label: str, bbox: List[int], img_shape: tuple) -> str:
+        """Classify UI element by geometry (UI-DETR-1 is class-agnostic)."""
+        x, y, bw, bh = bbox
+        h, w = img_shape[:2]
+
+        if bh <= WINDOW_TITLE_HEIGHT and bw > 200:
+            return "title_bar"
+        if bh <= MENU_BAR_HEIGHT and 15 < bw < 800:
+            return "menu_bar"
+        if btn_check(bw, bh):  # Reuse constants
+            return "button"
+        if bh >= TEXT_AREA_MIN_H and bw > 300:
+            return "text_area"
+        if 18 <= bh <= 35 and bw > 50:
+            return "text_field"
+        if bw > DIALOG_MIN_W and bh > DIALOG_MIN_H and bh < 400:
+            return "dialog"
+
+        return "interactable"
+
+
+def btn_check(bw, bh):
+    return BUTTON_MIN_W <= bw <= 200 and BUTTON_MIN_H <= bh <= BUTTON_MAX_H
+
+
+# ── ScreenParser Detector ─────────────────────────────────────────────────────
+
+class ScreenParserDetector(UIDetector):
+    """ScreenParser by IBM/ETH (docling-project) — 55-class UI widget detector.
+
+    Model: YOLOv11-L (25.3M params), trained on 1.45M screenshots with 25.6M
+    annotations. Apache 2.0 license. Released May 2026.
+
+    Detects buttons, text fields, dropdowns, checkboxes, radio buttons,
+    scroll bars, toggles, tabs, icons, menus, and 45 more widget types.
+    """
+
+    name = "screenparser"
+    available = False
+    uses_gpu = False
+
+    # Map ScreenParser's 55 classes to our simplified UI taxonomy
+    CLASS_MAP = {
+        "button": "button", "icon_button": "button", "toggle_button": "button",
+        "text_field": "text_field", "search_field": "text_field",
+        "checkbox": "checkbox", "radio_button": "radio",
+        "dropdown": "dropdown", "combo_box": "dropdown",
+        "scroll_bar": "scrollbar", "slider": "slider",
+        "tab": "tab", "tab_bar": "tab",
+        "menu": "menu_bar", "menu_item": "menu_bar",
+        "title_bar": "title_bar", "window_control": "button",
+        "text_area": "text_area", "rich_text_editor": "text_area",
+        "label": "text_label", "link": "link",
+        "icon": "icon", "image": "panel",
+        "list": "list", "list_item": "list",
+        "dialog": "dialog", "tooltip": "dialog",
+        "progress_bar": "progress", "status_bar": "title_bar",
+        "toolbar": "menu_bar", "toolbar_button": "button",
+        "splitter": "panel", "pane": "panel",
+        "tree": "list", "tree_item": "list",
+        "grid": "panel", "grid_cell": "text_field",
+        "calendar": "panel", "date_picker": "dropdown",
+        "spinner": "text_field", "stepper": "text_field",
+        "pagination": "button", "breadcrumb": "link",
+        "card": "panel", "carousel": "panel",
+        "banner": "panel", "notification": "dialog",
+        "avatar": "icon", "badge": "text_label",
+        "chip": "button", "tag": "text_label",
+        "divider": "panel", "accordion": "panel",
+    }
+
+    def __init__(self):
+        try:
+            from ultralytics import YOLO  # noqa: F401
+            self._yolo_available = True
+        except ImportError:
+            self._yolo_available = False
+            return
+
+        self._model = None
+        self.available = True
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+
+        from ultralytics import YOLO
+
+        # Priority: local weights > HuggingFace download
+        model_paths = [
+            os.environ.get(
+                "SCREENPARSER_MODEL_PATH",
+                os.path.join(os.path.dirname(__file__), "..", "..",
+                             "models", "screenparser", "screenparser.pt")
+            ),
+        ]
+
+        for p in model_paths:
+            if p and os.path.isfile(p):
+                try:
+                    self._model = YOLO(p)
+                    print(f"[screenparser] Loaded from {p}", file=sys.stderr)
+                    if "cuda" in str(self._model.device):
+                        self.uses_gpu = True
+                    return self._model
+                except Exception as e:
+                    print(f"[screenparser] Failed to load {p}: {e}", file=sys.stderr)
+
+        # Try HuggingFace auto-download
+        try:
+            from huggingface_hub import hf_hub_download
+            model_file = hf_hub_download(
+                repo_id="docling-project/ScreenParser",
+                filename="screenparser.pt",
+                local_dir=os.path.join(
+                    os.path.dirname(__file__), "..", "..", "models", "screenparser"
+                ),
+            )
+            self._model = YOLO(model_file)
+            print(f"[screenparser] Downloaded from HF: {model_file}", file=sys.stderr)
+            if "cuda" in str(self._model.device):
+                self.uses_gpu = True
+            return self._model
+        except Exception as e:
+            print(f"[screenparser] HF download failed: {e}", file=sys.stderr)
+
+        self.available = False
+        return None
+
+    def detect(self, image: np.ndarray) -> List[Dict]:
+        model = self._load_model()
+        if model is None:
+            return []
+
+        try:
+            detections = model(image, verbose=False, conf=0.25, iou=0.45)
+        except Exception as e:
+            print(f"[screenparser] Detection error: {e}", file=sys.stderr)
+            return []
+
+        elements = []
+        element_id = 0
+
+        for det in detections:
+            boxes = det.boxes
+            if boxes is None or len(boxes) == 0:
+                continue
+
+            for i in range(len(boxes)):
+                cls_id = int(boxes.cls[i])
+                cls_name = det.names.get(cls_id, f"class_{cls_id}")
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                conf = float(boxes.conf[i])
+
+                bbox = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+                elem_type = self.CLASS_MAP.get(cls_name.lower(), "unknown")
+
+                # Determine if interactive
+                interactive = elem_type in (
+                    "button", "text_field", "dropdown", "checkbox",
+                    "radio", "menu_bar", "slider", "scrollbar",
+                    "tab", "link", "list", "spinner", "stepper",
+                )
+
+                elements.append({
+                    "id": element_id,
+                    "bbox": bbox,
+                    "type": elem_type,
+                    "label": f"{cls_name}",
+                    "confidence": round(conf, 3),
+                    "interactive": interactive,
+                })
+                element_id += 1
+
+        return elements
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 _ui_detector: Optional[UIDetector] = None
@@ -545,6 +825,18 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
             print(f"[ui] YOLO requested but ultralytics not available, "
                   f"falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
+    elif backend == "uidetr1":
+        _ui_detector = UIDETR1Detector()
+        if not _ui_detector.available:
+            print(f"[ui] UI-DETR-1 requested but rfdetr not available, "
+                  f"falling back to contour", file=sys.stderr)
+            _ui_detector = ContourDetector()
+    elif backend == "screenparser":
+        _ui_detector = ScreenParserDetector()
+        if not _ui_detector.available:
+            print(f"[ui] ScreenParser requested but not available, "
+                  f"falling back to contour", file=sys.stderr)
+            _ui_detector = ContourDetector()
     else:
         _ui_detector = ContourDetector()
 
@@ -553,11 +845,12 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
 
 def available_detectors() -> Dict[str, bool]:
     """Return dict of detector name -> available."""
-    yolo = YOLOUIDetector()
     return {
         "contour": ContourDetector().available,
-        "yolo": yolo.available,
+        "yolo": YOLOUIDetector().available,
         "omniparser": OmniParserDetector().available,
+        "uidetr1": UIDETR1Detector().available,
+        "screenparser": ScreenParserDetector().available,
     }
 
 

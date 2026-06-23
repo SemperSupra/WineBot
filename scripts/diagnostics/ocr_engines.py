@@ -268,6 +268,240 @@ class PaddleOCREngine(OCREngine):
         return regions
 
 
+# ── PaddleOCR ONNX Engine ─────────────────────────────────────────────────────
+
+class PaddleOCRONNXEngine(OCREngine):
+    """PaddleOCR via ONNX Runtime. Bypasses the ONEDNN CPU bug.
+
+    Requires exported ONNX models from PP-OCRv5 (detection + recognition).
+    Place models in models/ocr/ or set PADDLE_ONNX_DIR env var.
+
+    Falls back to Tesseract if ONNX models are not available.
+    Provides a download script to export from a PaddleOCR-capable environment.
+    """
+
+    name = "paddle_onnx"
+    available = False
+
+    def __init__(self):
+        self._session_det = None
+        self._session_rec = None
+        self._char_dict = None
+        self._input_size = (640, 640)
+
+        try:
+            import onnxruntime as ort
+            self._ort = ort
+            # Try GPU first, fall back to CPU
+            gpu_available = "CUDAExecutionProvider" in ort.get_available_providers()
+            self._providers = (
+                ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                if gpu_available
+                else ["CPUExecutionProvider"]
+            )
+            self._onnx_available = True
+        except ImportError:
+            self._onnx_available = False
+
+        # Try to load models
+        if self._onnx_available:
+            self._load_models()
+
+    def _find_model(self, name: str) -> Optional[str]:
+        """Search for an ONNX model file in standard locations."""
+        candidates = [
+            os.path.join(os.environ.get("PADDLE_ONNX_DIR", ""), name),
+            os.path.join("models", "ocr", name),
+            os.path.join(os.path.dirname(__file__), "..", "..", "models", "ocr", name),
+            os.path.join("/models", "ocr", name),
+        ]
+        for p in candidates:
+            if p and os.path.isfile(p):
+                return p
+        return None
+
+    def _load_models(self):
+        """Load ONNX detection and recognition models."""
+        try:
+            det_path = self._find_model("ppocr_det.onnx")
+            rec_path = self._find_model("ppocr_rec.onnx")
+            dict_path = self._find_model("ppocr_keys_v1.txt")
+
+            if not det_path or not rec_path:
+                print("[paddle_onnx] ONNX models not found. "
+                      "Export from PaddleOCR: paddle2onnx --model_dir=...", file=sys.stderr)
+                self.available = False
+                return
+
+            sess_opts = self._ort.SessionOptions()
+            sess_opts.graph_optimization_level = self._ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+            self._session_det = self._ort.InferenceSession(
+                det_path, sess_opts, providers=self._providers
+            )
+            self._session_rec = self._ort.InferenceSession(
+                rec_path, sess_opts, providers=self._providers
+            )
+
+            # Load character dictionary
+            if dict_path and os.path.isfile(dict_path):
+                with open(dict_path, "r", encoding="utf-8") as f:
+                    self._char_dict = [line.strip() for line in f if line.strip()]
+            else:
+                # Default: alphanumeric + common symbols
+                import string
+                self._char_dict = ["'"] + list(string.printable[:95])
+
+            self.available = True
+            providers_used = self._session_det.get_providers()
+            print(f"[paddle_onnx] Models loaded (providers: {providers_used})", file=sys.stderr)
+
+        except Exception as e:
+            print(f"[paddle_onnx] Failed to load models: {e}", file=sys.stderr)
+            self.available = False
+
+    def detect_text(self, image: np.ndarray) -> List[Dict]:
+        if not self.available:
+            return []
+
+        if self._session_det is None:
+            return []
+
+        try:
+            h, w = image.shape[:2]
+
+            # ── Detection: find text bounding boxes ──
+            # Preprocess for detection model
+            scale = min(self._input_size[0] / h, self._input_size[1] / w)
+            new_h, new_w = int(h * scale), int(w * scale)
+            resized = cv2.resize(image, (new_w, new_h))
+            padded = np.ones(
+                (self._input_size[0], self._input_size[1], 3), dtype=np.float32
+            ) * 127.5
+            padded[:new_h, :new_w] = resized
+
+            # Normalize to [-1, 1]
+            blob = (padded - 127.5) / 127.5
+            blob = blob.transpose(2, 0, 1)[np.newaxis, ...].astype(np.float32)
+
+            det_input = {self._session_det.get_inputs()[0].name: blob}
+            det_output = self._session_det.run(None, det_input)[0]
+
+            # Post-process detection output to get bounding boxes
+            boxes = self._postprocess_det(det_output, (h, w), scale)
+
+            if not boxes:
+                return []
+
+            # ── Recognition: read text in each box ──
+            regions = []
+            for i, (bx1, by1, bx2, by2) in enumerate(boxes):
+                try:
+                    # Crop and preprocess for recognition
+                    crop = image[int(by1):int(by2), int(bx1):int(bx2)]
+                    if crop.size == 0:
+                        continue
+
+                    # Resize to recognition model input (typically 32x320)
+                    rec_h = 32
+                    rec_w = 320
+                    crop_h, crop_w = crop.shape[:2]
+                    ratio = rec_h / max(crop_h, 1)
+                    new_w_rec = min(int(crop_w * ratio), rec_w)
+                    if new_w_rec < 4:
+                        continue
+
+                    crop_resized = cv2.resize(crop, (new_w_rec, rec_h))
+                    # Normalize
+                    crop_blob = ((crop_resized.astype(np.float32) - 127.5) / 127.5
+                                 .transpose(2, 0, 1)[np.newaxis, ...])
+
+                    rec_input = {self._session_rec.get_inputs()[0].name: crop_blob}
+                    rec_output = self._session_rec.run(None, rec_input)[0]
+
+                    # Decode recognition output
+                    text, conf = self._decode_rec(rec_output)
+
+                    if text and len(text.strip()) >= 2:
+                        regions.append({
+                            "text": text.strip(),
+                            "bbox": [int(bx1), int(by1), int(bx2 - bx1), int(by2 - by1)],
+                            "confidence": int(conf),
+                            "block_num": i + 1,
+                            "lines": [text.strip()],
+                        })
+                except Exception:
+                    continue
+
+            return regions
+
+        except Exception as e:
+            print(f"[paddle_onnx] Inference error: {e}", file=sys.stderr)
+            return []
+
+    def _postprocess_det(self, output, orig_shape, scale):
+        """Post-process detection model output to bounding boxes.
+
+        Simplified: assumes output is [N, 4, 2] quad boxes or [N, 4] rect boxes.
+        This is a minimal implementation — full PaddleOCR post-processing
+        (DB post-process) requires the detection head logic.
+        """
+        boxes = []
+        h, w = orig_shape
+
+        # Handle different output shapes from different model versions
+        output = np.squeeze(output)
+
+        if output.ndim == 2 and output.shape[1] == 4:
+            # Rect boxes [x1, y1, x2, y2] — direct
+            for det in output:
+                x1, y1, x2, y2 = det
+                x1, y1 = x1 / scale, y1 / scale
+                x2, y2 = x2 / scale, y2 / scale
+                if x2 > x1 and y2 > y1:
+                    boxes.append((x1, y1, x2, y2))
+        elif output.ndim == 3:
+            # Quad boxes [4, 2] per detection
+            for det in output:
+                xs = [p[0] for p in det]
+                ys = [p[1] for p in det]
+                x1, y1 = min(xs) / scale, min(ys) / scale
+                x2, y2 = max(xs) / scale, max(ys) / scale
+                if x2 > x1 + 5 and y2 > y1 + 5:
+                    boxes.append((x1, y1, x2, y2))
+
+        # Clip to image bounds
+        boxes = [(max(0, x1), max(0, y1), min(w, x2), min(h, y2))
+                 for x1, y1, x2, y2 in boxes]
+        return boxes
+
+    def _decode_rec(self, output):
+        """Decode recognition model output (CTC) to text and confidence."""
+        if self._char_dict is None:
+            return ("", 0)
+
+        output = np.squeeze(output)
+        if output.ndim == 1:
+            output = output[np.newaxis, :]
+
+        indices = np.argmax(output, axis=1)
+        probs = np.max(output, axis=1)
+
+        # CTC greedy decode: collapse repeats, remove blank (index 0)
+        chars = []
+        confs = []
+        prev_idx = -1
+        for idx, prob in zip(indices, probs):
+            if idx != prev_idx and idx > 0 and idx < len(self._char_dict):
+                chars.append(self._char_dict[idx])
+                confs.append(prob)
+            prev_idx = idx
+
+        text = "".join(chars)
+        confidence = float(np.mean(confs)) * 100 if confs else 0
+        return text, confidence
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 _ocr_engine: Optional[OCREngine] = None
@@ -290,6 +524,8 @@ def get_ocr_engine(backend: Optional[str] = None) -> OCREngine:
 
     if backend == "paddle" or backend == "paddleocr":
         _ocr_engine = PaddleOCREngine()
+    elif backend == "paddle_onnx" or backend == "onnx":
+        _ocr_engine = PaddleOCRONNXEngine()
     else:
         _ocr_engine = TesseractEngine()
 
@@ -306,6 +542,7 @@ def available_backends() -> Dict[str, bool]:
     return {
         "tesseract": TesseractEngine().available,
         "paddleocr": PaddleOCREngine().available,
+        "paddle_onnx": PaddleOCRONNXEngine().available,
     }
 
 

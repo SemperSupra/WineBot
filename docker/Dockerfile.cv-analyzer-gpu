@@ -47,11 +47,27 @@ RUN pip install --no-cache-dir --break-system-packages \
     fastapi==0.129.0 \
     uvicorn==0.41.0
 
+# ── PaddleOCR ONNX Runtime ──────────────────────────────────────────────────
+# Bypasses the ONEDNN CPU bug by using ONNX-exported PaddleOCR models.
+# Models must be exported separately and placed in models/ocr/.
+# Uses CPU provider (onnxruntime-gpu needs CUDA 13.x SDK;
+# runtime image has 12.6. Switch to GPU when base updates to CUDA 13).
+RUN pip install --no-cache-dir --break-system-packages \
+    onnxruntime
+
+# ── UI-DETR-1 (rfdetr) ────────────────────────────────────────────────────────
+# MIT-licensed class-agnostic UI element detector.
+# Downloads racineai/UI-DETR-1 from HuggingFace on first run.
+RUN pip install --no-cache-dir --break-system-packages \
+    rfdetr \
+    huggingface_hub
+
 # ── (Future) PaddleOCR GPU — blocked, see note below ─────────────────────────
 # PaddleOCR 3.7.0 on PyPI only ships CPU wheels (paddlepaddle-3.3.1-*).
 # GPU wheels require PaddlePaddle's private index or self-build.
-# Once available: pip install paddlepaddle-gpu paddleocr
-# WORKAROUND: Tesseract OCR is the primary engine; PaddleOCR added when ready.
+# WORKAROUND: PaddleOCRONNXEngine exports ONNX models from a PaddleOCR-capable
+# environment and runs them here via onnxruntime-gpu (installed below).
+# Usage: set OCR_BACKEND=paddle_onnx and place .onnx models in models/ocr/
 
 # ── Verification ─────────────────────────────────────────────────────────────
 RUN python3 -c "import torch; print(f'PyTorch {torch.__version__} — CUDA available: {torch.cuda.is_available()} (will be True at runtime with --gpus all)')" \
@@ -59,6 +75,9 @@ RUN python3 -c "import torch; print(f'PyTorch {torch.__version__} — CUDA avail
     && python3 -c "import pytesseract; print('Tesseract OK')" \
     && python3 -c "from ultralytics import YOLO; print('YOLO OK')" \
     && python3 -c "import transformers; print(f'Transformers {transformers.__version__}')" \
+    && python3 -c "import rfdetr; print('RF-DETR OK')" \
+    && python3 -c "import huggingface_hub; print('HF Hub OK')" \
+    && python3 -c "import onnxruntime; print(f'ONNX Runtime {onnxruntime.__version__}')" \
     && echo "All engines verified — GPU acceleration active at runtime"
 
 ENV YOLO_MODEL_PATH=/models/yolov8n.pt
@@ -80,6 +99,8 @@ COPY scripts/diagnostics/cv-watcher.py /scripts/cv-watcher.py
 COPY scripts/diagnostics/demo-expect.py /scripts/demo-expect.py
 COPY scripts/diagnostics/merge-timeline.py /scripts/merge-timeline.py
 COPY scripts/diagnostics/cv-batch-analyze.py /scripts/cv-batch-analyze.py
+COPY scripts/diagnostics/benchmark_runner.py /scripts/benchmark_runner.py
+COPY scripts/diagnostics/benchmark_report.py /scripts/benchmark_report.py
 
 WORKDIR /work
 EXPOSE 8001

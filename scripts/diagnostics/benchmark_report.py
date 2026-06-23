@@ -11,7 +11,7 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def _markdown_table(headers: list, rows: list, align: list = None) -> str:
@@ -40,10 +40,10 @@ def _sig_diff(a: dict, b: dict) -> str:
     a_lo, a_hi = a.get("ci95_low", 0), a.get("ci95_high", 0)
     b_lo, b_hi = b.get("ci95_low", 0), b.get("ci95_high", 0)
     if a_hi < b_lo:
-        return "✅ faster"
+        return "SIG faster"
     elif b_hi < a_lo:
-        return "🔻 slower"
-    return "≈ within noise"
+        return "SIG slower"
+    return "~ within noise"
 
 
 def _latency_chart(results: list, width: int = 50) -> str:
@@ -56,7 +56,7 @@ def _latency_chart(results: list, width: int = 50) -> str:
     for r in results:
         name = f"{r['engine']['ui_detector']:>12}+{r['engine']['ocr_backend']:<12}"
         bar_len = int(r["summary"]["mean_ms"] / max(max_ms, 1) * width)
-        bar = "█" * bar_len
+        bar = "#" * bar_len
         ci = _ci_str(r["summary"])
         lines.append(f"  {name} |{bar:<{width}}| {ci}ms")
     lines.append("```")
@@ -90,7 +90,7 @@ def generate_report(benchmark_data: dict) -> str:
     rows = []
     for r in results:
         eng = r["engine"]
-        avail = "✅" if r.get("available") else "❌"
+        avail = "yes" if r.get("available") else "NO"
         error = r.get("error", "")
         rows.append([eng["ui_detector"], eng["ocr_backend"], avail, error])
     sections.append(_markdown_table(
@@ -275,12 +275,12 @@ def generate_report(benchmark_data: dict) -> str:
         sections.append(f"- **Warmup:** {config.get('warmup_frames', '?')} frames discarded per engine to account for CUDA kernel compilation and model lazy-loading")
         sections.append(f"- **Replication:** {config.get('iterations', '?')} runs per frame to quantify measurement noise")
         sections.append(f"- **CI:** {config.get('confidence', 0.95) * 100:.0f}% confidence intervals via t-distribution (accounts for small sample sizes)")
-        sections.append("- **Significance:** '✅ faster' / '🔻 slower' = non-overlapping 95% CIs vs baseline. '≈ within noise' = overlapping CIs.")
+        sections.append("- **Significance:** 'SIG faster/slower' = non-overlapping 95% CIs vs baseline. '~ within noise' = overlapping CIs.")
         sections.append("- **Hardware:** Benchmark run inside Docker with `--gpus all`. GPU availability depends on container runtime.")
 
     sections.append("")
     sections.append(f"---")
-    sections.append(f"*Report generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC*")
+    sections.append(f"*Report generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC*")
 
     return "\n".join(sections)
 

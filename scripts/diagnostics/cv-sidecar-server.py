@@ -390,6 +390,48 @@ def create_app() -> FastAPI:
             "output_dir": _watch_state["output_dir"],
         })
 
+    @app.post("/benchmark")
+    async def benchmark(request_data: Dict):
+        """Run multi-engine benchmark with statistical rigor.
+
+        Request body:
+          {"frames_dir": "/bench_frames",
+           "engines": [{"ui_detector":"yolo", "ocr_backend":"tesseract"}, ...],
+           "warmup_frames": 3, "iterations": 10, "confidence": 0.95}
+
+        Returns full benchmark JSON with per-frame timing, CI95, and accuracy
+        metrics if a manifest.json is present in the frames directory.
+        """
+        frames_dir = request_data.get("frames_dir", "")
+        if not frames_dir or not os.path.isdir(frames_dir):
+            raise HTTPException(status_code=400, detail="frames_dir required and must exist")
+
+        try:
+            from benchmark_runner import run_benchmark
+        except ImportError:
+            raise HTTPException(status_code=500,
+                                detail="benchmark_runner module not found")
+
+        engines = request_data.get("engines", [
+            {"ui_detector": "contour", "ocr_backend": "tesseract"},
+            {"ui_detector": "yolo", "ocr_backend": "tesseract"},
+        ])
+        warmup = int(request_data.get("warmup_frames", 3))
+        iterations = int(request_data.get("iterations", 10))
+        confidence = float(request_data.get("confidence", 0.95))
+        max_frames = request_data.get("max_frames")
+
+        result = run_benchmark(
+            frames_dir=frames_dir,
+            engines=engines,
+            warmup_frames=warmup,
+            iterations=iterations,
+            confidence=confidence,
+            max_frames=int(max_frames) if max_frames else None,
+        )
+
+        return JSONResponse(content=result)
+
     return app
 
 
