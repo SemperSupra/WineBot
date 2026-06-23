@@ -862,8 +862,9 @@ class WineUIDetector(YOLOUIDetector):
 
         from ultralytics import YOLO
 
-        # Priority: shared cache > project-local
+        # Priority: corrected v2 model > original v1
         paths = [
+            "/models/yolo/wine-finetuned-v2.pt",
             "/models/yolo/wine-finetuned.pt",
             os.path.join(os.path.dirname(__file__), "..", "..",
                          "models", "yolo", "wine-finetuned.pt"),
