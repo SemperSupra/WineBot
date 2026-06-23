@@ -28,3 +28,7 @@ Screenshot *.png
 /models/eval/
 /models/yolo/*.pt
 /models/tessdata/*.traineddata
+
+# Training datasets (regenerated from winebot-gt-generator.py)
+/models/wine-dataset/
+/models/wine-dataset-gen/

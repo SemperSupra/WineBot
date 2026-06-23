@@ -518,7 +518,7 @@ def make_settings_window() -> GeneratedPage:
             cv2.circle(img, (rx, radio_y + 10), 4, (0, 120, 215), -1)
         cv2.putText(img, theme_name, (rx + 16, radio_y + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (30, 30, 30), 1)
-        elems.append(UIElement(7, [rx - 8, radio_y + 2, 70, 18], "radio", ""))
+        elems.append(UIElement(7, [rx - 8, radio_y + 2, 70, 18], "radio", theme_name))
 
     # Buttons
     btn_y = wy + wh - 46
@@ -655,24 +655,30 @@ def make_notepad_window() -> GeneratedPage:
         "WineBot CV/OCR Training Data Generator",
         "Version 1.0",
     ]
+    ocr_texts = []
     for i, line in enumerate(lines):
         ly = text_y + 22 + i * 22
         cv2.putText(img, line, (text_x + 10, ly),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
+        # Content lines — OCR ground truth only, NOT YOLO UI elements.
+        # The text_area (class 12) is the structural element.
         if line.strip():
             tw = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]
-            elems.append(UIElement(14, [text_x + 10, ly - 16, tw, 20],
-                                   "list_item", line))
+            ocr_texts.append({
+                "text": line,
+                "bbox": [text_x + 10, ly - 16, tw, 20],
+            })
 
     # Status bar
     sb_y = wy + wh - 20
     cv2.rectangle(img, (wx, sb_y), (wx + ww, sb_y + 20), (240, 240, 240), -1)
     cv2.rectangle(img, (wx, sb_y), (wx + ww, sb_y + 20), WINDOW_BORDER, 1)
-    cv2.putText(img, "Ln 1, Col 1", (wx + 8, sb_y + 15),
+    status_text = f"Ln {random.randint(1,20)}, Col {random.randint(1,80)}"
+    cv2.putText(img, status_text, (wx + 8, sb_y + 15),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1)
-    elems.append(UIElement(18, [wx, sb_y, ww, 20], "status_bar"))
+    elems.append(UIElement(18, [wx, sb_y, ww, 20], "status_bar", status_text))
 
-    return GeneratedPage(image=img, elements=elems)
+    return GeneratedPage(image=img, elements=elems, ground_truth_texts=ocr_texts)
 
 
 def make_control_panel() -> GeneratedPage:
@@ -1160,16 +1166,28 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
                 for elem in page.elements:
                     f.write(yolo_label(elem, w, h) + "\n")
 
-            # Collect OCR ground truth
+            # Collect OCR ground truth from UI elements
             for elem in page.elements:
                 if elem.ocr_text:
                     ocr_entries.append({
                         "image": img_name,
                         "text": elem.ocr_text,
                         "bbox": elem.bbox,
+                        "source": "ui_element",
                         "class": WINE_CLASSES[elem.cls_id],
                         "confidence": 100,
                     })
+            # Collect OCR ground truth from content text (not UI elements —
+            # e.g. notepad text lines, file names in lists)
+            for gt in page.ground_truth_texts:
+                ocr_entries.append({
+                    "image": img_name,
+                    "text": gt.get("text", ""),
+                    "bbox": gt.get("bbox", [0, 0, 0, 0]),
+                    "source": "content_text",
+                    "class": "text",
+                    "confidence": 100,
+                })
 
             manifest["images"].append({
                 "file": img_name,

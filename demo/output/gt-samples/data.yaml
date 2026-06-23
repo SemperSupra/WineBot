@@ -1,0 +1,28 @@
+# WineBot Ground Truth Dataset — 1400 images
+path: /models/wine-dataset-gen
+train: images
+val: images
+nc: 22
+names:
+  0: title_bar
+  1: title_text
+  2: button
+  3: close_button
+  4: text_field
+  5: dropdown
+  6: checkbox
+  7: radio
+  8: menu_bar
+  9: menu_item
+  10: taskbar
+  11: dialog
+  12: text_area
+  13: scrollbar
+  14: list_item
+  15: tab
+  16: progress_bar
+  17: toolbar
+  18: status_bar
+  19: link
+  20: icon
+  21: spinner_button
