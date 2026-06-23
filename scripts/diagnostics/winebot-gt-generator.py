@@ -42,17 +42,112 @@ import numpy as np
 # ── Wine Desktop Constants (tuned for Xvfb 1280x720) ──────────────────────
 
 DESKTOP_SIZE = (1280, 720)
-TASKBAR_HEIGHT = 32
-TASKBAR_COLOR = (40, 40, 40)  # tint2 dark
-TASKBAR_FONT_COLOR = (220, 220, 220)
-TITLE_HEIGHT = 28
-TITLE_COLOR = (0, 120, 215)  # Windows 10 blue
-TITLE_TEXT_COLOR = (255, 255, 255)
-WINDOW_BORDER = (180, 180, 180)
-DESKTOP_BG = (58, 110, 165)  # Wine blue-gray desktop
 
-# Wine-rendered fonts are softer than native Windows — add slight blur
-WINE_SOFTNESS = 0.3  # Gaussian blur sigma
+# Multi-framework UI theme system.
+# Each framework renders widgets differently — title bar height, colors,
+# button shapes, font sizes, border styles. We sample randomly to train
+# a model that generalizes across Qt, Gtk, Win32, Java Swing, Tk, and
+# Electron/web UI frameworks running under Wine.
+
+FRAMEWORK_THEMES = {
+    "win32_classic": {
+        "title_height": 28, "title_color": (0, 120, 215),
+        "title_text_color": (255, 255, 255), "title_font_scale": 0.65,
+        "button_color": (225, 225, 225), "button_text_color": (0, 0, 0),
+        "button_border_3d": True, "window_bg": (240, 240, 240),
+        "menu_bg": (245, 245, 245), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "win10_fluent": {
+        "title_height": 30, "title_color": (0, 120, 215),
+        "title_text_color": (255, 255, 255), "title_font_scale": 0.60,
+        "button_color": (0, 120, 215), "button_text_color": (255, 255, 255),
+        "button_border_3d": False, "window_bg": (255, 255, 255),
+        "menu_bg": (240, 240, 240), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "qt_fusion": {
+        "title_height": 30, "title_color": (50, 50, 50),
+        "title_text_color": (220, 220, 220), "title_font_scale": 0.60,
+        "button_color": (65, 65, 65), "button_text_color": (220, 220, 220),
+        "button_border_3d": False, "window_bg": (45, 45, 45),
+        "menu_bg": (55, 55, 55), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "gtk_adwaita": {
+        "title_height": 26, "title_color": (42, 42, 42),
+        "title_text_color": (230, 230, 230), "title_font_scale": 0.60,
+        "button_color": (230, 230, 230), "button_text_color": (20, 20, 20),
+        "button_border_3d": False, "window_bg": (250, 250, 250),
+        "menu_bg": (240, 240, 240), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "java_metal": {
+        "title_height": 24, "title_color": (128, 128, 128),
+        "title_text_color": (255, 255, 255), "title_font_scale": 0.55,
+        "button_color": (200, 200, 200), "button_text_color": (0, 0, 0),
+        "button_border_3d": True, "window_bg": (238, 238, 238),
+        "menu_bg": (238, 238, 238), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "tkinter": {
+        "title_height": 20, "title_color": (200, 50, 50),
+        "title_text_color": (255, 255, 255), "title_font_scale": 0.50,
+        "button_color": (220, 220, 220), "button_text_color": (0, 0, 0),
+        "button_border_3d": True, "window_bg": (240, 240, 240),
+        "menu_bg": (240, 240, 240), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+    "electron_dark": {
+        "title_height": 32, "title_color": (30, 30, 30),
+        "title_text_color": (220, 220, 220), "title_font_scale": 0.55,
+        "button_color": (60, 60, 60), "button_text_color": (220, 220, 220),
+        "button_border_3d": False, "window_bg": (35, 35, 35),
+        "menu_bg": (45, 45, 45), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "toggle",
+    },
+    "classic_95": {
+        "title_height": 18, "title_color": (0, 0, 128),
+        "title_text_color": (255, 255, 255), "title_font_scale": 0.55,
+        "button_color": (192, 192, 192), "button_text_color": (0, 0, 0),
+        "button_border_3d": True, "window_bg": (192, 192, 192),
+        "menu_bg": (192, 192, 192), "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "checkbox_style": "checkmark",
+    },
+}
+
+
+def sample_theme() -> Dict:
+    """Randomly sample a UI framework theme with jitter."""
+    theme = random.choice(list(FRAMEWORK_THEMES.values())).copy()
+    # Jitter colors slightly
+    for key in ["title_color", "button_color", "window_bg", "menu_bg"]:
+        if key in theme:
+            c = list(theme[key])
+            c = [min(255, max(0, v + random.randint(-15, 15))) for v in c]
+            theme[key] = tuple(c)
+    # Jitter title height
+    theme["title_height"] += random.randint(-2, 4)
+    return theme
+
+
+TASKBAR_HEIGHT = 32
+TASKBAR_THEMES = [
+    {"color": (40, 40, 40), "font_color": (220, 220, 220)},   # tint2 dark
+    {"color": (30, 30, 50), "font_color": (200, 200, 220)},   # dark blue
+    {"color": (60, 60, 60), "font_color": (240, 240, 240)},   # dark gray
+    {"color": (25, 25, 30), "font_color": (200, 200, 200)},   # near-black
+]
+DESKTOP_BG_THEMES = [
+    (58, 110, 165),   # Wine blue-gray
+    (30, 30, 50),     # dark
+    (100, 120, 140),  # gray-blue
+    (40, 60, 80),     # steel
+    (20, 40, 60),     # dark blue
+]
+
+WINDOW_BORDER = (180, 180, 180)
+WINE_SOFTNESS = 0.3
 
 # ── YOLO class definitions ─────────────────────────────────────────────
 
@@ -100,94 +195,128 @@ class GeneratedPage:
 # ── Page generators ────────────────────────────────────────────────────
 
 def draw_taskbar(img: np.ndarray) -> List[UIElement]:
-    """Draw tint2 taskbar at bottom of desktop."""
+    """Draw a tint2-style taskbar at bottom. Theme varies randomly."""
     h, w = img.shape[:2]
     y = h - TASKBAR_HEIGHT
-    cv2.rectangle(img, (0, y), (w, h), TASKBAR_COLOR, -1)
-
-    # Taskbar buttons (simulated app icons)
+    theme = random.choice(TASKBAR_THEMES)
+    cv2.rectangle(img, (0, y), (w, h), theme["color"], -1)
     elems = []
     menu_items = ["Menu", "Browser", "Terminal", "Files", "Settings"]
     x = 10
     for item in menu_items:
         bw = random.randint(60, 100)
+        btn_color = tuple(min(255, max(0, c + random.randint(-15, 15)))
+                          for c in theme["color"])
+        cv2.rectangle(img, (x, y + 4), (x + bw, y + TASKBAR_HEIGHT - 4), btn_color, -1)
         cv2.rectangle(img, (x, y + 4), (x + bw, y + TASKBAR_HEIGHT - 4),
-                      (60, 60, 60), -1)
-        cv2.rectangle(img, (x, y + 4), (x + bw, y + TASKBAR_HEIGHT - 4),
-                      (80, 80, 80), 1)
+                      tuple(min(255, c + 20) for c in btn_color), 1)
         tw = cv2.getTextSize(item, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
         cv2.putText(img, item, (x + (bw - tw) // 2, y + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, TASKBAR_FONT_COLOR, 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, theme["font_color"], 1)
         elems.append(UIElement(10, [x, y + 4, bw, TASKBAR_HEIGHT - 8], "taskbar"))
         x += bw + 6
-
-    # Clock area
-    clock_text = "14:30"
+    clock_text = f"{random.randint(0,23):02d}:{random.randint(0,59):02d}"
     tw = cv2.getTextSize(clock_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
     cv2.putText(img, clock_text, (w - tw - 16, y + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, TASKBAR_FONT_COLOR, 1)
-
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, theme["font_color"], 1)
     elems.append(UIElement(10, [0, y, w, TASKBAR_HEIGHT], "taskbar"))
     return elems
 
 
 def draw_window(img: np.ndarray, x: int, y: int, w: int, h: int,
-                title: str = "Untitled", title_color=TITLE_COLOR,
+                title: str = "Untitled", theme: Dict = None,
                 has_menu: bool = True, menu_items: List[str] = None) -> List[UIElement]:
-    """Draw an application window with title bar, optional menu, and border."""
+    """Draw an application window with framework-specific title bar and chrome.
+
+    Args:
+        theme: Framework visual style from FRAMEWORK_THEMES. If None, sampled randomly.
+    """
+    if theme is None:
+        theme = sample_theme()
     elems = []
+    title_h = theme["title_height"]
 
     # Window background
-    cv2.rectangle(img, (x, y), (x + w, y + h), (240, 240, 240), -1)
+    bg = theme["window_bg"]
+    cv2.rectangle(img, (x, y), (x + w, y + h), bg, -1)
     cv2.rectangle(img, (x, y), (x + w, y + h), WINDOW_BORDER, 1)
 
     # Title bar
-    cv2.rectangle(img, (x, y), (x + w, y + TITLE_HEIGHT), title_color, -1)
-    title_w = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 1)[0][0]
-    cv2.putText(img, title, (x + 10, y + 21),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, TITLE_TEXT_COLOR, 1)
-    elems.append(UIElement(0, [x, y, w, TITLE_HEIGHT], "title_bar"))
-    elems.append(UIElement(1, [x + 10, y + 3, title_w + 4, TITLE_HEIGHT - 6],
+    cv2.rectangle(img, (x, y), (x + w, y + title_h), theme["title_color"], -1)
+    title_w = cv2.getTextSize(title, theme["font_face"], theme["title_font_scale"], 1)[0][0]
+    cv2.putText(img, title, (x + 10, y + title_h - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [x, y, w, title_h], "title_bar"))
+    elems.append(UIElement(1, [x + 10, y + 3, title_w + 4, title_h - 6],
                            "title_text", title))
 
-    # Close button
+    # Close button — varies by framework
     cx = x + w - 36
-    cv2.rectangle(img, (cx, y + 4), (cx + 28, y + TITLE_HEIGHT - 4),
-                  (200, 50, 50), -1)
-    cv2.putText(img, "X", (cx + 9, y + 21),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    elems.append(UIElement(3, [cx, y + 4, 28, TITLE_HEIGHT - 8], "close_button"))
+    close_color = (200, 50, 50) if theme.get("button_border_3d") else (220, 60, 60)
+    cv2.rectangle(img, (cx, y + 4), (cx + 28, y + title_h - 4), close_color, -1)
+    if theme.get("button_border_3d"):
+        cv2.rectangle(img, (cx, y + 4), (cx + 28, y + title_h - 4), (150, 30, 30), 1)
+    cv2.putText(img, "X", (cx + 9, y + title_h - 9),
+                theme["font_face"], 0.5, (255, 255, 255), 1)
+    elems.append(UIElement(3, [cx, y + 4, 28, title_h - 8], "close_button"))
 
     # Menu bar
     if has_menu:
-        menu_y = y + TITLE_HEIGHT
-        cv2.rectangle(img, (x, menu_y), (x + w, menu_y + 22), (245, 245, 245), -1)
+        menu_y = y + title_h
+        cv2.rectangle(img, (x, menu_y), (x + w, menu_y + 22), theme["menu_bg"], -1)
+        cv2.rectangle(img, (x, menu_y), (x + w, menu_y + 22), WINDOW_BORDER, 1)
         items = menu_items or ["File", "Edit", "View", "Help"]
         mx = x + 8
         for item in items:
-            tw = cv2.getTextSize(item, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
+            tw = cv2.getTextSize(item, theme["font_face"], 0.45, 1)[0][0]
             elems.append(UIElement(9, [mx, menu_y, tw + 10, 22], "menu_item", item))
-            cv2.putText(img, item, (mx + 5, menu_y + 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (30, 30, 30), 1)
+            cv2.putText(img, item, (mx + 5, menu_y + 15),
+                        theme["font_face"], 0.45, (20, 20, 20), 1)
             mx += tw + 14
         elems.append(UIElement(8, [x, menu_y, w, 22], "menu_bar"))
 
     return elems
 
 
+
+def draw_button(img, x, y, w, h, label, theme, primary=False):
+    """Draw a framework-themed button."""
+    if primary:
+        color = theme["title_color"]  # Accent color for primary actions
+        text_color = (255, 255, 255)
+    else:
+        color = theme["button_color"]
+        text_color = theme["button_text_color"]
+    if theme.get("button_border_3d"):
+        # 3D bevel
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, -1)
+        cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 255), 1)  # top-left highlight
+        cv2.rectangle(img, (x + 1, y + 1), (x + w - 1, y + h - 1), (100, 100, 100), 1)  # bottom-right shadow
+    else:
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, -1)
+        cv2.rectangle(img, (x, y), (x + w, y + h),
+                      tuple(min(255, c + 30) for c in color), 1)
+    fs = theme["title_font_scale"] - 0.05
+    tw = cv2.getTextSize(label, theme["font_face"], fs, 1)[0][0]
+    cv2.putText(img, label, (x + (w - tw) // 2, y + h - 8),
+                theme["font_face"], fs, text_color, 1)
+    return UIElement(2, [x, y, w, h], "button", label)
+
+
 def make_save_dialog() -> GeneratedPage:
     """Windows Save As dialog — the most common Wine interaction."""
+    theme = sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
-    img[:] = DESKTOP_BG
+    img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = []
 
     elems += draw_taskbar(img)
 
     # Dialog window
     dx, dy, dw, dh = 180, 90, 920, 540
-    elems += draw_window(img, dx, dy, dw, dh, "Save As", has_menu=False)
+    elems += draw_window(img, dx, dy, dw, dh, "Save As", theme=theme, has_menu=False)
 
-    content_top = dy + TITLE_HEIGHT + 10
+    content_top = dy + theme["title_height"] + 10
 
     # Sidebar with folder shortcuts
     sidebar_x = dx + 8
@@ -270,36 +399,27 @@ def make_save_dialog() -> GeneratedPage:
     # Action buttons
     btn_y = dy + dh - 46
     save_x = dx + dw - 320
-    for bx, label, color in [
-        (save_x, "Hide Folders", (200, 200, 200)),
-        (save_x + 110, "Cancel", (200, 200, 200)),
-        (save_x + 220, "Save", (0, 150, 0)),
-    ]:
-        bw, bh = 90, 30
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), color, -1)
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), (120, 120, 120), 1)
-        tc = (255, 255, 255) if color == (0, 150, 0) else (50, 50, 50)
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-        cv2.putText(img, label, (bx + (bw - tw) // 2, btn_y + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, tc, 1)
-        elems.append(UIElement(2, [bx, btn_y, bw, bh], "button", label))
+    elems.append(draw_button(img, save_x, btn_y, 90, 30, "Hide Folders", theme))
+    elems.append(draw_button(img, save_x + 110, btn_y, 90, 30, "Cancel", theme))
+    elems.append(draw_button(img, save_x + 220, btn_y, 90, 30, "Save", theme, primary=True))
 
     return GeneratedPage(image=img, elements=elems)
 
 
 def make_settings_window() -> GeneratedPage:
     """Settings/preferences dialog with tabs, checkboxes."""
+    theme = sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
-    img[:] = DESKTOP_BG
+    img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = []
 
     elems += draw_taskbar(img)
 
     wx, wy, ww, wh = 200, 70, 880, 580
-    elems += draw_window(img, wx, wy, ww, wh, "Settings",
+    elems += draw_window(img, wx, wy, ww, wh, "Settings", theme=theme,
                          menu_items=["General", "Display", "Network", "Advanced"])
 
-    content_top = wy + TITLE_HEIGHT + 22 + 10
+    content_top = wy + theme["title_height"] + 22 + 10
     tab_y = content_top
     tabs = ["General", "Display", "Audio", "Network", "Advanced"]
     tx = wx + 16
@@ -349,27 +469,18 @@ def make_settings_window() -> GeneratedPage:
 
     # Buttons
     btn_y = wy + wh - 46
-    for bx, label, color in [
-        (wx + ww - 310, "Reset to Defaults", (200, 200, 200)),
-        (wx + ww - 200, "Cancel", (200, 200, 200)),
-        (wx + ww - 100, "OK", (0, 120, 215)),
-    ]:
-        bw, bh = 90, 30
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), color, -1)
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), (120, 120, 120), 1)
-        tc = (255, 255, 255) if color == (0, 120, 215) else (50, 50, 50)
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]
-        cv2.putText(img, label, (bx + (bw - tw) // 2, btn_y + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, tc, 1)
-        elems.append(UIElement(2, [bx, btn_y, bw, bh], "button", label))
+    elems.append(draw_button(img, wx + ww - 310, btn_y, 90, 30, "Reset to Defaults", theme))
+    elems.append(draw_button(img, wx + ww - 200, btn_y, 90, 30, "Cancel", theme))
+    elems.append(draw_button(img, wx + ww - 100, btn_y, 90, 30, "OK", theme, primary=True))
 
     return GeneratedPage(image=img, elements=elems)
 
 
 def make_error_dialog() -> GeneratedPage:
     """Error/information popup dialog."""
+    theme = sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
-    img[:] = DESKTOP_BG
+    img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = []
 
     elems += draw_taskbar(img)
@@ -387,25 +498,25 @@ def make_error_dialog() -> GeneratedPage:
     elif title == "Warning":
         title_color_bg = (200, 140, 0)
     else:
-        title_color_bg = TITLE_COLOR
+        title_color_bg = theme["title_color"]
 
-    cv2.rectangle(img, (dx, dy), (dx + dw, dy + TITLE_HEIGHT), title_color_bg, -1)
-    cv2.putText(img, title, (dx + 10, dy + 21),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, TITLE_TEXT_COLOR, 1)
-    elems.append(UIElement(0, [dx, dy, dw, TITLE_HEIGHT], "title_bar"))
-    elems.append(UIElement(1, [dx + 10, dy + 4, 60, TITLE_HEIGHT - 8],
+    title_h = theme["title_height"]
+    cv2.rectangle(img, (dx, dy), (dx + dw, dy + title_h), title_color_bg, -1)
+    cv2.putText(img, title, (dx + 10, dy + title_h - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dx, dy, dw, title_h], "title_bar"))
+    elems.append(UIElement(1, [dx + 10, dy + 4, 60, title_h - 8],
                            "title_text", title))
 
     # Close button
     cx = dx + dw - 36
-    cv2.rectangle(img, (cx, dy + 4), (cx + 28, dy + TITLE_HEIGHT - 4),
-                  (200, 50, 50), -1)
-    cv2.putText(img, "X", (cx + 9, dy + 21),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    elems.append(UIElement(3, [cx, dy + 4, 28, TITLE_HEIGHT - 8], "close_button"))
+    cv2.rectangle(img, (cx, dy + 4), (cx + 28, dy + title_h - 4), (200, 50, 50), -1)
+    cv2.putText(img, "X", (cx + 9, dy + title_h - 9),
+                theme["font_face"], 0.5, (255, 255, 255), 1)
+    elems.append(UIElement(3, [cx, dy + 4, 28, title_h - 8], "close_button"))
 
     # Dialog icon
-    icon_cx, icon_cy = dx + 35, dy + TITLE_HEIGHT + 36
+    icon_cx, icon_cy = dx + 35, dy + theme["title_height"] + 36
     if title == "Error":
         cv2.circle(img, (icon_cx, icon_cy), 20, (200, 50, 50), 2)
         cv2.line(img, (icon_cx - 8, icon_cy - 8), (icon_cx + 8, icon_cy + 8), (200, 50, 50), 2)
@@ -426,58 +537,40 @@ def make_error_dialog() -> GeneratedPage:
         "Confirm": ("Are you sure you want to delete this file?", "This action cannot be undone."),
     }
     msg1, msg2 = messages[title]
-    cv2.putText(img, msg1, (dx + 70, dy + TITLE_HEIGHT + 35),
+    cv2.putText(img, msg1, (dx + 70, dy + theme["title_height"] + 35),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-    cv2.putText(img, msg2, (dx + 70, dy + TITLE_HEIGHT + 57),
+    cv2.putText(img, msg2, (dx + 70, dy + theme["title_height"] + 57),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 80, 80), 1)
     elems.append(UIElement(11, [dx, dy, dw, dh], "dialog"))
 
-    # Button
-    btn_w, btn_h = 80, 28
+    # Buttons
     if title == "Confirm":
-        # Yes + No
-        for bx, label, btn_color in [
-            (dx + dw - 190, "No", (200, 200, 200)),
-            (dx + dw - 100, "Yes", (0, 120, 215)),
-        ]:
-            cv2.rectangle(img, (bx, dy + dh - 42), (bx + btn_w, dy + dh - 42 + btn_h), btn_color, -1)
-            cv2.rectangle(img, (bx, dy + dh - 42), (bx + btn_w, dy + dh - 42 + btn_h), (120, 120, 120), 1)
-            tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-            tc2 = (255, 255, 255) if btn_color != (200, 200, 200) else (50, 50, 50)
-            cv2.putText(img, label, (bx + (btn_w - tw) // 2, dy + dh - 42 + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, tc2, 1)
-            elems.append(UIElement(2, [bx, dy + dh - 42, btn_w, btn_h], "button", label))
+        elems.append(draw_button(img, dx + dw - 190, dy + dh - 42, 80, 28, "No", theme))
+        elems.append(draw_button(img, dx + dw - 100, dy + dh - 42, 80, 28, "Yes", theme, primary=True))
     else:
-        bx = dx + dw - 100
-        cv2.rectangle(img, (bx, dy + dh - 42), (bx + btn_w, dy + dh - 42 + btn_h),
-                      TITLE_COLOR, -1)
-        cv2.rectangle(img, (bx, dy + dh - 42), (bx + btn_w, dy + dh - 42 + btn_h),
-                      (0, 80, 160), 1)
-        tw = cv2.getTextSize("OK", cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-        cv2.putText(img, "OK", (bx + (btn_w - tw) // 2, dy + dh - 42 + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        elems.append(UIElement(2, [bx, dy + dh - 42, btn_w, btn_h], "button", "OK"))
+        elems.append(draw_button(img, dx + dw - 100, dy + dh - 42, 80, 28, "OK", theme, primary=True))
 
     return GeneratedPage(image=img, elements=elems)
 
 
 def make_notepad_window() -> GeneratedPage:
     """Notepad-style application with text content."""
+    theme = sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
-    img[:] = DESKTOP_BG
+    img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = []
 
     elems += draw_taskbar(img)
 
     wx, wy, ww, wh = 120, 50, 1040, 620
-    elems += draw_window(img, wx, wy, ww, wh, "Untitled - Notepad",
+    elems += draw_window(img, wx, wy, ww, wh, "Untitled - Notepad", theme=theme,
                          menu_items=["File", "Edit", "Format", "View", "Help"])
 
     # Text area
     text_x = wx + 5
-    text_y = wy + TITLE_HEIGHT + 22 + 3
+    text_y = wy + theme["title_height"] + 22 + 3
     text_w = ww - 10
-    text_h = wh - TITLE_HEIGHT - 22 - 8
+    text_h = wh - theme["title_height"] - 22 - 8
     cv2.rectangle(img, (text_x, text_y), (text_x + text_w, text_y + text_h),
                   (255, 255, 255), -1)
     cv2.rectangle(img, (text_x, text_y), (text_x + text_w, text_y + text_h),
@@ -531,18 +624,19 @@ def make_notepad_window() -> GeneratedPage:
 
 def make_control_panel() -> GeneratedPage:
     """Dense control panel with toolbar, form fields, tables."""
+    theme = sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
-    img[:] = DESKTOP_BG
+    img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = []
 
     elems += draw_taskbar(img)
 
     wx, wy, ww, wh = 80, 40, 1120, 640
-    elems += draw_window(img, wx, wy, ww, wh, "WineBot Control Panel",
+    elems += draw_window(img, wx, wy, ww, wh, "WineBot Control Panel", theme=theme,
                          menu_items=["File", "Tools", "View", "Help"])
 
     # Toolbar
-    tb_y = wy + TITLE_HEIGHT + 22 + 3
+    tb_y = wy + theme["title_height"] + 22 + 3
     cv2.rectangle(img, (wx, tb_y), (wx + ww, tb_y + 30), (238, 238, 238), -1)
     tools = ["New", "Open", "Save", "|", "Cut", "Copy", "Paste", "|", "Start", "Stop"]
     tx = wx + 6
@@ -588,19 +682,9 @@ def make_control_panel() -> GeneratedPage:
 
     # Start/Stop buttons
     btn_y = form_y + len(fields) * 36 + 16
-    for bx, label, color in [
-        (form_x, "Start Recording", (0, 160, 0)),
-        (form_x + 150, "Stop Recording", (180, 50, 50)),
-        (form_x + 300, "Reset", (180, 180, 180)),
-    ]:
-        bw, bh = 140, 34
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), color, -1)
-        cv2.rectangle(img, (bx, btn_y), (bx + bw, btn_y + bh), (100, 100, 100), 1)
-        tc = (255, 255, 255) if color != (180, 180, 180) else (30, 30, 30)
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-        cv2.putText(img, label, (bx + (bw - tw) // 2, btn_y + 23),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, tc, 1)
-        elems.append(UIElement(2, [bx, btn_y, bw, bh], "button", label))
+    elems.append(draw_button(img, form_x, btn_y, 140, 34, "Start Recording", theme, primary=True))
+    elems.append(draw_button(img, form_x + 150, btn_y, 140, 34, "Stop Recording", theme))
+    elems.append(draw_button(img, form_x + 300, btn_y, 140, 34, "Reset", theme))
 
     # Progress bar
     pb_y = btn_y + 60
@@ -646,29 +730,39 @@ def yolo_label(element: UIElement, img_w: int, img_h: int) -> str:
 
 def add_wine_softness(img: np.ndarray) -> np.ndarray:
     """Add subtle blur to simulate Wine's softer font rendering."""
-    if random.random() < 0.7:  # 70% chance
-        sigma = random.uniform(0.1, 0.4)
+    if random.random() < 0.8:
+        sigma = random.uniform(0.1, 0.5)
         img = cv2.GaussianBlur(img, (3, 3), sigma)
     return img
 
 
 def add_noise(img: np.ndarray) -> np.ndarray:
     """Add subtle noise to simulate compression artifacts."""
-    noise = np.random.normal(0, 2, img.shape).astype(np.int16)
+    sigma = random.uniform(0.5, 5.0)
+    noise = np.random.normal(0, sigma, img.shape).astype(np.int16)
     img = img.astype(np.int16) + noise
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
 def variation(img: np.ndarray) -> np.ndarray:
-    """Apply random variations to increase dataset diversity."""
-    # Brightness
-    if random.random() < 0.3:
-        delta = random.randint(-20, 20)
-        img = cv2.convertScaleAbs(img, alpha=1, beta=delta)
+    """Apply aggressive random variations for robust cross-domain generalization."""
+    # HSV jitter (saturation + value = color shifts across rendering engines)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    if random.random() < 0.9:
+        hsv[:, :, 1] *= random.uniform(0.6, 1.4)   # saturation ±40%
+    if random.random() < 0.9:
+        hsv[:, :, 2] *= random.uniform(0.7, 1.3)    # brightness ±30%
+    img = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
     # Contrast
-    if random.random() < 0.2:
-        alpha = random.uniform(0.85, 1.15)
-        img = cv2.convertScaleAbs(img, alpha=alpha, beta=0)
+    if random.random() < 0.7:
+        alpha = random.uniform(0.7, 1.3)
+        img = cv2.convertScaleAbs(img, alpha=alpha, beta=random.randint(-30, 30))
+    # Resolution variation: occasionally scale down and back up
+    if random.random() < 0.5:
+        scale = random.uniform(0.6, 1.0)
+        h, w = img.shape[:2]
+        small = cv2.resize(img, (int(w*scale), int(h*scale)))
+        img = cv2.resize(small, (w, h))
     return img
 
 
