@@ -1,106 +1,100 @@
-# Status — 2026-06-22
+# Status — 2026-06-23
 
 ## Current State
 
 - **Version:** v0.9.7a release containers published on GHCR.
-- **Status:** Demo infrastructure + CV/OCR pipeline + sidecar + contracts — all verified live. 10/10 demos pass.
-- **Handoff Point:** `main` at `9e91e29`, synced with `origin/main`.
+- **Status:** Demo infrastructure complete, CV/OCR sidecar operational, contracts repo live. PaddleOCR and OmniParser builds pending.
+- **Handoff Point:** `main` at `37b6095`, synced with `origin/main`.
 - **Base Runtime:** `ghcr.io/sempersupra/winebot-base:base-2026-05-04`.
-- **Sidecar:** `winebot-cv:latest` (1.28GB base, 3.35GB w/YOLO) — OpenCV + Tesseract + YOLOv8 + OmniParser weights, port 8001.
-- **Contracts Repo:** [winebot-contracts](https://github.com/mark-e-deyoung/winebot-contracts) — API spec, CLI contract, MCP tools, conformance tests (15/15 pass).
+- **Sidecar:** `winebot-cv:latest` (1.28GB baseline Tesseract) — YOLOv8 + PaddleOCR + OmniParser builds in progress.
+- **Contracts Repo:** [winebot-contracts](https://github.com/mark-e-deyoung/winebot-contracts) — 15/15 conformance tests pass.
 
-## What Worked
+## Completed (Since Last Handoff)
 
-### Demo Infrastructure
-- **`_demo_common.sh`** — 30 shared functions, all 10 demos source it
-- **`demo-cv-control.sh`** — CV-driven control with OCR verification
-- **Desktop cleanup** — `fresh_session()` kills app windows + restarts recording between demos
-- **Download cache** — Python `linux_dl()` caches to `.winebot_cache/`, ~1.6MB saved per download
-- **Video output** — Auto-copied to `demo/output/<name>.mkv/.gif/.vtt` via `stop_recording()`
-- **Session segments** — `smart_trim()` uses `ls -t` for latest video segment
-- **AHK pipe dialog** — `pipe_cmd "open_gui"` replaces Ctrl+S (no Wine dialogs triggered)
+### Session Closeout
+- **STATUS.md** — full handoff with build commands, quick start, next steps
+- **Archive** — `archive/status/STATUS-2026-06-22.md`
+- **Memory** — `session-closeout-2026-06-22.md`
+- Both repos synced and pushed
 
-### CV/OCR Pipeline
-- **Sidecar operational** — `/health`, `/analyze`, `/batch`, `/watch/start`, `/watch/stop`
-- **Swappable backends** — `UI_DETECTOR=contour|yolo|omniparser`, `OCR_BACKEND=tesseract|paddle`
-- **OmniParser YOLO** — 38.7MB icon_detect weights, 11.0 UI elements/frame avg
-- **Tesseract OCR** — CLAHE + bilateral filter + multi-PSM (6,11,3) + confidence 40
-- **CV watcher** — 31-35 frames/demo via sidecar `/watch/start` at 1fps
-- **Batch analysis** — `cv-batch-analyze.py --exit-on-warnings`, CI gate PASS
-- **Timeline merger** — `merge-timeline.py`, 42 sessions merged
-- **Expected-state assertions** — `demo-expect.py`, PASS/FAIL/checkpoint
-- **Evaluation dataset** — 49 frames, 100% element/OCR recall
+### 3D Rendering Divergence — Documented
+- **`docs/known-limitations.md`** — Xvfb constraints expanded (60 lines), game compatibility matrix, SuperTux failure analysis, Alpha Centauri workaround (`DirectDraw=0`), LLVMpipe/virgl/GPU-passthrough options
+- **`contracts/docs/architecture.md`** — 14-row platform differences table, rendering divergence section
+- **`contracts/tests/conformance/`** — `gpu_available` field check
+- **`STATUS.md`** — WineBot vs WinBot rendering section with compatibility matrix
+- Both repos committed and pushed
 
-### CV-Driven Control
-- **`cv_wait "Notepad"`** — found in 1s (vs 3-6s sleep)
-- **`cv_verify_text`** — OCR PASSING via Tesseract
-- **`cv_click`** — YOLO-detected coordinates
-- **7 demos** upgraded with `cv_wait` replacing hardcoded sleeps
+### PaddleOCR + OmniParser Builds — Initiated
+- Both Docker builds started as background processes
+- Need Docker Desktop running to complete
+- Expected artifacts: `winebot-cv:paddle` and `winebot-cv:full` images
 
-### Architecture
-- **Sidecar** — unified CV/OCR container, 4 build tiers
-- **docker-compose.yml** — `winebot-cv` service on port 8001
-- **`requirements-rel.txt`** — dropped opencv + pytesseract (~150MB pip savings)
-- **25/25 diagnostic scripts** tagged with `EXECUTION:` + `STATUS:`
-- **OS credential manager** — `winebot-credential.py`, keyring integration, `winebotctl credential`
+## What Still Needs Running
 
-### All 10 Demos — Live Verified (2026-06-22)
+### 1. Verify Docker Desktop is Running
+```bash
+docker info 2>&1 | head -3
+```
+If it failed overnight, restart and verify containers:
+```bash
+docker ps --filter "name=winebot"
+```
 
-| Demo | Status | Output Size | Cache |
-|:---|:---|:---|:---|
-| `input-pipeline-demo` | PASS | 9.0KB | — |
-| `demo-ci-pipeline` | PASS | 11.4KB | — |
-| `demo-cv-control` | PASS | 8.5KB | — |
-| `demo-7zip` | PASS | 8.7KB | cache hit |
-| `demo-winebox` | PASS | 9.0KB | cache hit |
-| `demo-installer-qa` | PASS | 8.7KB | cache hit |
-| `hook-demo` | PASS | 9.3KB | — |
-| `demo-notepadpp` | PASS | 10.0KB | downloaded |
-| `demo-vlc` | PASS | 9.0KB | downloaded |
-| `demo-supertux` | PASS | 8.8KB | downloaded |
+### 2. Complete PaddleOCR Build
+```bash
+docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv:paddle \
+  --build-arg WITH_PADDLE=1 .
+```
+~500MB download, 10-20 minutes. Check with `docker images winebot-cv:paddle`.
 
-## What Didn't Work / Needs Attention
+### 3. Complete OmniParser Build
+```bash
+docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv:full \
+  --build-arg WITH_YOLO=1 --build-arg WITH_OMNIPARSER=1 .
+```
+~2GB download, 20-40 minutes. Check with `docker images winebot-cv:full`.
 
-| Issue | Impact | Mitigation |
-|:---|:---|:---|
-| **Supertux cv_wait times out** | Game needs **OpenGL 3.3** — Xvfb provides no GPU context | Documented as expected; `cv_wait` falls back to `sleep 8`. 3D games → WinBot |
-| **Xvfb: no GPU rendering** | All 3D apps (OpenGL/D3D) fail in WineBot | **Architectural limitation** — documented in `docs/known-limitations.md` and contracts |
-| **Notepad++ OCR poor** | Dark theme produces low-contrast text for Tesseract | Invert colors or use PaddleOCR |
-| **Installer file checks** | Wine 10.0 installer paths don't match expected | Known Wine limitation, not our code |
-| **PaddleOCR not tested** | Build running (~500MB); comparative benchmark pending | `WITH_PADDLE=1` build arg available, results pending |
-| **OmniParser Florence-2** | Needs GPU, adds 2GB | `WITH_OMNIPARSER=1` build arg available, build queued |
-| **Sidecar `urllib` needs `host.docker.internal`** | Docker Desktop DNS quirk | `fresh_session` translates `localhost` to `host.docker.internal` |
-| **CV watcher @ 1fps** | Misses fast dialog transitions | Acceptable — raise fps if needed |
+### 4. Run Comparative Benchmarks (Task #81)
+Once both images exist:
+```bash
+# Start sidecar with PaddleOCR
+docker rm -f winebot-cv 2>/dev/null
+docker run -d --name winebot-cv -p 8001:8001 \
+  -e OCR_BACKEND=paddle \
+  -v ./artifacts:/artifacts -v ./demo/output:/demo-output:ro \
+  winebot-cv:paddle
 
-## WineBot vs WinBot — Rendering Divergence
+# Test both OCR backends on same frame
+FRAME="/demo-output/analysis/core-pipeline/frames/frame_0040.png"
+curl -s -X POST http://localhost:8001/analyze -d "{\"image_path\":\"$FRAME\"}" | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); print(f'OCR: {d[\"ocr_regions\"]} regions')"
 
-This is the **single largest architectural difference** between the two platforms.
+# Record results, then restart with full image for OmniParser test
+# Compare: Tesseract vs PaddleOCR (OCR quality, regions found, text accuracy)
+# Compare: Contour vs YOLO vs OmniParser (UI elements detected, types, confidence)
+```
 
-| Aspect | WineBot | WinBot |
-|:---|:---|:---|
-| Display | Xvfb `:99` (software framebuffer) | Native Windows display |
-| GPU | **None** — no OpenGL, no D3D, no Vulkan | Full GPU with DirectX/Vulkan |
-| 2D apps (Notepad, cmd, regedit) | ✅ Full compatibility | ✅ Full compatibility |
-| 2D DirectDraw games | ✅ with `DirectDraw=0` (GDI fallback) | ✅ Native DirectDraw |
-| Alpha Centauri | ✅ with `DirectDraw=0` in .ini | ✅ Native |
-| SuperTux / 3D games | ❌ No GL context available | ✅ Native OpenGL |
-| CAD / 3D modeling | ❌ No GPU | ✅ Native GPU |
+### 5. Run SuperTux with Direct3D GDI Renderer (Task #78 follow-up)
+```bash
+docker exec winebot-interactive sh -c "
+  wine reg add 'HKCU\\Software\\Wine\\Direct3D' /v renderer /t REG_SZ /d gdi /f
+"
+```
+Then re-run `demo-supertux.sh` and check if `cv_wait` succeeds.
 
-Documented in:
-- `docs/known-limitations.md` §22 — full Xvfb constraints and game compatibility matrix
-- `docs/contracts/architecture.md` — platform differences table
-- Contracts `tests/conformance/` — `gpu_available` field check added
+### 6. Test Game Compatibility
+- **Alpha Centauri:** Expected to work with `DirectDraw=0` in `.ini`. Download SMAC, configure, launch via `/apps/run`, test `cv_wait` for menu screens.
+- **Document results** in `docs/known-limitations.md` §22 game table.
 
-## CI Gates
+## All CI Gates
 
 | Gate | Status |
 |:---|:---|
 | bash -n (all scripts) | 12/12 pass |
 | py_compile (all tools) | 14/14 pass |
-| cv-batch-analyze --exit-on-warnings | 10/10 clean, 98 frames, 0 warnings |
-| eval dataset recall | 100% element, 100% OCR |
+| cv-batch-analyze --exit-on-warnings | 10/10 clean |
 | conformance tests | 15/15 pass |
-| security audit | CLEAN — no paths, no tokens, no credentials in source |
+| security audit | CLEAN |
 
 ## GitHub Issues
 
@@ -115,62 +109,3 @@ Documented in:
 | 55 | Trace explorer dashboard | Open |
 | 56 | Wine UIA support for pywinauto | Open |
 | 57 | Add LICENSE file | Open |
-
-## Memory Files Written
-
-- `memory/demo-refactoring.md` — Shared library + 9 demos refactored
-- `memory/cv-ocr-pipeline.md` — CV/OCR built and tested
-- `memory/game-ui-automation.md` — Alpha Centauri strategy for reverse-smac
-- `memory/security-credential-manager.md` — Security audit + OS credential store
-
-## Sidecar Build Commands
-
-```bash
-# Baseline (OpenCV + Tesseract)
-docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv .
-
-# Full (YOLOv8 + OmniParser)
-docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv --build-arg WITH_YOLO=1 .
-
-# With PaddleOCR
-docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv --build-arg WITH_PADDLE=1 .
-
-# Everything
-docker build -f docker/Dockerfile.cv-analyzer -t winebot-cv --build-arg WITH_YOLO=1 --build-arg WITH_PADDLE=1 --build-arg WITH_OMNIPARSER=1 .
-```
-
-## Demo Quick Start
-
-```bash
-# Start WineBot + Sidecar
-docker run -d --name winebot-interactive -p 8000:8000 \
-  -e MODE=interactive -e ENABLE_API=1 -e API_TOKEN=xxx \
-  -e WINEBOT_RECORD=1 \
-  -v wineprefix:/wineprefix \
-  winebot:local-rel
-
-docker run -d --name winebot-cv -p 8001:8001 \
-  -e UI_DETECTOR=yolo -e OCR_BACKEND=tesseract \
-  -v ./models/yolo:/models:ro \
-  -v ./artifacts:/artifacts \
-  winebot-cv:latest
-
-# Run all demos
-export API_TOKEN=xxx WB_CONTAINER=winebot-interactive CV_SIDECAR_URL=http://localhost:8001
-for d in demo/scripts/demo-*.sh demo/scripts/input-pipeline-demo.sh demo/scripts/hook-demo.sh; do bash "$d"; done
-
-# Analyze results
-python scripts/diagnostics/cv-batch-analyze.py --input demo/output/ --exit-on-warnings
-python scripts/diagnostics/merge-timeline.py --session-dir artifacts/sessions/<latest>
-python scripts/diagnostics/demo-expect.py --session-dir artifacts/sessions/<latest>
-```
-
-## Next Steps
-
-1. **Open issues #54-57** — Pipeline health, trace dashboard, UIA support, license
-2. **Reverse-smac project** — Apply WineBot CV infrastructure to Alpha Centauri automation
-3. **PaddleOCR testing** — Build with `WITH_PADDLE=1`, compare OCR quality vs Tesseract
-4. **OmniParser functional captions** — Build with `WITH_OMNIPARSER=1`, test Florence-2
-5. **Transfer contracts repo** to SemperSupra org for shared ownership
-6. **WinBot conformance** — Run contracts conformance tests against WinBot
-7. **Session retention** — Clean old sessions from `artifacts/sessions/` (66 sessions)
