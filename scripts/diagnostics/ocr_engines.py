@@ -66,6 +66,25 @@ class TesseractEngine(OCREngine):
             return []
 
         import pytesseract
+
+        # FAST mode: single PSM pass without preprocessing.
+        # PSM 11 = sparse text — best for scattered UI labels, buttons, menus.
+        # Saves 3x vs the 3-PSM pipeline. Enable with OCR_FAST=1.
+        fast = os.environ.get("OCR_FAST", "0") == "1"
+
+        if fast:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            try:
+                data = pytesseract.image_to_data(
+                    gray, output_type=pytesseract.Output.DICT,
+                    config="--psm 11"
+                )
+                return self._merge_ocr_results([data])
+            except Exception as e:
+                print(f"[tesseract] Fast OCR error: {e}", file=sys.stderr)
+                return []
+
+        # QUALITY mode (default): CLAHE + bilateral + multi-PSM
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         # Wine desktop preprocessing: enhance low-contrast UI text
