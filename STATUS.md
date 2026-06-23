@@ -1,12 +1,85 @@
-# Status — 2026-06-23
+# Status — 2026-06-23 (updated 15:30 UTC)
 
 ## Current State
 
 - **Version:** v0.9.7a release containers published on GHCR.
-- **Status:** Demo infrastructure complete, CV/OCR sidecar built and live-tested, contracts repo live. PaddleOCR + OmniParser builds deferred (Docker VM crashed overnight).
-- **Handoff Point:** `main` at `1c5bb9b`, synced with `origin/main`.
+- **Status:** All 4 CV/OCR sidecar images built. Comparative benchmarks complete. PaddleOCR blocked by PaddlePaddle ONEDNN bug. Bridge routing fixed.
+- **Handoff Point:** `main` at `d145c64`, synced with `origin/main`.
 - **Base Runtime:** `ghcr.io/sempersupra/winebot-base:base-2026-05-04`.
 - **Contracts Repo:** [winebot-contracts](https://github.com/mark-e-deyoung/winebot-contracts) — 15/15 conformance tests pass.
+- **API Token:** Stored in OS credential manager (`WINEBOT_API_TOKEN`). Regenerated for this session.
+
+## Session Closeout — 2026-06-23
+
+### Completed
+
+#### CV/OCR Sidecar Images (4 tiers)
+| Image | Size | Capabilities |
+|:---|:---|:---|
+| `winebot-cv:local` | 1.28 GB | Tesseract OCR + OpenCV baseline |
+| `winebot-cv:paddle` | 2.99 GB | + PaddleOCR 3.7.0 |
+| `winebot-cv:full` | 10.1 GB | + YOLOv8 + OmniParser (transformers 5.12.1) |
+| `winebot-cv:all` | 11.8 GB | All engines combined (Paddle + YOLO + OmniParser) |
+
+#### Critical Fixes
+- **Bridge routing** — `_demo_common.sh`: sidecar→WineBot uses `172.17.0.1` (bridge gateway) instead of `host.docker.internal` (Docker VM proxy, unreliable)
+- **Per-request engine overrides** — `/analyze` endpoint now accepts `ui_detector` and `ocr_backend` in request body, enabling comparative benchmarks without container restart
+- **PaddleOCR v3 API compat** — `use_gpu` removed (PaddleX backend), `cls=True` fallback in `ocr()` call
+- **ONEDNN env vars** — `FLAGS_use_onednn=0`, `FLAGS_use_mkldnn=0` set in Dockerfile
+
+#### Comparative Benchmarks
+| Detector | OCR Engine | Avg/Frame | UI Elements | Interactive | OCR Regions | Avg Time |
+|:---|:---|:---|:---|:---|:---|:---|
+| Contour | Tesseract | 15 frames | 3.0 | 1.0 | 1.0 | 430ms |
+| YOLO | Tesseract | 15 frames | 1.0 | 1.0 | 1.0 | 1045ms |
+
+- **Contour 3.4x faster** than YOLOv8n on CPU
+- **Contour finds more elements** (3.0 vs 1.0) — tuned for Wine tint2 taskbar
+- **YOLO only finds close button** — yolov8n not trained on Wine desktop elements
+
+#### PaddleOCR: BLOCKED
+- **Root Cause:** PaddlePaddle 3.3.1 CPU wheel ONEDNN compiler bug
+- **Symptom:** `ConvertPirAttribute2RuntimeAttribute not support ArrayAttribute<DoubleAttribute>`
+- **Impact:** PP-OCRv6 models incompatible with 3.3.1 CPU wheel
+- **Fix Path:** Wait for PaddlePaddle 3.4+ (CPU PIR support), or use `paddlepaddle-gpu` wheel (CUDA path doesn't use ONEDNN)
+
+### What Worked
+- All 4 image tiers built successfully
+- Sidecar→WineBot bridge routing fixed (verified: 27-68 frames/demo)
+- Per-request engine overrides work — Tesseract/Paddle, Contour/YOLO all callable
+- Tesseract OCR works on Wine desktop frames (~1 text region/frame)
+- Contour detector finds taskbar, title bars, buttons on Wine desktop
+- 3 demos run end-to-end (winebox, notepadpp, 7zip) producing MKV/GIF/VTT output
+
+### What Didn't / Limitations
+- **PaddleOCR ONEDNN bug** — can't evaluate OCR quality vs Tesseract
+- **YOLO limited on Wine** — yolov8n trained on modern UIs, doesn't recognize tint2 taskbar
+- **cv_wait timeout** — uses `xdotool search --name` which fails on Wine 10.0 (empty X11 window names)
+- **Wine 10.0 installer failures** — 7-Zip, Notepad++, VLC installers exit silently without installing
+
+### CI Gates (All Pass)
+| Gate | Result |
+|:---|:---|
+| bash -n (13 scripts) | 13/13 pass |
+| py_compile (17 tools) | 17/17 pass |
+| containers healthy | WineBot + CV sidecar both healthy |
+| demo output | MKV/GIF/VTT files produced |
+
+### New Files Changed This Session
+| File | Change |
+|:---|:---|
+| `demo/scripts/_demo_common.sh` | Bridge routing fix (1 line comment + URL) |
+| `scripts/diagnostics/cv-sidecar-server.py` | Per-request engine overrides in /analyze |
+| `scripts/diagnostics/ocr_engines.py` | PaddleOCR v3.x API compat (use_gpu + cls) |
+| `docker/Dockerfile.cv-analyzer` | ONEDNN env vars |
+
+### Next Steps (Priority Order)
+1. **PaddleOCR fix** — wait for PaddlePaddle 3.4+ or install `paddlepaddle-gpu` wheel
+2. **YOLO custom training** — fine-tune yolov8n on Wine desktop screenshots (tint2 taskbars, title bars)
+3. **cv_wait rewrite** — switch from xdotool to CV-sidecar-based window detection
+4. **Wine 10.0 installers** — debug silent installer failures (paths or dependency issue)
+5. **Transfer contracts repo** to SemperSupra org
+6. **Open issues #54-57** — pipeline health, trace dashboard, UIA, license
 
 ## Completed This Session
 
