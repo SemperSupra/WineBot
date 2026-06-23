@@ -19,15 +19,14 @@
 | `e456acb` | GPU Dockerfile (`winebot-cv:gpu`) — nvidia/cuda 12.6.3 + RTX 3090 |
 | `a567399` | Benchmark harness (dataset generator, runner, report) |
 
-### CV/OCR Sidecar Images
+### Container Images (Minimal Set)
 
-| Image | Size | Base | Key Software | Status |
+| Image | Size | Base | Key Software | Role |
 |:---|:---|:---|:---|:---|
-| `winebot-cv:gpu` | 14 GB | nvidia/cuda:12.6.3 | PyTorch 2.12.1+cu130, YOLO 8.4.75, Transformers 5.12.1, Tesseract 5.3.4 | ✅ GPU verified |
-| `winebot-cv:all` | 11.8 GB | python:3.12-slim | Same + PaddleOCR 3.7 (CPU, ONEDNN bugged) | ⚠️ Paddle blocked |
-| `winebot-cv:full` | 10.1 GB | python:3.12-slim | YOLO + OmniParser (no Paddle) | ✅ |
-| `winebot-cv:paddle` | 2.99 GB | python:3.12-slim | PaddleOCR only | ⚠️ ONEDNN bug |
-| `winebot-cv:local` | 1.28 GB | python:3.12-slim | Tesseract baseline | ✅ |
+| `winebot:local-rel` | 5.9 GB | Debian Trixie (pre-built base) | Wine 10.0, Xvfb, FastAPI :8000 | Wine desktop + API |
+| `winebot-cv:gpu` | 14 GB | nvidia/cuda:12.6.3 | PyTorch 2.12.1+cu130, YOLO 8.4.75, Transformers 5.12.1, Tesseract 5.3.4 | CV/OCR GPU sidecar :8001 |
+
+**Total: 2 images, ~20 GB.** All tiered CPU variants (`local`, `paddle`, `full`, `all`, `latest`) removed — superseded by single GPU image with per-request engine overrides.
 
 ### GPU Acceleration (RTX 3090)
 
@@ -163,12 +162,9 @@ bash demo/scripts/demo-winebox.sh
 
 ## Docker Images on Disk
 
-| Repository | Tag | Size | Keep? |
-|:---|:---|:---|:---|
-| `winebot-cv` | `gpu` | 14 GB | ✅ Primary GPU image |
-| `winebot-cv` | `all` | 11.8 GB | ⚠️ CPU-only, superseded by gpu |
-| `winebot-cv` | `full` | 10.1 GB | ❌ Remove |
-| `winebot-cv` | `paddle` | 2.99 GB | ❌ Remove (blocked) |
-| `winebot-cv` | `local` | 1.28 GB | ⚠️ Keep as minimal baseline |
-| `winebot-cv` | `latest` | 9.91 GB | ❌ Remove |
-| `winebot` | `local-rel` | 5.9 GB | ✅ Primary WineBot image |
+| Repository | Tag | Size |
+|:---|:---|:---|
+| `winebot-cv` | `gpu` | 14 GB |
+| `winebot` | `local-rel` | 5.9 GB |
+
+**Total: 19.9 GB.** All tiered CPU sidecar variants removed (`local`, `paddle`, `full`, `all`, `latest`).

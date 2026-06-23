@@ -1,3 +1,7 @@
+# SUPERSEDED by Dockerfile.cv-analyzer-gpu — single GPU-accelerated image.
+# Retained for CPU-only fallback if needed. To build the primary image:
+#   docker build -f docker/Dockerfile.cv-analyzer-gpu -t winebot-cv:gpu .
+
 FROM python:3.12-slim
 
 # ── System dependencies ──────────────────────────────────────────────────────
