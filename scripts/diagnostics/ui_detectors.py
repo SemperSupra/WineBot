@@ -62,6 +62,30 @@ class UIDetector:
     available: bool = False
     uses_gpu: bool = False
 
+    def _move_model_to_gpu(self):
+        """Move a YOLO or torch model to GPU if available. Called by subclasses after loading."""
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return
+            # Try different model attribute layouts
+            for attr in ['model', '_model']:
+                m = getattr(self, attr, None)
+                if m is None:
+                    continue
+                # YOLO model — has .to() method directly
+                if hasattr(m, 'to') and not hasattr(m, 'model'):
+                    device = next(m.model.parameters()).device
+                    if str(device) == "cpu":
+                        m.to("cuda")
+                # Ultralytics DetectionModel wrapper
+                elif hasattr(m, 'model') and hasattr(m.model, 'parameters'):
+                    device = next(m.model.parameters()).device
+                    if str(device) == "cpu":
+                        m.model.to("cuda")
+        except Exception:
+            pass
+
     def detect(self, image: np.ndarray) -> List[Dict]:
         """Detect UI elements in a screenshot.
 
@@ -215,17 +239,13 @@ class YOLOUIDetector(UIDetector):
 
         from ultralytics import YOLO
 
-        # Priority: OmniParser trained weights > local cache > env var > COCO fallback
+        # Priority: shared model cache > project-local > env var > COCO fallback
         model_paths = [
-            # 1. OmniParser v2 icon_detect weights — purpose-built for UI
-            os.path.join(
-                os.path.dirname(__file__), "..", "..",
-                "models", "yolo", "omniparser_icon_detect.pt"
-            ),
-            "/models/omniparser_icon_detect.pt",
-            # 2. Any model via env var
+            "/models/yolo/omniparser_icon_detect.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "yolo", "omniparser_icon_detect.pt"),
             os.environ.get("YOLO_MODEL_PATH", ""),
-            "/models/yolov8n.pt",
+            "/models/yolo/yolov8n.pt",
         ]
 
         for p in model_paths:
@@ -233,6 +253,8 @@ class YOLOUIDetector(UIDetector):
                 continue
             try:
                 self._model = YOLO(p)
+                # Force GPU if available (ultralytics doesn't always auto-detect)
+                self._move_model_to_gpu()
                 print(f"[yolo] Loaded from {p} (device: {self._model.device})", file=sys.stderr)
                 if "cuda" in str(self._model.device):
                     self.uses_gpu = True
@@ -249,6 +271,7 @@ class YOLOUIDetector(UIDetector):
             print("[yolo] No UI weights found, using yolov8n (COCO — "
                   "limited UI value)", file=sys.stderr)
             self._model = YOLO("yolov8n.pt")
+            self._ensure_gpu()
             return self._model
         except Exception as e:
             print(f"[yolo] Failed: {e}", file=sys.stderr)
@@ -545,37 +568,39 @@ class UIDETR1Detector(UIDetector):
         if self._model is not None:
             return self._model
 
-        try:
-            from rfdetr import RFDETRBase
+        # Priority: shared model cache > project-local > env var
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            self._model = RFDETRBase(
-                device="cuda" if self._has_cuda() else "cpu",
-                model_name="racineai/UI-DETR-1",
-            )
-            print(f"[uidetr1] Loaded UI-DETR-1 from racineai/UI-DETR-1", file=sys.stderr)
-            self.uses_gpu = self._has_cuda()
-            return self._model
+        checkpoint_paths = [
+            os.path.join("/models", "uidetr1", "model.pth"),
+            os.environ.get("UIDETR1_MODEL_PATH", ""),
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "uidetr1", "model.pth"),
+        ]
 
-        except Exception as e:
-            # Fallback: try loading from local path
-            print(f"[uidetr1] HF load failed ({e}), trying local...", file=sys.stderr)
+        for ckpt in checkpoint_paths:
+            if not ckpt or not os.path.isfile(ckpt):
+                continue
             try:
-                from rfdetr import RFDETRBase
-                local_path = os.environ.get(
-                    "UIDETR1_MODEL_PATH",
-                    os.path.join(os.path.dirname(__file__), "..", "..", "models", "uidetr1")
-                )
-                if os.path.isdir(local_path):
-                    self._model = RFDETRBase(
-                        device="cuda" if self._has_cuda() else "cpu",
-                        model_name=local_path,
-                    )
-                    print(f"[uidetr1] Loaded from {local_path}", file=sys.stderr)
-                    self.uses_gpu = self._has_cuda()
-                    return self._model
-            except Exception as e2:
-                print(f"[uidetr1] Local load also failed: {e2}", file=sys.stderr)
+                from rfdetr import RFDETR
 
+                self._model = RFDETR.from_checkpoint(ckpt)
+                self._model.optimize_for_inference()
+                if device == "cuda":
+                    try:
+                        self._model.model.to("cuda")
+                    except Exception:
+                        pass  # RFDETR ModelContext doesn't always expose .to()
+                self.uses_gpu = device == "cuda"
+                print(f"[uidetr1] Loaded from {ckpt} (device: {device})", file=sys.stderr)
+                return self._model
+            except Exception as e:
+                print(f"[uidetr1] Failed to load {ckpt}: {e}", file=sys.stderr)
+
+        print("[uidetr1] No checkpoint found. Download with: "
+              "hf_hub_download('racineai/UI-DETR-1', 'model.pth', "
+              "local_dir='models/uidetr1')", file=sys.stderr)
         self.available = False
         return None
 
@@ -597,11 +622,19 @@ class UIDETR1Detector(UIDetector):
             print(f"[uidetr1] Detection error: {e}", file=sys.stderr)
             return []
 
+        # supervision.Detections object: .xyxy, .confidence, .class_id, .data
         elements = []
-        for i, det in enumerate(detections):
-            x1, y1, x2, y2 = det.get("bbox", [0, 0, 0, 0])
-            conf = det.get("confidence", 0)
-            label = det.get("label", "interactable")
+        n = len(detections) if hasattr(detections, '__len__') else 0
+        if n == 0:
+            return []
+
+        class_names = detections.data.get("class_name", []) if hasattr(detections, 'data') else []
+
+        for i in range(n):
+            x1, y1, x2, y2 = detections.xyxy[i].tolist()
+            conf = float(detections.confidence[i])
+            cls_id = int(detections.class_id[i])
+            label = class_names[cls_id] if cls_id < len(class_names) else f"class_{cls_id}"
 
             bbox = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
             elem_type = self._classify_ui_type(label, bbox, image.shape)
@@ -611,8 +644,8 @@ class UIDETR1Detector(UIDetector):
                 "bbox": bbox,
                 "type": elem_type,
                 "label": label,
-                "confidence": round(float(conf), 3),
-                "interactive": True,  # UI-DETR-1 only returns interactable elements
+                "confidence": round(conf, 3),
+                "interactive": True,
             })
 
         return elements
@@ -705,37 +738,41 @@ class ScreenParserDetector(UIDetector):
 
         from ultralytics import YOLO
 
-        # Priority: local weights > HuggingFace download
-        model_paths = [
-            os.environ.get(
-                "SCREENPARSER_MODEL_PATH",
-                os.path.join(os.path.dirname(__file__), "..", "..",
-                             "models", "screenparser", "screenparser.pt")
-            ),
+        # Priority: shared model cache > project-local > env var > HF download
+        checkpoint_paths = [
+            "/models/screenparser/best.pt",
+            os.environ.get("SCREENPARSER_MODEL_PATH", ""),
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "screenparser", "best.pt"),
         ]
 
-        for p in model_paths:
-            if p and os.path.isfile(p):
-                try:
-                    self._model = YOLO(p)
-                    print(f"[screenparser] Loaded from {p}", file=sys.stderr)
-                    if "cuda" in str(self._model.device):
-                        self.uses_gpu = True
-                    return self._model
-                except Exception as e:
-                    print(f"[screenparser] Failed to load {p}: {e}", file=sys.stderr)
+        for p in checkpoint_paths:
+            if not p or not os.path.isfile(p):
+                continue
+            try:
+                self._model = YOLO(p)
+                self._move_model_to_gpu()
+                print(f"[screenparser] Loaded from {p} (device: {self._model.device})", file=sys.stderr)
+                if "cuda" in str(self._model.device):
+                    self.uses_gpu = True
+                # Log class summary
+                if hasattr(self._model, 'names'):
+                    classes = list(self._model.names.values())[:10]
+                    print(f"[screenparser] {len(self._model.names)} classes: {classes}...", file=sys.stderr)
+                return self._model
+            except Exception as e:
+                print(f"[screenparser] Failed to load {p}: {e}", file=sys.stderr)
 
-        # Try HuggingFace auto-download
+        # Fallback: download from HuggingFace
         try:
             from huggingface_hub import hf_hub_download
             model_file = hf_hub_download(
                 repo_id="docling-project/ScreenParser",
-                filename="screenparser.pt",
-                local_dir=os.path.join(
-                    os.path.dirname(__file__), "..", "..", "models", "screenparser"
-                ),
+                filename="best.pt",
+                local_dir="/models/screenparser",
             )
             self._model = YOLO(model_file)
+            self._ensure_screenparser_gpu()
             print(f"[screenparser] Downloaded from HF: {model_file}", file=sys.stderr)
             if "cuda" in str(self._model.device):
                 self.uses_gpu = True

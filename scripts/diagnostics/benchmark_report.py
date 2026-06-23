@@ -40,9 +40,9 @@ def _sig_diff(a: dict, b: dict) -> str:
     a_lo, a_hi = a.get("ci95_low", 0), a.get("ci95_high", 0)
     b_lo, b_hi = b.get("ci95_low", 0), b.get("ci95_high", 0)
     if a_hi < b_lo:
-        return "SIG faster"
-    elif b_hi < a_lo:
         return "SIG slower"
+    elif b_hi < a_lo:
+        return "SIG faster"
     return "~ within noise"
 
 
