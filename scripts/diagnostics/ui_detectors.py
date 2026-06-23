@@ -831,6 +831,105 @@ class ScreenParserDetector(UIDetector):
         return elements
 
 
+# ── Wine-FineTuned Detector ───────────────────────────────────────────────────
+
+class WineUIDetector(YOLOUIDetector):
+    """Wine-specific fine-tuned YOLO detector — 22 classes, 8 framework themes.
+
+    Trained on 1805 synthetic Wine desktop images with 8 UI framework themes
+    (win32, win10, Qt, Gtk, Java, Tk, Electron, Win95). Achieves mAP50=0.993,
+    mAP50-95=0.912 on Wine desktop elements.
+
+    Overrides YOLOUIDetector's model loading to use the fine-tuned weights
+    from the shared model cache.
+    """
+
+    name = "wine"
+    available = False
+    uses_gpu = False
+
+    def __init__(self):
+        try:
+            from ultralytics import YOLO  # noqa: F401
+            self.available = True
+        except ImportError:
+            self.available = False
+        self._model = None
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+
+        from ultralytics import YOLO
+
+        # Priority: shared cache > project-local
+        paths = [
+            "/models/yolo/wine-finetuned.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "yolo", "wine-finetuned.pt"),
+        ]
+        for p in paths:
+            if os.path.isfile(p):
+                try:
+                    self._model = YOLO(p)
+                    self._move_model_to_gpu()
+                    print(f"[wine] Loaded fine-tuned model from {p} "
+                          f"(device: {self._model.device})", file=sys.stderr)
+                    if "cuda" in str(self._model.device):
+                        self.uses_gpu = True
+                    return self._model
+                except Exception as e:
+                    print(f"[wine] Failed to load {p}: {e}", file=sys.stderr)
+
+        print("[wine] No fine-tuned model found. Train with: "
+              "fine_tune_detector.py --data .../data.yaml", file=sys.stderr)
+        self.available = False
+        return None
+
+    def detect(self, image: np.ndarray) -> List[Dict]:
+        """Detect Wine-specific UI elements using fine-tuned YOLO."""
+        model = self._load_model()
+        if model is None:
+            return []
+
+        # Wine desktop elements are well-defined — higher confidence threshold
+        # than OmniParser (which uses 0.15 for vague icons)
+        try:
+            dets = model(image, verbose=False, conf=0.35, iou=0.45)
+        except Exception as e:
+            print(f"[wine] Detection error: {e}", file=sys.stderr)
+            return []
+
+        elements = []
+        element_id = 0
+        for det in dets:
+            boxes = det.boxes
+            if boxes is None or len(boxes) == 0:
+                continue
+            for i in range(len(boxes)):
+                cls_id = int(boxes.cls[i])
+                cls_name = det.names.get(cls_id, f"class_{cls_id}")
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                conf = float(boxes.conf[i])
+                bbox = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+
+                elem_type = cls_name  # Fine-tuned classes ARE the UI type
+                interactive = elem_type in (
+                    "button", "text_field", "dropdown", "checkbox",
+                    "radio", "menu_bar", "menu_item", "close_button",
+                    "scrollbar", "tab", "link", "list_item",
+                    "spinner_button", "toolbar",
+                )
+                elements.append({
+                    "id": element_id, "bbox": bbox,
+                    "type": elem_type, "label": cls_name,
+                    "confidence": round(conf, 3),
+                    "interactive": interactive,
+                })
+                element_id += 1
+        return elements
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 _ui_detector: Optional[UIDetector] = None
@@ -874,6 +973,12 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
             print(f"[ui] ScreenParser requested but not available, "
                   f"falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
+    elif backend == "wine":
+        _ui_detector = WineUIDetector()
+        if not _ui_detector.available:
+            print(f"[ui] Wine fine-tuned requested but not available, "
+                  f"falling back to contour", file=sys.stderr)
+            _ui_detector = ContourDetector()
     else:
         _ui_detector = ContourDetector()
 
@@ -888,6 +993,7 @@ def available_detectors() -> Dict[str, bool]:
         "omniparser": OmniParserDetector().available,
         "uidetr1": UIDETR1Detector().available,
         "screenparser": ScreenParserDetector().available,
+        "wine": WineUIDetector().available,
     }
 
 
