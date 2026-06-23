@@ -101,6 +101,8 @@ COPY scripts/diagnostics/merge-timeline.py /scripts/merge-timeline.py
 COPY scripts/diagnostics/cv-batch-analyze.py /scripts/cv-batch-analyze.py
 COPY scripts/diagnostics/benchmark_runner.py /scripts/benchmark_runner.py
 COPY scripts/diagnostics/benchmark_dataset.py /scripts/benchmark_dataset.py
+COPY scripts/diagnostics/winebot-gt-generator.py /scripts/winebot-gt-generator.py
+COPY scripts/diagnostics/fine_tune_detector.py /scripts/fine_tune_detector.py
 COPY scripts/diagnostics/benchmark_report.py /scripts/benchmark_report.py
 
 WORKDIR /work
