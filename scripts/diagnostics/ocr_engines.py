@@ -292,20 +292,22 @@ class PaddleOCREngine(OCREngine):
 class PaddleOCRONNXEngine(OCREngine):
     """PaddleOCR via ONNX Runtime. Bypasses the ONEDNN CPU bug.
 
-    Requires exported ONNX models from PP-OCRv5 (detection + recognition).
-    Place models in models/ocr/ or set PADDLE_ONNX_DIR env var.
+    Auto-detects PP-OCRv6 models (tiny/small/medium) and falls back to v5.
+    Supports variant selection via constructor or PADDLE_ONNX_VARIANT env var.
 
-    Falls back to Tesseract if ONNX models are not available.
-    Provides a download script to export from a PaddleOCR-capable environment.
+    Variant sizes: tiny (1.8+4.5MB, 97ms), small (10+21MB, 150ms),
+                  medium (62+77MB, 200ms).
     """
 
     name = "paddle_onnx"
     available = False
 
-    def __init__(self):
+    def __init__(self, variant: str = None):
         self._session_det = None
         self._session_rec = None
         self._char_dict = None
+        self._variant = variant
+        self._model_variant = "unknown"
 
         try:
             import onnxruntime as ort
@@ -339,15 +341,40 @@ class PaddleOCRONNXEngine(OCREngine):
         return None
 
     def _load_models(self):
-        """Load ONNX detection and recognition models."""
+        """Load ONNX detection and recognition models. Respects variant override."""
         try:
-            det_path = self._find_model("ppocr_det.onnx")
-            rec_path = self._find_model("ppocr_rec.onnx")
-            dict_path = self._find_model("ppocr_keys_v1.txt")
+            # Priority: explicit variant > env var > auto (tiny > small > medium > v5)
+            variant = self._variant
+            if not variant:
+                variant = os.environ.get("PADDLE_ONNX_VARIANT", "")
+            if not variant:
+                variant = None
+
+            if variant:
+                variants_to_try = [variant]
+            else:
+                variants_to_try = ["tiny", "small", "medium"]
+
+            for variant in variants_to_try:
+                # Map variant names to file prefixes (medium → med)
+                prefix_map = {"medium": "med", "small": "small", "tiny": "tiny"}
+                prefix = prefix_map.get(variant, variant)
+                det_path = self._find_model(f"ppocr_v6_{prefix}_det.onnx")
+                rec_path = self._find_model(f"ppocr_v6_{prefix}_rec.onnx")
+                dict_path = self._find_model(f"ppocr_v6_{variant}_rec.yml")
+                if det_path and rec_path:
+                    self._model_variant = variant
+                    break
+            else:
+                # Fallback to v5 models
+                det_path = self._find_model("ppocr_det.onnx")
+                rec_path = self._find_model("ppocr_rec.onnx")
+                dict_path = self._find_model("ppocr_keys_v1.txt")
+                self._model_variant = "v5"
 
             if not det_path or not rec_path:
                 print("[paddle_onnx] ONNX models not found. "
-                      "Export from PaddleOCR: paddle2onnx --model_dir=...", file=sys.stderr)
+                      "Download from HF: PaddlePaddle/PP-OCRv6_*_onnx", file=sys.stderr)
                 self.available = False
                 return
 
@@ -385,7 +412,10 @@ class PaddleOCRONNXEngine(OCREngine):
 
             self.available = True
             providers_used = self._session_det.get_providers()
-            print(f"[paddle_onnx] Models loaded (providers: {providers_used})", file=sys.stderr)
+            print(f"[paddle_onnx] PP-OCRv6 {self._model_variant} loaded "
+                  f"(det: {os.path.basename(det_path)}, "
+                  f"rec: {os.path.basename(rec_path)}, "
+                  f"providers: {providers_used})", file=sys.stderr)
 
         except Exception as e:
             print(f"[paddle_onnx] Failed to load models: {e}", file=sys.stderr)
@@ -569,14 +599,19 @@ def get_ocr_engine(backend: Optional[str] = None) -> OCREngine:
     if backend is None:
         backend = os.environ.get("OCR_BACKEND", "tesseract").lower()
 
-    # Return cached engine if backend hasn't changed
-    if _ocr_engine is not None and _ocr_engine.name == backend:
+    # Return cached engine if backend hasn't changed (including variant suffix)
+    engine_key = backend or os.environ.get("OCR_BACKEND", "tesseract").lower()
+    if _ocr_engine is not None and getattr(_ocr_engine, '_engine_key', '') == engine_key:
         return _ocr_engine
 
     if backend == "paddle" or backend == "paddleocr":
         _ocr_engine = PaddleOCREngine()
     elif backend == "paddle_onnx" or backend == "onnx":
         _ocr_engine = PaddleOCRONNXEngine()
+    elif backend and backend.startswith("paddle_onnx:"):
+        # Variant override: paddle_onnx:tiny, paddle_onnx:small, paddle_onnx:medium
+        variant = backend.split(":", 1)[1]
+        _ocr_engine = PaddleOCRONNXEngine(variant=variant)
     else:
         _ocr_engine = TesseractEngine()
 
@@ -585,16 +620,24 @@ def get_ocr_engine(backend: Optional[str] = None) -> OCREngine:
               f"falling back to tesseract", file=sys.stderr)
         _ocr_engine = TesseractEngine()
 
+    # Tag engine with the key used for caching decisions
+    _ocr_engine._engine_key = engine_key
     return _ocr_engine
 
 
 def available_backends() -> Dict[str, bool]:
     """Return dict of backend name -> available."""
-    return {
+    backends = {
         "tesseract": TesseractEngine().available,
         "paddleocr": PaddleOCREngine().available,
         "paddle_onnx": PaddleOCRONNXEngine().available,
     }
+    # Add v6 variants if available
+    for v in ["tiny", "small", "medium"]:
+        e = PaddleOCRONNXEngine(variant=v)
+        if e.available:
+            backends[f"paddle_onnx:{v}"] = True
+    return backends
 
 
 def current_backend() -> str:

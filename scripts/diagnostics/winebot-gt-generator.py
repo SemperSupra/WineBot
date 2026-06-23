@@ -192,6 +192,59 @@ class GeneratedPage:
     ground_truth_texts: List[Dict] = field(default_factory=list)
 
 
+# Font face randomization for cross-rendering robustness
+AVAILABLE_FONTS = [
+    cv2.FONT_HERSHEY_SIMPLEX,
+    cv2.FONT_HERSHEY_DUPLEX,
+    cv2.FONT_HERSHEY_COMPLEX,
+    cv2.FONT_HERSHEY_COMPLEX_SMALL,
+    cv2.FONT_HERSHEY_TRIPLEX,
+]
+
+def get_font():
+    """Random font face with scale/thickness jitter."""
+    font = random.choice(AVAILABLE_FONTS)
+    scale = random.uniform(0.85, 1.15)
+    thickness = random.choice([1, 1, 1, 2])
+    return font, scale, thickness
+
+# Window state enumeration for generalization
+WINDOW_STATES = ["active"] * 6 + ["inactive"] * 2 + ["maximized"] * 1 + ["minimized"] * 1
+
+def apply_window_state(img, elements, x, y, w, h, state, theme):
+    """Modify elements for different window states. Returns adjusted element list."""
+    if state == "active":
+        return elements  # No change
+    elif state == "inactive":
+        # Dim the title bar and window content
+        overlay = img[y:y+h, x:x+w].copy()
+        overlay = cv2.convertScaleAbs(overlay, alpha=0.7, beta=20)
+        img[y:y+h, x:x+w] = overlay
+        # Mark elements as potentially less interactive
+        for e in elements:
+            if e.cls_id in (0, 1, 3):  # title bar elements
+                pass  # Still visible
+        return elements
+    elif state == "maximized":
+        # Fill entire desktop area (no borders on edge)
+        # Already rendered at full size — just remove window border elements
+        return [e for e in elements if e.cls_id not in (0,)]
+    elif state == "minimized":
+        # Only shows in taskbar — return only taskbar elements
+        return [e for e in elements if e.cls_id == 10]
+
+def draw_modal_overlay(img, active_rect=None):
+    """Draw semi-transparent dimmed overlay behind a modal dialog."""
+    overlay = img.copy()
+    cv2.rectangle(overlay, (0, 0), (img.shape[1], img.shape[0]), (80, 80, 80), -1)
+    alpha = 0.4
+    if active_rect:
+        x, y, w, h = active_rect
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (255, 255, 255), -1)
+        alpha = 0.35
+    return cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
+
 # ── Page generators ────────────────────────────────────────────────────
 
 def draw_taskbar(img: np.ndarray) -> List[UIElement]:
@@ -458,14 +511,14 @@ def make_settings_window() -> GeneratedPage:
     radio_y = cb_y + len(checkboxes) * 34 + 15
     cv2.putText(img, "Theme:", (wx + 30, radio_y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50, 50, 50), 1)
-    for i, theme in enumerate(["Light", "Dark", "System"]):
+    for i, theme_name in enumerate(["Light", "Dark", "System"]):
         rx = wx + 30 + i * 120
         cv2.circle(img, (rx, radio_y + 10), 8, (100, 100, 100), 1)
         if i == 0:  # Selected
             cv2.circle(img, (rx, radio_y + 10), 4, (0, 120, 215), -1)
-        cv2.putText(img, theme, (rx + 16, radio_y + 15),
+        cv2.putText(img, theme_name, (rx + 16, radio_y + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (30, 30, 30), 1)
-        elems.append(UIElement(7, [rx - 8, radio_y + 2, 70, 18], "radio", theme))
+        elems.append(UIElement(7, [rx - 8, radio_y + 2, 70, 18], "radio", ""))
 
     # Buttons
     btn_y = wy + wh - 46
@@ -707,12 +760,127 @@ def make_control_panel() -> GeneratedPage:
 
 # ── Generator registry ──────────────────────────────────────────────────
 
+def make_file_manager() -> GeneratedPage:
+    """File manager with tree sidebar, file list, toolbar, path bar."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = []
+
+    elems += draw_taskbar(img)
+    wx, wy, ww, wh = 100, 50, 1080, 620
+    elems += draw_window(img, wx, wy, ww, wh, "File Explorer", theme=theme,
+                         menu_items=["File", "Edit", "View", "Tools", "Help"])
+
+    # Toolbar with back/forward/up/path
+    tb_y = wy + theme["title_height"] + 22 + 2
+    cv2.rectangle(img, (wx, tb_y), (wx + ww, tb_y + 28), (238, 238, 238), -1)
+    for i, tool in enumerate(["Back", "Forward", "Up", "Refresh", "New Folder"]):
+        bx = wx + 6 + i * 74
+        elems.append(draw_button(img, bx, tb_y + 2, 68, 24, tool, theme))
+    elems.append(UIElement(17, [wx, tb_y, ww, 28], "toolbar"))
+
+    # Path bar
+    path_y = tb_y + 34
+    cv2.rectangle(img, (wx, path_y), (wx + ww, path_y + 22), (255, 255, 255), -1)
+    cv2.rectangle(img, (wx, path_y), (wx + ww, path_y + 22), (180, 180, 180), 1)
+    path_text = f"C:\\Users\\winebot\\Documents\\"
+    cv2.putText(img, path_text, (wx + 8, path_y + 16),
+                theme["font_face"], 0.4, (30, 30, 30), 1)
+    elems.append(UIElement(4, [wx, path_y, ww, 22], "text_field", path_text))
+
+    # Tree sidebar
+    tree_y = path_y + 28
+    tree_w = 200
+    tree_h = wh - (tree_y - wy) - 24
+    cv2.rectangle(img, (wx, tree_y), (wx + tree_w, tree_y + tree_h), (250, 250, 250), -1)
+    cv2.rectangle(img, (wx, tree_y), (wx + tree_w, tree_y + tree_h), (190, 190, 190), 1)
+    tree_items = ["Desktop", "  Documents", "    Projects", "    Reports",
+                  "  Downloads", "  Music", "  Pictures", "  Videos",
+                  "This PC", "  Local Disk (C:)", "  Network (Z:)"]
+    for i, item in enumerate(tree_items):
+        ty = tree_y + 6 + i * 22
+        indent = item.count("  ") * 14
+        cv2.putText(img, item.strip(), (wx + 4 + indent, ty + 15),
+                    theme["font_face"], 0.4, (30, 30, 30), 1)
+        if item.strip():
+            tw = cv2.getTextSize(item.strip(), theme["font_face"], 0.4, 1)[0][0]
+            elems.append(UIElement(14, [wx + 4 + indent, ty, tw + 4, 22], "list_item", item.strip()))
+
+    # File list
+    fl_y = tree_y
+    fl_x = wx + tree_w + 4
+    fl_w = ww - tree_w - 8
+    fl_h = tree_h
+    cv2.rectangle(img, (fl_x, fl_y), (fl_x + fl_w, fl_y + fl_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (fl_x, fl_y), (fl_x + fl_w, fl_y + fl_h), (190, 190, 190), 1)
+    files = ["document.txt", "report_v2.pdf", "screenshot.png",
+             "data_export.csv", "archive.zip", "README.md",
+             "config.json", "notes.md", "image_001.jpg", "video.mp4"]
+    for i, fname in enumerate(files):
+        fy = fl_y + 6 + i * 24
+        cv2.putText(img, fname, (fl_x + 8, fy + 17),
+                    theme["font_face"], 0.4, (0, 0, 30), 1)
+        elems.append(UIElement(14, [fl_x + 8, fy, fl_w - 16, 24], "list_item", fname))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_multi_window() -> GeneratedPage:
+    """2-4 overlapping windows from different frameworks simultaneously."""
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    # Place 2-3 overlapping windows from different frameworks
+    windows = [
+        (40, 30, 600, 380, "Document - Editor", ["File", "Edit", "View"], "win32_classic"),
+        (180, 120, 550, 420, "Settings", ["General", "Network"], "gtk_adwaita"),
+        (320, 60, 500, 350, "About", None, "java_metal"),
+    ]
+    for i, (x, y, w, h, title, menus, fw) in enumerate(windows[:random.randint(2, 3)]):
+        theme = FRAMEWORK_THEMES[fw].copy()
+        theme["title_height"] += random.randint(-2, 2)
+        elems += draw_window(img, x, y, w, h, title, theme=theme,
+                             has_menu=menus is not None, menu_items=menus)
+
+        # Add some content in each window
+        if "Document" in title:
+            for j, line in enumerate(["Hello World", "This is a test.", "Line three."]):
+                ly = y + theme["title_height"] + 28 + j * 20
+                cv2.putText(img, line, (x + 8, ly),
+                            theme["font_face"], 0.4, (0, 0, 0), 1)
+        elif "Settings" in title:
+            cb_y = y + theme["title_height"] + 40
+            for j, cb in enumerate(["Enable feature A", "Show hidden files"]):
+                by = cb_y + j * 28
+                cv2.rectangle(img, (x + 16, by), (x + 32, by + 16), (255, 255, 255), -1)
+                cv2.rectangle(img, (x + 16, by), (x + 32, by + 16), (100, 100, 100), 2)
+                if j == 0:
+                    cv2.line(img, (x + 19, by + 8), (x + 24, by + 12), (0, 140, 0), 2)
+                    cv2.line(img, (x + 24, by + 12), (x + 30, by + 3), (0, 140, 0), 2)
+                cv2.putText(img, cb, (x + 40, by + 13),
+                            theme["font_face"], 0.4, (30, 30, 30), 1)
+                elems.append(UIElement(6, [x + 16, by, 16, 16], "checkbox", cb))
+        elif "About" in title:
+            about_y = y + theme["title_height"] + 30
+            cv2.putText(img, "WineBot v1.0", (x + 100, about_y),
+                        theme["font_face"], 0.7, (0, 0, 0), 1)
+            cv2.putText(img, "Copyright 2026", (x + 80, about_y + 30),
+                        theme["font_face"], 0.45, (80, 80, 80), 1)
+            elems.append(draw_button(img, x + w - 90, y + h - 40, 70, 26, "OK", theme, primary=True))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
 GENERATORS = [
     ("save_dialog", make_save_dialog),
     ("settings", make_settings_window),
     ("error_dialog", make_error_dialog),
     ("notepad", make_notepad_window),
     ("control_panel", make_control_panel),
+    ("file_manager", make_file_manager),
+    ("multi_window", make_multi_window),
 ]
 
 
@@ -771,10 +939,133 @@ def dict_name(name: str, prefix: str, suffix: str) -> str:
     return name.replace("_", " ").title()
 
 
+# ── Interaction state indicators ────────────────────────────────────────
+
+CURSOR_TYPES = {
+    "arrow":        [(0,0), (1,0), (4,1), (3,2), (4,3), (2,4), (0,5), (1,8), (0,9), (-1,9)],
+    "ibeam":        [(0,2),(1,2),(0,8),(1,8)],
+    "hand":         [(0,0),(2,1),(4,3),(3,5),(1,6),(0,5),(-1,5)],
+}
+CURSOR_DRAW_POINTS = {
+    "arrow":  [(8,1),(14,10),(12,12),(8,6),(1,14),(0,12),(6,7),(3,4),(7,3)],
+    "ibeam":  [(5,1),(7,1),(7,13),(5,13)],
+    "hand":   [(2,1),(4,4),(9,7),(8,10),(4,10),(3,8),(0,8)],
+}
+
+def draw_cursor(img, x, y):
+    """Draw mouse cursor icon at position."""
+    ctype = random.choice(list(CURSOR_DRAW_POINTS.keys()))
+    pts = np.array(CURSOR_DRAW_POINTS[ctype], dtype=np.int32) + [x, y]
+    cv2.fillPoly(img, [pts], (255, 255, 255))
+    cv2.polylines(img, [pts], True, (0, 0, 0), 1)
+    return UIElement(20, [x - 2, y - 2, 24, 24], "icon", f"cursor_{ctype}")
+
+def draw_text_caret(img, x, y, h):
+    """Draw blinking text cursor in a text field."""
+    if random.random() < 0.5:  # 50% chance caret visible (blinking simulation)
+        cv2.line(img, (x, y + 2), (x, y + h - 2), (0, 0, 0), 2)
+    return UIElement(20, [x - 1, y, 3, h], "icon", "text_caret")
+
+def draw_focus_rect(img, x, y, w, h):
+    """Draw dotted focus rectangle around focused element."""
+    for i in range(x + 2, x + w - 2, 4):
+        cv2.line(img, (i, y + 1), (min(i + 2, x + w - 2), y + 1), (50, 50, 50), 1)
+        if y + h > 1:
+            cv2.line(img, (i, max(y + 1, 0)), (min(i + 2, 0), 0), (50, 50, 50), 1)
+
+def draw_tooltip(img, x, y, text):
+    """Draw yellow tooltip near cursor/button."""
+    tw = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
+    bw, bh = tw + 12, 20
+    if x + bw > img.shape[1]: x = img.shape[1] - bw - 4
+    if y - bh < 0: y = y + bh + 16
+    cv2.rectangle(img, (x, y - bh), (x + bw, y), (255, 255, 225), -1)
+    cv2.rectangle(img, (x, y - bh), (x + bw, y), (180, 180, 100), 1)
+    cv2.putText(img, text, (x + 6, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+    return UIElement(11, [x, y - bh, bw, bh], "dialog", f"tooltip_{text}")
+
+def draw_notification(img, text):
+    """Draw notification toast in bottom-right corner."""
+    w, h = img.shape[1], img.shape[0]
+    tw = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]
+    bw, bh = tw + 24, 36
+    nx, ny = w - bw - 20, h - TASKBAR_HEIGHT - bh - 10
+    cv2.rectangle(img, (nx, ny), (nx + bw, ny + bh), (50, 50, 55), -1)
+    cv2.rectangle(img, (nx, ny), (nx + bw, ny + bh), (80, 80, 100), 1)
+    cv2.putText(img, text, (nx + 12, ny + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+    return UIElement(11, [nx, ny, bw, bh], "dialog", f"notification_{text}")
+
+def add_interaction_state(img, elements, theme):
+    """Add random interaction state indicators to a generated page."""
+    new_elems = []
+
+    # Random cursor position on the screen
+    if random.random() < 0.6:
+        cx = random.randint(100, img.shape[1] - 100)
+        cy = random.randint(50, img.shape[0] - 100)
+        new_elems.append(draw_cursor(img, cx, cy))
+        # Tooltip near cursor 20% of time
+        if random.random() < 0.2:
+            tips = ["Save", "Open", "Copy", "Help", "Properties", "Delete"]
+            new_elems.append(draw_tooltip(img, cx + 12, cy - 8, random.choice(tips)))
+
+    # Text caret in a text field
+    text_fields = [e for e in elements if e.cls_id == 4]
+    if text_fields and random.random() < 0.7:
+        tf = random.choice(text_fields)
+        bx, by, bw, bh = tf.bbox
+        caret_x = bx + random.randint(4, min(12, bw - 4))
+        new_elems.append(draw_text_caret(img, caret_x, by + 2, bh - 4))
+
+    # Focus rectangle on active element
+    focusable = [e for e in elements if e.cls_id in (2, 4, 5)]
+    if focusable and random.random() < 0.4:
+        fe = random.choice(focusable)
+        bx, by, bw, bh = fe.bbox
+        draw_focus_rect(img, bx - 2, by - 2, bw + 4, bh + 4)
+
+    # Notification toast
+    if random.random() < 0.15:
+        msgs = ["Update available", "File saved", "Download complete",
+                "Connection established", "3 new messages"]
+        new_elems.append(draw_notification(img, random.choice(msgs)))
+
+    # Selection highlight on some text
+    list_items = [e for e in elements if e.cls_id == 14]
+    if list_items and random.random() < 0.5:
+        li = random.choice(list_items)
+        bx, by, bw, bh = li.bbox
+        overlay = img[by:by+bh, bx:bx+bw].copy()
+        overlay[:, :, 0] = cv2.addWeighted(overlay[:, :, 0], 0.6, np.full_like(overlay[:, :, 0], 200), 0.4, 0)
+        img[by:by+bh, bx:bx+bw] = overlay
+
+    # Disable some buttons (grayed out + dimmed)
+    buttons = [e for e in elements if e.cls_id == 2]
+    for btn in random.sample(buttons, min(len(buttons), random.randint(0, 2))):
+        bx, by, bw, bh = btn.bbox
+        overlay = img[by:by+bh, bx:bx+bw].copy()
+        overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2GRAY)
+        overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
+        overlay = cv2.convertScaleAbs(overlay, alpha=0.6, beta=30)
+        img[by:by+bh, bx:bx+bw] = overlay
+        btn.cls_id = 2  # Still a button, but dimmed
+        btn.label = f"{btn.label}_disabled"
+
+    return new_elems
+
+
 # ── Main generator ──────────────────────────────────────────────────────
 
+# Resolution variants for cross-resolution robustness
+TARGET_RESOLUTIONS = [
+    (1280, 720), (1024, 768), (1366, 768), (1440, 900), (1920, 1080)
+]
+# DPI scaling factors (render large, then downscale)
+DPI_SCALES = [1.0, 1.25, 1.0, 1.5, 1.0, 1.0, 1.75, 1.0, 1.0, 1.0]  # ~30% chance of fractional scaling
+
+
 def generate_dataset(output_dir: str, count: int, seed: int = 42):
-    """Generate a full labeled dataset."""
+    """Generate a full labeled dataset with cross-resolution and font variation."""
     random.seed(seed)
     np.random.seed(seed)
 
@@ -791,7 +1082,50 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
 
     for gen_name, gen_fn in GENERATORS:
         for i in range(per_generator):
+            # Random resolution + DPI for cross-platform robustness
+            base_res = random.choice(TARGET_RESOLUTIONS)
+            dpi_scale = random.choice(DPI_SCALES)
+            render_w = int(base_res[0] * dpi_scale)
+            render_h = int(base_res[1] * dpi_scale)
+
+            # Override desktop size for this generation
+            global DESKTOP_SIZE
+            old_size = DESKTOP_SIZE
+            DESKTOP_SIZE = (render_w, render_h)
+
             page = gen_fn()
+            img = page.image  # mutable reference to the page image
+
+            # Restore desktop size
+            DESKTOP_SIZE = old_size
+
+            # Randomly apply window state variation (inactive, maximized, minimized)
+            window_state = random.choice(WINDOW_STATES)
+            if gen_name in ("settings", "notepad", "control_panel", "file_manager"):
+                # These scenes have identifiable windows to modify
+                # Apply state to the primary window (find by title bar element)
+                title_bars = [e for e in page.elements if e.cls_id == 0]
+                if title_bars and window_state != "active":
+                    tb = title_bars[0]
+                    page.elements = apply_window_state(
+                        img, page.elements, tb.bbox[0], tb.bbox[1],
+                        max(tb.bbox[2], 300), max(tb.bbox[3], 200),
+                        window_state, theme=None
+                    )
+
+            # Randomly add desktop icons in empty space
+            if random.random() < 0.4:
+                icons = ["My Computer", "Recycle Bin", "Documents", "Network", "Setup"]
+                for k, icon in enumerate(random.sample(icons, random.randint(2, 4))):
+                    ix, iy = random.randint(10, 400), random.randint(10, 600)
+                    cv2.rectangle(img, (ix, iy), (ix + 18, iy + 18),
+                                  random.choice([(0, 120, 200), (200, 160, 0), (100, 100, 100)]), -1)
+                    font, scale, thick = get_font()
+                    cv2.putText(img, icon, (ix - 6, iy + 34), font, scale * 0.4, (255, 255, 255), thick)
+                    page.elements.append(UIElement(20, [ix - 6, iy + 18, 50, 20], "icon", icon))
+
+            # Add interaction state indicators (cursor, caret, focus, tooltips, etc.)
+            page.elements += add_interaction_state(img, page.elements, theme=None)
 
             # Apply Wine rendering variations
             img = page.image.astype(np.float32)
@@ -799,6 +1133,19 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
                 img = cv2.GaussianBlur(img, (3, 3), WINE_SOFTNESS)
             img = add_noise(img.astype(np.uint8))
             img = variation(img)
+
+            # If rendered at higher DPI, downscale to target training size
+            if render_w != 1280 or render_h != 720:
+                # Scale bounding boxes proportionally
+                scale_x = 1280.0 / render_w
+                scale_y = 720.0 / render_h
+                for elem in page.elements:
+                    bx, by, bw, bh = elem.bbox
+                    elem.bbox = [
+                        int(bx * scale_x), int(by * scale_y),
+                        int(bw * scale_x), int(bh * scale_y),
+                    ]
+                img = cv2.resize(img.astype(np.uint8), (1280, 720))
 
             h, w = img.shape[:2]
 
@@ -821,12 +1168,13 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
                         "text": elem.ocr_text,
                         "bbox": elem.bbox,
                         "class": WINE_CLASSES[elem.cls_id],
-                        "confidence": 100,  # Perfect ground truth
+                        "confidence": 100,
                     })
 
             manifest["images"].append({
                 "file": img_name,
                 "generator": gen_name,
+                "resolution": f"{render_w}x{render_h}@{dpi_scale}x",
                 "elements": len(page.elements),
                 "ocr_texts": sum(1 for e in page.elements if e.ocr_text),
             })
