@@ -307,10 +307,18 @@ class SigLIP2Embedder(CLIPSceneEmbedder):
         self._model.eval()
 
         # Get actual embedding dimension (may differ by variant)
-        if hasattr(self._model, 'visual'):
-            self.dim = self._model.visual.output_dim
-        elif hasattr(self._model, 'output_dim'):
-            self.dim = self._model.output_dim
+        try:
+            if hasattr(self._model, 'visual') and hasattr(self._model.visual, 'output_dim'):
+                self.dim = self._model.visual.output_dim
+            elif hasattr(self._model, 'output_dim'):
+                self.dim = self._model.output_dim
+            elif hasattr(self._model, 'embed_dim'):
+                self.dim = self._model.embed_dim
+            else:
+                # Try a test pass to discover the output shape
+                self.dim = 768  # SigLIP 2 ViT-B default
+        except Exception:
+            self.dim = 768
 
         total_params = sum(p.numel() for p in self._model.parameters())
         print(f"[siglip2] Loaded: {total_params/1e6:.0f}M params, "

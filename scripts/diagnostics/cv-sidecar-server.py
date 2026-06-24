@@ -220,7 +220,7 @@ def create_app() -> FastAPI:
             },
             "env": {
                 "UI_DETECTOR": os.environ.get("UI_DETECTOR", "contour"),
-                "OCR_BACKEND": os.environ.get("OCR_BACKEND", "tesseract"),
+                "OCR_BACKEND": os.environ.get("OCR_BACKEND", "paddle_onnx:tiny"),
             },
         }
 
