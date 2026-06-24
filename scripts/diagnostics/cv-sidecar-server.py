@@ -54,6 +54,13 @@ try:
 except ImportError:
     _HAS_OLLAMA = False
 
+# Model registry (provenance for all pipeline models)
+try:
+    from model_registry import ModelRegistry
+    _model_registry = ModelRegistry.from_scan("/models")
+except ImportError:
+    _model_registry = None
+
 # ── FastAPI (imported lazily in serve() to allow CLI-only usage) ─────────────
 
 try:
@@ -203,6 +210,11 @@ def create_app() -> FastAPI:
                 "host": vlm_host,
                 "provenance": vlm_provenance,
             },
+            "model_catalog": {
+                "total": _model_registry.to_dict()["total_models"] if _model_registry else 0,
+                "active": _model_registry.to_dict()["active_models"] if _model_registry else 0,
+                "fingerprinted_at": _model_registry.to_dict()["generated_at"] if _model_registry else "",
+            } if _model_registry else None,
             "provenance": {
                 "git_commit": git_commit,
             },
@@ -211,6 +223,35 @@ def create_app() -> FastAPI:
                 "OCR_BACKEND": os.environ.get("OCR_BACKEND", "tesseract"),
             },
         }
+
+    @app.get("/models")
+    async def model_catalog():
+        """Full model provenance catalog with SHA256 fingerprints.
+
+        Returns the complete model registry including:
+          - Upstream provenance (source repo, license, citation)
+          - Training lineage (dataset, splits, hyperparameters)
+          - Deployment fingerprints (SHA256, file size, last validated)
+          - Version lifecycle (active/deprecated/superseded)
+          - Supply chain audit trail
+
+        Useful for paper methods sections and reproducibility.
+        """
+        if _model_registry is None:
+            raise HTTPException(status_code=501, detail="Model registry not available")
+
+        return JSONResponse(content=_model_registry.to_dict())
+
+    @app.get("/models/citation")
+    async def model_citation():
+        """Methods-section citation string for all pipeline models."""
+        if _model_registry is None:
+            raise HTTPException(status_code=501, detail="Model registry not available")
+
+        return JSONResponse(content={
+            "citation": _model_registry.get_citation(),
+            "audit_trail": _model_registry.audit_trail(),
+        })
 
     @app.post("/analyze")
     async def analyze(request_data: Dict):
@@ -984,6 +1025,24 @@ def serve(host: str = "0.0.0.0", port: int = 8001):
             print(f"  VLM Status: module unavailable")
     else:
         print(f"  VLM Provider: local (set VLM_PROVIDER=ollama for remote)")
+
+    # Show model catalog summary
+    if _model_registry:
+        reg = _model_registry
+        active = reg.get_active()
+        fingerprinted = sum(
+            1 for e in reg.entries.values()
+            if e.deployment and e.deployment.content_sha256
+        )
+        print(f"  Model Registry: {len(reg.entries)} total, {len(active)} active, "
+              f"{fingerprinted} fingerprinted")
+        # Summarize by stage
+        stages = {}
+        for e in reg.entries.values():
+            s = e.pipeline_stage
+            stages[s] = stages.get(s, 0) + 1
+        print(f"  Model stages: " + ", ".join(
+            f"stage {s}: {c}" for s, c in sorted(stages.items())))
 
     uvicorn.run(app, host=host, port=port, log_level="info")
 

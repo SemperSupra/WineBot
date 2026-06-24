@@ -126,6 +126,7 @@ COPY scripts/diagnostics/clip_index.py /scripts/clip_index.py
 COPY scripts/diagnostics/florence2_captioner.py /scripts/florence2_captioner.py
 COPY scripts/diagnostics/vlm_ollama.py /scripts/vlm_ollama.py
 COPY scripts/diagnostics/provenance.py /scripts/provenance.py
+COPY scripts/diagnostics/model_registry.py /scripts/model_registry.py
 
 # ── Pre-download CLIP model weights (survives rebuilds via shared cache) ──────
 # Downloads ~500MB to HuggingFace cache (mounted at /models)
