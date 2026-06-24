@@ -1797,12 +1797,15 @@ def add_interaction_state(img, elements, theme):
     buttons = [e for e in elements if e.cls_id == 2]
     for btn in random.sample(buttons, min(len(buttons), random.randint(0, 2))):
         bx, by, bw, bh = btn.bbox
+        if bh < 2 or bw < 2:
+            continue
         overlay = img[by:by+bh, bx:bx+bw].copy()
+        if overlay.size == 0:
+            continue
         overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2GRAY)
         overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
         overlay = cv2.convertScaleAbs(overlay, alpha=0.6, beta=30)
         img[by:by+bh, bx:bx+bw] = overlay
-        btn.cls_id = 2  # Still a button, but dimmed
         btn.label = f"{btn.label}_disabled"
 
     return new_elems
