@@ -104,6 +104,9 @@ COPY scripts/diagnostics/benchmark_dataset.py /scripts/benchmark_dataset.py
 COPY scripts/diagnostics/winebot-gt-generator.py /scripts/winebot-gt-generator.py
 COPY scripts/diagnostics/fine_tune_detector.py /scripts/fine_tune_detector.py
 COPY scripts/diagnostics/benchmark_report.py /scripts/benchmark_report.py
+COPY scripts/diagnostics/workflow_evaluator.py /scripts/workflow_evaluator.py
+COPY scripts/diagnostics/workflow_test_harness.py /scripts/workflow_test_harness.py
+COPY scripts/diagnostics/bench_xres.py /scripts/bench_xres.py
 
 WORKDIR /work
 EXPOSE 8001

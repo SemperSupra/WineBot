@@ -32,6 +32,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import base64
+import urllib.request
+
 import cv2
 import numpy as np
 
@@ -388,6 +391,107 @@ def create_app() -> FastAPI:
             "frame_index": _watch_state["frame_index"],
             "started_at": _watch_state["started_at"],
             "output_dir": _watch_state["output_dir"],
+        })
+
+    @app.post("/wait-for-window")
+    async def wait_for_window(request_data: Dict):
+        """Poll for a window by title substring using CV/OCR.
+
+        Replaces xdotool-based cv_wait() for Wine 10.0 where X11 window
+        names are empty. Captures screenshots from the WineBot API,
+        runs detection+OCR, and checks if the expected window title
+        appears in the OCR text.
+
+        Request body:
+          {"window_title": "Acrobat", "timeout": 30,
+           "api_url": "http://172.17.0.1:8000",
+           "api_token": "..."}
+
+        Returns:
+          {"found": true, "window_title": "Acrobat Reader DC",
+           "position": [x, y, w, h], "elapsed_s": 2.5, "confidence": 0.95}
+          or {"found": false, "elapsed_s": 30.0}
+        """
+        import time as _time
+
+        window_substr = request_data.get("window_title", "")
+        timeout = int(request_data.get("timeout", 30))
+        api_url = request_data.get("api_url", os.environ.get("WINEBOT_API_URL", ""))
+        api_token = request_data.get("api_token", os.environ.get("WINEBOT_API_TOKEN", ""))
+
+        if not window_substr:
+            raise HTTPException(status_code=400, detail="window_title required")
+        if not api_url:
+            raise HTTPException(status_code=400, detail="api_url required")
+
+        window_lower = window_substr.lower()
+        deadline = _time.time() + timeout
+
+        while _time.time() < deadline:
+            # Capture screenshot from WineBot API
+            try:
+                req = urllib.request.Request(f"{api_url}/screenshot")
+                if api_token:
+                    req.add_header("X-API-Key", api_token)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    img_data = resp.read()
+                if len(img_data) < 100:
+                    _time.sleep(0.5)
+                    continue
+
+                nparr = np.frombuffer(img_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is None:
+                    _time.sleep(0.5)
+                    continue
+            except Exception:
+                _time.sleep(1.0)
+                continue
+
+            # Analyze the screenshot
+            result = analyze_image(img)
+
+            # Search OCR text for the window title
+            for entry in result.get("ocr_text", []):
+                text = entry.get("text", "")
+                if window_lower in text.lower():
+                    elapsed = _time.time() - (deadline - timeout)
+                    bbox = entry.get("bbox", [0, 0, 0, 0])
+                    print(f"[wait-for-window] Found '{text}' "
+                          f"after {elapsed:.1f}s", file=sys.stderr)
+                    return JSONResponse(content={
+                        "found": True,
+                        "window_title": text,
+                        "position": bbox,
+                        "elapsed_s": round(elapsed, 2),
+                        "confidence": round(entry.get("confidence", 0.8), 3),
+                    })
+
+            # Also check element labels
+            for elem in result.get("elements", []):
+                label = elem.get("label", "")
+                if window_lower in label.lower():
+                    elapsed = _time.time() - (deadline - timeout)
+                    print(f"[wait-for-window] Found element '{label}' "
+                          f"after {elapsed:.1f}s", file=sys.stderr)
+                    return JSONResponse(content={
+                        "found": True,
+                        "window_title": label,
+                        "position": elem.get("bbox", [0, 0, 0, 0]),
+                        "elapsed_s": round(elapsed, 2),
+                        "confidence": round(elem.get("confidence", 0.8), 3),
+                    })
+
+            _time.sleep(0.5)
+
+        # Timeout
+        elapsed = timeout
+        print(f"[wait-for-window] TIMEOUT: '{window_substr}' not found "
+              f"after {timeout}s", file=sys.stderr)
+        return JSONResponse(content={
+            "found": False,
+            "window_title": window_substr,
+            "elapsed_s": round(float(elapsed), 2),
         })
 
     @app.post("/benchmark")

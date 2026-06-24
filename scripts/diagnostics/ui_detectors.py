@@ -5,9 +5,13 @@
 Swappable UI element detector abstraction for WineBot CV sidecar.
 
 Detector selection via UI_DETECTOR env var:
-  UI_DETECTOR=contour       (default, OpenCV edge/contour heuristics, CPU, ~0.01s)
-  UI_DETECTOR=yolo          (YOLO with OmniParser UI weights, GPU, ~0.2s)
-  UI_DETECTOR=omniparser    (OmniParser v2: YOLO detection + Florence-2 captions, GPU, ~0.6s)
+  UI_DETECTOR=contour          (default, OpenCV edge/contour heuristics, CPU, ~0.01s)
+  UI_DETECTOR=yolo             (YOLO with OmniParser UI weights, GPU, ~0.2s)
+  UI_DETECTOR=omniparser       (OmniParser v2: YOLO detection + Florence-2 captions, GPU, ~0.6s)
+  UI_DETECTOR=screenparser     (ScreenParser YOLOv11-L, 55 classes, GPU, ~0.3s)
+  UI_DETECTOR=screenparser_wine(ScreenParser fine-tuned on Wine data, mAP50=0.951, GPU, ~0.3s)
+  UI_DETECTOR=wine             (YOLOv8n fine-tuned on Wine data, mAP50=0.918, GPU, ~0.22s)
+  UI_DETECTOR=uidetr1          (UI-DETR-1 RF-DETR, class-agnostic, GPU, ~0.29s)
 
 Usage:
   from ui_detectors import get_ui_detector
@@ -772,7 +776,7 @@ class ScreenParserDetector(UIDetector):
                 local_dir="/models/screenparser",
             )
             self._model = YOLO(model_file)
-            self._ensure_screenparser_gpu()
+            self._move_model_to_gpu()
             print(f"[screenparser] Downloaded from HF: {model_file}", file=sys.stderr)
             if "cuda" in str(self._model.device):
                 self.uses_gpu = True
@@ -831,6 +835,91 @@ class ScreenParserDetector(UIDetector):
         return elements
 
 
+# ── ScreenParser Wine-FineTuned Detector ───────────────────────────────────────
+
+class ScreenParserWineDetector(ScreenParserDetector):
+    """ScreenParser fine-tuned on WineBot's 18-scene GT dataset.
+
+    Same 55-class YOLOv11-L architecture as ScreenParser, but trained on
+    3,587 programmatically generated Wine desktop images across 8 UI
+    framework themes. Achieves mAP50=0.951, mAP50-95=0.794 — the highest
+    accuracy among all detector backends.
+
+    Uses ScreenParser's CLASS_MAP and detect() logic — only the checkpoint
+    differs. 49 MB, ~304ms/frame on RTX 3090.
+    """
+
+    name = "screenparser_wine"
+    available = False
+    uses_gpu = False
+
+    def __init__(self):
+        try:
+            from ultralytics import YOLO  # noqa: F401
+            self._yolo_available = True
+        except ImportError:
+            self._yolo_available = False
+            return
+
+        self._model = None
+        self.available = True
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+
+        from ultralytics import YOLO
+
+        # Priority: Wine-fine-tuned SP > generic ScreenParser > HF download
+        paths = [
+            "/models/yolo/screenparser-wine.pt",
+            "/models/screenparser/best.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "yolo", "screenparser-wine.pt"),
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "screenparser", "best.pt"),
+            os.environ.get("SCREENPARSER_MODEL_PATH", ""),
+        ]
+
+        for p in paths:
+            if not p or not os.path.isfile(p):
+                continue
+            try:
+                self._model = YOLO(p)
+                self._move_model_to_gpu()
+                print(f"[screenparser_wine] Loaded from {p} "
+                      f"(device: {self._model.device})", file=sys.stderr)
+                if "cuda" in str(self._model.device):
+                    self.uses_gpu = True
+                if hasattr(self._model, 'names'):
+                    print(f"[screenparser_wine] {len(self._model.names)} classes",
+                          file=sys.stderr)
+                return self._model
+            except Exception as e:
+                print(f"[screenparser_wine] Failed to load {p}: {e}", file=sys.stderr)
+
+        # Fallback: try HF download of generic ScreenParser
+        try:
+            from huggingface_hub import hf_hub_download
+            model_file = hf_hub_download(
+                repo_id="docling-project/ScreenParser",
+                filename="best.pt",
+                local_dir="/models/screenparser",
+            )
+            self._model = YOLO(model_file)
+            self._move_model_to_gpu()
+            print(f"[screenparser_wine] Downloaded generic SP from HF: {model_file}",
+                  file=sys.stderr)
+            if "cuda" in str(self._model.device):
+                self.uses_gpu = True
+            return self._model
+        except Exception as e:
+            print(f"[screenparser_wine] HF download failed: {e}", file=sys.stderr)
+
+        self.available = False
+        return None
+
+
 # ── Wine-FineTuned Detector ───────────────────────────────────────────────────
 
 class WineUIDetector(YOLOUIDetector):
@@ -862,10 +951,15 @@ class WineUIDetector(YOLOUIDetector):
 
         from ultralytics import YOLO
 
-        # Priority: corrected v2 model > original v1
+        # Priority: v3 (18-scene generalized) > v2 (corrected) > v1 (original)
         paths = [
+            "/models/yolo/wine-finetuned-v3.pt",
             "/models/yolo/wine-finetuned-v2.pt",
             "/models/yolo/wine-finetuned.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "yolo", "wine-finetuned-v3.pt"),
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "models", "yolo", "wine-finetuned-v2.pt"),
             os.path.join(os.path.dirname(__file__), "..", "..",
                          "models", "yolo", "wine-finetuned.pt"),
         ]
@@ -974,6 +1068,12 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
             print(f"[ui] ScreenParser requested but not available, "
                   f"falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
+    elif backend == "screenparser_wine":
+        _ui_detector = ScreenParserWineDetector()
+        if not _ui_detector.available:
+            print(f"[ui] ScreenParser Wine requested but not available, "
+                  f"falling back to contour", file=sys.stderr)
+            _ui_detector = ContourDetector()
     elif backend == "wine":
         _ui_detector = WineUIDetector()
         if not _ui_detector.available:
@@ -994,6 +1094,7 @@ def available_detectors() -> Dict[str, bool]:
         "omniparser": OmniParserDetector().available,
         "uidetr1": UIDETR1Detector().available,
         "screenparser": ScreenParserDetector().available,
+        "screenparser_wine": ScreenParserWineDetector().available,
         "wine": WineUIDetector().available,
     }
 

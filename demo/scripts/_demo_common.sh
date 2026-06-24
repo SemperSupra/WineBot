@@ -345,23 +345,34 @@ cv_click() {
 
 cv_wait() {
   # Wait until a window matching the title substring appears.
-  # Uses xdotool for reliable title matching (API /windows returns N/A for many windows).
+  # Uses CV sidecar /wait-for-window (OCR-based) — works with Wine 10.0 where
+  # X11 window names are empty and xdotool search --name returns nothing.
   local window_substr="$1"
   local timeout="${2:-30}"
 
-  echo "  [CV-WAIT] Waiting for '$window_substr' (timeout=${timeout}s)..."
-  local i found
-  for i in $(seq 1 "$timeout"); do
-    found=$(MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" sh -c \
-      "xdotool search --name '${window_substr}' 2>/dev/null | head -1" 2>/dev/null || echo "")
-    if [ -n "$found" ]; then
-      local title
-      title=$(MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" xdotool getwindowname "$found" 2>/dev/null || echo "$window_substr")
-      echo "  [CV-WAIT] Found: '$title' after ${i}s"
-      return 0
-    fi
-    sleep 1
-  done
+  echo "  [CV-WAIT] Waiting for '$window_substr' (timeout=${timeout}s, CV sidecar)..."
+
+  # Determine WineBot API URL from inside the sidecar's perspective
+  # (bridge gateway 172.17.0.1, since sidecar calls back into Wine container)
+  local sidecar_api_url="${SIDECAR_API_URL:-http://172.17.0.1:8000}"
+
+  local result
+  result=$(curl -sfS -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"window_title\":\"${window_substr}\",\"timeout\":${timeout},\"api_url\":\"${sidecar_api_url}\",\"api_token\":\"${TOKEN}\"}" \
+    "${CV_SIDECAR_URL}/wait-for-window" 2>/dev/null || echo '{"found":false}')
+
+  local found
+  found=$(echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print('yes' if d.get('found') else '')" 2>/dev/null || echo "")
+
+  if [ -n "$found" ]; then
+    local title elapsed
+    title=$(echo "$result" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('window_title',''))" 2>/dev/null || echo "$window_substr")
+    elapsed=$(echo "$result" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('elapsed_s',''))" 2>/dev/null || echo "?")
+    echo "  [CV-WAIT] Found: '$title' after ${elapsed}s"
+    return 0
+  fi
+
   echo "  [CV-WAIT] TIMEOUT: '$window_substr' not found after ${timeout}s"
   return 1
 }
