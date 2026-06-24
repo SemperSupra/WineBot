@@ -8,17 +8,22 @@ All configuration via environment variables — no hostnames or models are
 hardcoded or committed to the repo.
 
 Env vars:
-  VLM_PROVIDER=ollama          Set to enable Ollama backend
-  OLLAMA_HOST=http://host:port  Ollama API URL (default: http://localhost:11434)
-  OLLAMA_VLM_MODEL=name         Model name in Ollama (default: qwen3.5:35b)
-  OLLAMA_TIMEOUT=60             Request timeout in seconds
-  OLLAMA_KEEP_ALIVE=3600        Keep model in GPU memory (seconds, 0=unload)
+  VLM_PROVIDER=ollama              Set to enable Ollama backend
+  OLLAMA_HOST=http://host:port      Ollama API URL (default: http://localhost:11434)
+  OLLAMA_VLM_MODEL=name             Model name in Ollama (default: qwen3.5:35b)
+  OLLAMA_TIMEOUT=60                 Request timeout in seconds
+  OLLAMA_KEEP_ALIVE=3600            Keep model in GPU memory (seconds, 0=unload)
+  OLLAMA_AUTO_PULL=false            Auto-pull model if not found (true/false)
+  WINEBOT_GIT_COMMIT=abc123         Git commit override for provenance
 """
 
 import base64
 import json
 import os
+import re
 import sys
+import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -28,25 +33,38 @@ import urllib.error
 
 
 class OllamaVLM:
-    """Client for Ollama's chat API with vision support."""
+    """Client for Ollama's chat API with vision support.
+
+    Tracks model provenance (SHA256 content hash, quantization, family)
+    for reproducible research. Can auto-pull missing models when
+    OLLAMA_AUTO_PULL=true is set.
+    """
 
     def __init__(self,
                  host: Optional[str] = None,
                  model: Optional[str] = None,
                  timeout: int = 60,
-                 keep_alive: int = 3600):
+                 keep_alive: int = 3600,
+                 auto_pull: Optional[bool] = None):
         """
         Args:
             host: Ollama API host URL (reads OLLAMA_HOST env var if None).
             model: Model name (reads OLLAMA_VLM_MODEL env var if None).
             timeout: Request timeout in seconds.
             keep_alive: Keep model loaded for this many seconds after request.
+            auto_pull: Auto-pull model if not found (reads OLLAMA_AUTO_PULL env var).
         """
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.model = model or os.environ.get("OLLAMA_VLM_MODEL", "qwen3.5:35b")
         self.timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", "60"))
         self.keep_alive = keep_alive or int(os.environ.get("OLLAMA_KEEP_ALIVE", "3600"))
+        if auto_pull is None:
+            auto_pull = os.environ.get("OLLAMA_AUTO_PULL", "").lower() == "true"
+        self.auto_pull = auto_pull
         self._available = None  # cached on first check
+        self._provenance = None  # ModelProvenance from /api/show
+
+    # ── Availability ───────────────────────────────────────────────────────
 
     @property
     def available(self) -> bool:
@@ -55,8 +73,65 @@ class OllamaVLM:
             self._available = self._check()
         return self._available
 
+    @property
+    def provenance(self) -> Optional[Dict]:
+        """Return the model's provenance record (cached after first check)."""
+        if self._provenance is None and self.available:
+            self._provenance = self._fingerprint()
+        return self._provenance
+
     def _check(self) -> bool:
-        """Probe the Ollama server."""
+        """Probe the Ollama server and verify model exists."""
+        if not self._server_reachable():
+            return False
+
+        if self._model_exists():
+            return True
+
+        if self.auto_pull:
+            print(f"[ollama] Model '{self.model}' not found — auto-pulling...",
+                  file=sys.stderr)
+            if self._pull_model():
+                print(f"[ollama] Pulled '{self.model}' successfully", file=sys.stderr)
+                return True
+            print(f"[ollama] Pull failed for '{self.model}'", file=sys.stderr)
+            return False
+
+        # List available models for debugging
+        try:
+            available = self._list_models()
+            print(f"[ollama] Model '{self.model}' not found. "
+                  f"Available: {available[:6]}...", file=sys.stderr)
+        except Exception:
+            pass
+        return False
+
+    def _server_reachable(self) -> bool:
+        """Check if the Ollama server responds."""
+        try:
+            req = urllib.request.Request(
+                f"{self.host}/api/tags",
+                headers={"User-Agent": "WineBot/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as _:
+                return True
+        except Exception as e:
+            print(f"[ollama] Server unreachable at {self.host}: {e}", file=sys.stderr)
+            return False
+
+    def _model_exists(self) -> bool:
+        """Check if the configured model is on the server."""
+        models = self._list_models()
+        base = self.model.split(":")[0]
+        for m in models:
+            if self.model in m or base in m:
+                print(f"[ollama] Model '{m}' matches '{self.model}'",
+                      file=sys.stderr)
+                return True
+        return False
+
+    def _list_models(self) -> List[str]:
+        """Return list of model names on the server."""
         try:
             req = urllib.request.Request(
                 f"{self.host}/api/tags",
@@ -64,20 +139,103 @@ class OllamaVLM:
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
-                models = [m.get("name", "") for m in data.get("models", [])]
-                # Check if our model or a close match exists
-                base = self.model.split(":")[0]
-                for m in models:
-                    if base in m or self.model in m:
-                        print(f"[ollama] Server OK, model '{m}' matches '{self.model}'",
-                              file=sys.stderr)
-                        return True
-                print(f"[ollama] Server OK but model '{self.model}' not found. "
-                      f"Available: {models[:6]}...", file=sys.stderr)
-                return False
+                return [m.get("name", "") for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    def _pull_model(self) -> bool:
+        """Pull the configured model from Ollama registry.
+
+        Uses POST /api/pull with streaming progress.
+        Returns True if pull succeeded.
+        """
+        try:
+            body = json.dumps({
+                "name": self.model,
+                "stream": True,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.host}/api/pull",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                # Stream progress lines
+                last_status = ""
+                for line in resp:
+                    try:
+                        entry = json.loads(line.decode().strip())
+                        status = entry.get("status", "")
+                        if status and status != last_status:
+                            digest = entry.get("digest", "")[:12]
+                            total = entry.get("total", 0)
+                            completed = entry.get("completed", 0)
+                            if total > 0:
+                                pct = int(100 * completed / total)
+                                print(f"[ollama] Pulling {self.model}: "
+                                      f"{pct}% {status} {digest}", file=sys.stderr)
+                            else:
+                                print(f"[ollama] Pulling: {status}", file=sys.stderr)
+                            last_status = status
+                    except json.JSONDecodeError:
+                        pass
+            return self._model_exists()
         except Exception as e:
-            print(f"[ollama] Server unreachable at {self.host}: {e}", file=sys.stderr)
+            print(f"[ollama] Pull error: {e}", file=sys.stderr)
             return False
+
+    def _fingerprint(self) -> Optional[Dict]:
+        """Get model provenance via POST /api/show.
+
+        Returns:
+            Dict with model_name, model_family, parameter_size,
+            content_sha256, model_format, quantization, ollama_host,
+            fingerprinted_at.
+        """
+        try:
+            body = json.dumps({"name": self.model}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.host}/api/show",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+
+            modelfile = data.get("modelfile", "")
+            sha_match = re.search(r"sha256-([a-f0-9]{64})", modelfile)
+            sha256 = sha_match.group(1) if sha_match else ""
+            details = data.get("details", {})
+
+            prov = {
+                "model_name": self.model,
+                "model_family": details.get("family", ""),
+                "parameter_size": details.get("parameter_size", ""),
+                "content_sha256": sha256,
+                "model_format": details.get("format", ""),
+                "quantization": details.get("quantization_level", "BF16"),
+                "ollama_host": self.host,
+                "fingerprinted_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            if sha256:
+                short = sha256[:12]
+                print(f"[ollama] Provenance: {prov['model_family']} "
+                      f"{prov['parameter_size']} {prov['quantization']} "
+                      f"sha256:{short}", file=sys.stderr)
+            return prov
+
+        except Exception as e:
+            print(f"[ollama] Provenance unavailable: {e}", file=sys.stderr)
+            return {
+                "model_name": self.model,
+                "ollama_host": self.host,
+                "fingerprinted_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    # ── Inference ──────────────────────────────────────────────────────────
 
     def chat(self, messages: List[Dict], image: Optional[np.ndarray] = None,
              system_prompt: Optional[str] = None) -> Optional[str]:
@@ -91,7 +249,6 @@ class OllamaVLM:
         Returns:
             Response text, or None on failure.
         """
-        # Build Ollama API request
         body: Dict[str, Any] = {
             "model": self.model,
             "messages": [],
@@ -106,10 +263,8 @@ class OllamaVLM:
         if system_prompt:
             body["messages"].append({"role": "system", "content": system_prompt})
 
-        # Add image if provided (Ollama supports base64 inline)
         for msg in messages:
             if image is not None and msg == messages[0]:
-                # Embed image as base64 JPEG in the first user message
                 _, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 img_b64 = base64.b64encode(buf).decode("utf-8")
                 body["messages"].append({
@@ -120,7 +275,6 @@ class OllamaVLM:
             else:
                 body["messages"].append(msg)
 
-        # Send request
         try:
             data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(
@@ -149,15 +303,7 @@ class OllamaVLM:
             return None
 
     def ground(self, image: np.ndarray, query: str) -> Optional[Dict]:
-        """Ground a natural language query to a specific UI element.
-
-        Args:
-            image: BGR screenshot.
-            query: Natural language description of the element to find.
-
-        Returns:
-            Dict with bbox, label, confidence, or None.
-        """
+        """Ground a natural language query to a specific UI element."""
         h, w = image.shape[:2]
         prompt = (
             f"Point to {query}. Output ONLY the bounding box as "
@@ -177,15 +323,7 @@ class OllamaVLM:
         return self._parse_coordinates(response, query, image, normalized=True)
 
     def describe(self, image: np.ndarray, style: str = "detailed") -> Optional[str]:
-        """Describe a UI screenshot in natural language.
-
-        Args:
-            image: BGR screenshot.
-            style: "brief" or "detailed".
-
-        Returns:
-            Natural language description string, or None.
-        """
+        """Describe a UI screenshot in natural language."""
         if style == "brief":
             prompt = "Describe this UI screenshot in one sentence. Focus on what the user sees: dialog titles, button labels, text fields, checkboxes. Be specific about visible text."
         else:
@@ -208,18 +346,7 @@ class OllamaVLM:
     def _parse_coordinates(self, text: str, query: str,
                             image: np.ndarray,
                             normalized: bool = False) -> Optional[Dict]:
-        """Parse model output for bounding box coordinates.
-
-        Args:
-            text: Raw model response.
-            query: Original grounding query.
-            image: Source image (for size reference).
-            normalized: If True, coordinates are in 0-1000 range
-                        and should be denormalized to pixels.
-        """
-        import re
-
-        # Pattern: [number, number, number, number]
+        """Parse model output for bounding box coordinates."""
         m = re.search(
             r'\[\s*(\d+)\s*[,\s]\s*(\d+)\s*[,\s]\s*(\d+)\s*[,\s]\s*(\d+)\s*\]',
             text
@@ -230,23 +357,18 @@ class OllamaVLM:
             h, w = image.shape[:2]
 
             if normalized:
-                # Denormalize from 0-1000 to pixel coordinates
                 x1 = int(x1 * w / 1000)
                 y1 = int(y1 * h / 1000)
                 x2 = int(x2 * w / 1000)
                 y2 = int(y2 * h / 1000)
 
-            # Clamp to image bounds
             x1 = max(0, min(w, x1))
             y1 = max(0, min(h, y1))
             x2 = max(0, min(w, x2))
             y2 = max(0, min(h, y2))
 
-            # Ensure minimum size
-            if x2 - x1 < 2:
-                x2 = x1 + 2
-            if y2 - y1 < 2:
-                y2 = y1 + 2
+            if x2 - x1 < 2: x2 = x1 + 2
+            if y2 - y1 < 2: y2 = y1 + 2
 
             return {
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
@@ -255,7 +377,6 @@ class OllamaVLM:
                 "raw_response": text,
             }
 
-        # No coordinates found
         print(f"[ollama] Could not parse coordinates from: {text[:200]}",
               file=sys.stderr)
         return {"label": query, "confidence": 0.3, "raw_response": text}
@@ -294,6 +415,8 @@ def get_ollama_vlm(host: Optional[str] = None,
         _ollama_vlm = client
         print(f"[vlm] Ollama VLM configured: {client.model} @ {client.host}",
               file=sys.stderr)
+        # Trigger provenance fingerprint
+        _ = client.provenance
         return client
 
     print(f"[vlm] Ollama VLM unavailable at {client.host}", file=sys.stderr)

@@ -164,6 +164,7 @@ def create_app() -> FastAPI:
         vlm_status = "disabled"
         vlm_model = None
         vlm_host = None
+        vlm_provenance = None
         vlm_provider = os.environ.get("VLM_PROVIDER", "").lower()
 
         if vlm_provider == "ollama" and _HAS_OLLAMA:
@@ -172,10 +173,19 @@ def create_app() -> FastAPI:
                 vlm_status = "connected"
                 vlm_model = ollama.model
                 vlm_host = ollama.host
+                vlm_provenance = ollama.provenance
             else:
                 vlm_status = "unreachable"
         elif detectors.get("vlm_ground"):
             vlm_status = "local"
+
+        # Git commit for reproducibility
+        git_commit = ""
+        try:
+            from provenance import get_git_commit
+            git_commit = get_git_commit()
+        except ImportError:
+            pass
 
         return {
             "status": "healthy",
@@ -191,6 +201,10 @@ def create_app() -> FastAPI:
                 "status": vlm_status,
                 "model": vlm_model,
                 "host": vlm_host,
+                "provenance": vlm_provenance,
+            },
+            "provenance": {
+                "git_commit": git_commit,
             },
             "env": {
                 "UI_DETECTOR": os.environ.get("UI_DETECTOR", "contour"),
@@ -578,6 +592,7 @@ def create_app() -> FastAPI:
                         "backend": "ollama",
                         "model": ollama.model,
                         "inference_ms": round(elapsed, 1),
+                        "provenance": ollama.provenance,
                     })
                 if result:
                     # VLM responded but couldn't parse coordinates
@@ -668,6 +683,7 @@ def create_app() -> FastAPI:
                         "backend": "ollama",
                         "model": ollama.model,
                         "inference_ms": round(elapsed, 1),
+                        "provenance": ollama.provenance,
                     })
 
         # --- Fall back to local Florence-2 ---
