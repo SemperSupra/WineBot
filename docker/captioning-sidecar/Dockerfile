@@ -33,20 +33,25 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pillow
 
 # ── HuggingFace transformers + Florence-2 ──────────────────────────────────
-# Pin transformers version that works with Florence-2's remote code config
+# Pin transformers version that works with Florence-2's remote code config.
+# timm + einops required by Florence-2's modeling code.
 RUN pip3 install --no-cache-dir --break-system-packages \
     "transformers>=4.45.0,<4.50.0" \
     accelerate \
     peft \
-    bitsandbytes
+    bitsandbytes \
+    timm \
+    einops
 
 # ── FastAPI server ────────────────────────────────────────────────────────
 RUN pip3 install --no-cache-dir --break-system-packages \
     fastapi \
     uvicorn
 
-# ── Pre-download Florence-2-base to shared cache ──────────────────────────
-RUN python3 -c "from transformers import AutoProcessor, AutoModelForCausalLM; import torch; mid='microsoft/Florence-2-base'; print(f'Pre-downloading {mid}...'); m=AutoModelForCausalLM.from_pretrained(mid, torch_dtype=torch.bfloat16, trust_remote_code=True); p=AutoProcessor.from_pretrained(mid, trust_remote_code=True); print('Florence-2-base cached')"
+# Florence-2-base is downloaded on first run (via HuggingFace cache mount).
+# Pre-download during build isn't practical because Florence-2's dynamic
+# modules need a GPU to validate — the download happens transparently
+# when the container starts with --gpus and a mounted HF cache.
 
 # ── Copy server ───────────────────────────────────────────────────────────
 COPY server.py /server.py
