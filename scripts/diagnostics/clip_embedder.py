@@ -26,6 +26,7 @@ from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
+from PIL import Image
 
 
 class CLIPSceneEmbedder:
@@ -242,11 +243,132 @@ class OpenCLIPEmbedder(CLIPSceneEmbedder):
         return features.cpu().numpy().astype(np.float32)
 
 
-# Lazy import for PIL (used in preprocess path) — done at module level for OpenCLIP
-try:
-    from PIL import Image  # noqa: F401 (used by OpenCLIPEmbedder)
-except ImportError:
-    pass
+# ── SigLIP 2 Backend ──────────────────────────────────────────────────────────
+
+class SigLIP2Embedder(CLIPSceneEmbedder):
+    """SigLIP 2 ViT-B-16 via open_clip. ~10% higher zero-shot than CLIP ViT-B-32.
+
+    Google DeepMind, Feb 2025. 86M params, 109 languages, Apache 2.0.
+    Uses sigmoid-based scoring (better calibrated than CLIP softmax).
+    Native variable-aspect ratio via NaFlex variant.
+
+    Model loaded from HuggingFace hub via open_clip:
+      hf-hub:timm/ViT-B-16-SigLIP2-384  (384px, recommended)
+      hf-hub:timm/ViT-B-16-SigLIP2-256  (256px, faster, smaller)
+    """
+
+    name = "siglip2"
+    dim = 768  # SigLIP 2 ViT-B/16 uses 768-dim embeddings
+    model_size_mb = 350.0
+
+    MODEL_KEY = "hf-hub:timm/ViT-B-16-SigLIP2-384"
+
+    def __init__(self):
+        self._model = None
+        self._preprocess = None
+        self._tokenizer = None
+        self._device = "cpu"
+
+        try:
+            import torch  # noqa: F401
+            self._has_torch = True
+        except ImportError:
+            self._has_torch = False
+
+        try:
+            import open_clip  # noqa: F401
+            self._has_open_clip = True
+        except ImportError:
+            self._has_open_clip = False
+
+        self.available = self._has_torch and self._has_open_clip
+
+    def _load_model(self):
+        if self._model is not None:
+            return
+
+        import torch
+        import open_clip
+
+        if torch.cuda.is_available():
+            self._device = "cuda"
+            self.uses_gpu = True
+        else:
+            self._device = "cpu"
+
+        model_key = os.environ.get("SIGLIP2_MODEL_KEY", self.MODEL_KEY)
+        print(f"[siglip2] Loading {model_key} on {self._device}...",
+              file=sys.stderr)
+
+        self._model, self._preprocess, self._tokenizer = (
+            open_clip.create_model_and_transforms(model_key)
+        )
+        self._model = self._model.to(self._device)
+        self._model.eval()
+
+        # Get actual embedding dimension (may differ by variant)
+        if hasattr(self._model, 'visual'):
+            self.dim = self._model.visual.output_dim
+        elif hasattr(self._model, 'output_dim'):
+            self.dim = self._model.output_dim
+
+        total_params = sum(p.numel() for p in self._model.parameters())
+        print(f"[siglip2] Loaded: {total_params/1e6:.0f}M params, "
+              f"dim={self.dim}, device={self._device}", file=sys.stderr)
+
+    def embed_image(self, image: np.ndarray) -> np.ndarray:
+        self._load_model()
+        if self._model is None:
+            return np.zeros(self.dim, dtype=np.float32)
+
+        import torch
+
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        img_tensor = self._preprocess(Image.fromarray(rgb)).unsqueeze(0)
+        img_tensor = img_tensor.to(self._device)
+
+        with torch.no_grad(), torch.amp.autocast('cuda' if self._device == 'cuda' else 'cpu'):
+            features = self._model.encode_image(img_tensor)
+            features = features / features.norm(dim=-1, keepdim=True)
+
+        return features.cpu().numpy().flatten().astype(np.float32)
+
+    def embed_text(self, text: str) -> np.ndarray:
+        self._load_model()
+        if self._model is None:
+            return np.zeros(self.dim, dtype=np.float32)
+
+        import torch
+        import open_clip
+
+        tokens = open_clip.tokenize([text])
+        tokens = tokens.to(self._device)
+
+        with torch.no_grad(), torch.amp.autocast('cuda' if self._device == 'cuda' else 'cpu'):
+            features = self._model.encode_text(tokens)
+            features = features / features.norm(dim=-1, keepdim=True)
+
+        return features.cpu().numpy().flatten().astype(np.float32)
+
+    def embed_batch(self, images: List[np.ndarray]) -> np.ndarray:
+        self._load_model()
+        if self._model is None or not images:
+            return np.zeros((len(images), self.dim), dtype=np.float32)
+
+        import torch
+        from PIL import Image as PILImage
+
+        batch = []
+        for img in images:
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            batch.append(self._preprocess(PILImage.fromarray(rgb)))
+        batch_tensor = torch.stack(batch).to(self._device)
+
+        with torch.no_grad(), torch.amp.autocast('cuda' if self._device == 'cuda' else 'cpu'):
+            features = self._model.encode_image(batch_tensor)
+            features = features / features.norm(dim=-1, keepdim=True)
+
+        return features.cpu().numpy().astype(np.float32)
 
 
 # ── ONNX Backend ───────────────────────────────────────────────────────────────
@@ -385,8 +507,10 @@ def get_clip_embedder(backend: Optional[str] = None) -> CLIPSceneEmbedder:
     if backend is None:
         backend = os.environ.get("CLIP_BACKEND", "").lower()
         if not backend:
-            # Auto-select: prefer OpenCLIP (GPU), fall back to ONNX (CPU)
-            if OpenCLIPEmbedder().available:
+            # Auto-select: prefer SigLIP 2 (best accuracy) > OpenCLIP > ONNX
+            if SigLIP2Embedder().available:
+                backend = "siglip2"
+            elif OpenCLIPEmbedder().available:
                 backend = "open_clip"
             elif ONNXCLIPEmbedder().available:
                 backend = "onnx"
@@ -396,7 +520,14 @@ def get_clip_embedder(backend: Optional[str] = None) -> CLIPSceneEmbedder:
     if _clip_embedder is not None and _clip_embedder.name == backend:
         return _clip_embedder
 
-    if backend == "open_clip":
+    if backend == "siglip2":
+        emb = SigLIP2Embedder()
+        if emb.available:
+            _clip_embedder = emb
+        else:
+            print("[clip] SigLIP 2 not available, falling back to OpenCLIP", file=sys.stderr)
+            _clip_embedder = OpenCLIPEmbedder() if OpenCLIPEmbedder().available else CLIPSceneEmbedder()
+    elif backend == "open_clip":
         emb = OpenCLIPEmbedder()
         if emb.available:
             _clip_embedder = emb
