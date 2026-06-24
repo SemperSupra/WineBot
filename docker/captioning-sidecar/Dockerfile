@@ -46,16 +46,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     uvicorn
 
 # ── Pre-download Florence-2-base to shared cache ──────────────────────────
-RUN python3 -c "
-from transformers import AutoProcessor, AutoModelForCausalLM
-import torch
-model_id = 'microsoft/Florence-2-base'
-print(f'Pre-downloading {model_id}...')
-model = AutoModelForCausalLM.from_pretrained(
-    model_id, torch_dtype=torch.bfloat16, trust_remote_code=True)
-processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-print('Florence-2-base cached successfully')
-"
+RUN python3 -c "from transformers import AutoProcessor, AutoModelForCausalLM; import torch; mid='microsoft/Florence-2-base'; print(f'Pre-downloading {mid}...'); m=AutoModelForCausalLM.from_pretrained(mid, torch_dtype=torch.bfloat16, trust_remote_code=True); p=AutoProcessor.from_pretrained(mid, trust_remote_code=True); print('Florence-2-base cached')"
 
 # ── Copy server ───────────────────────────────────────────────────────────
 COPY docker/captioning-sidecar/server.py /server.py
