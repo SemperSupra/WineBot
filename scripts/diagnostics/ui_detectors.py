@@ -1025,6 +1025,315 @@ class WineUIDetector(YOLOUIDetector):
         return elements
 
 
+# ── VLM Grounding Detector ────────────────────────────────────────────────────
+
+class VLMGroundingDetector(UIDetector):
+    """Vision-Language Model for natural-language GUI element grounding.
+
+    Uses KV-Ground-8B (vocaela/KV-Ground-8B-BaseGuiOwl1.5-0315) — a
+    specialized GUI grounding VLM based on Qwen3-VL-8B. Achieves 73.2
+    on ScreenSpot-Pro, 94.6 on ScreenSpot-V2.
+
+    Unlike class-based detectors, the VLM takes a natural language query
+    (e.g. "find the Save button") and returns the specific element's
+    bounding box. This is complementary — the class-based detector finds
+    all elements of known types, while the VLM finds specific elements
+    described in natural language.
+
+    Supports:
+      - BF16 via transformers (~16 GB VRAM, full quality)
+      - INT4 via llama-cpp-python (~6 GB VRAM, GGUF quantized)
+      - Automatic fallback between providers
+    """
+
+    name = "vlm_ground"
+    available = False
+    uses_gpu = True
+
+    # Model identifiers
+    HF_REPO = "vocaela/KV-Ground-8B-BaseGuiOwl1.5-0315"
+    GGUF_REPO = "mradermacher/KV-Ground-8B-BaseGuiOwl1.5-0315-GGUF"
+    GGUF_FILE = "KV-Ground-8B-BaseGuiOwl1.5-0315-Q4_K_M.gguf"
+
+    def __init__(self):
+        self._model = None
+        self._processor = None
+        self._backend = None  # "transformers" or "llama_cpp"
+
+        # Check availability lazily — don't load the model until needed
+        try:
+            import torch  # noqa: F401
+            self._torch_available = True
+        except ImportError:
+            self._torch_available = False
+
+        # Try transformers path
+        try:
+            import transformers  # noqa: F401
+            self._has_transformers = True
+        except ImportError:
+            self._has_transformers = False
+
+        # Try llama-cpp path (lighter weight)
+        try:
+            import llama_cpp  # noqa: F401
+            self._has_llama_cpp = True
+        except ImportError:
+            self._has_llama_cpp = False
+
+        self.available = self._torch_available and (
+            self._has_transformers or self._has_llama_cpp
+        )
+
+    def _load_model(self):
+        """Lazy-load the VLM model on first use."""
+        if self._model is not None:
+            return
+
+        import torch
+
+        # Try GGUF (llama-cpp-python) first — lighter, faster startup
+        if self._has_llama_cpp:
+            gguf_path = os.environ.get(
+                "VLM_MODEL_PATH",
+                f"/models/vlm/{self.GGUF_FILE}"
+            )
+            if os.path.isfile(gguf_path):
+                try:
+                    import llama_cpp
+                    from llama_cpp import Llama
+
+                    print(f"[vlm_ground] Loading GGUF from {gguf_path}...",
+                          file=sys.stderr)
+                    self._model = Llama(
+                        model_path=gguf_path,
+                        n_ctx=4096,
+                        n_gpu_layers=-1,  # All layers on GPU
+                        verbose=False,
+                    )
+                    self._backend = "llama_cpp"
+                    print(f"[vlm_ground] GGUF model loaded (GPU layers: all)",
+                          file=sys.stderr)
+                    return
+                except Exception as e:
+                    print(f"[vlm_ground] GGUF load failed: {e}", file=sys.stderr)
+
+        # Try transformers path
+        if self._has_transformers:
+            try:
+                from transformers import AutoProcessor, AutoModelForVision2Seq
+                from qwen_vl_utils import process_vision_info
+
+                model_dir = os.environ.get(
+                    "VLM_MODEL_DIR",
+                    f"/models/vlm/{self.HF_REPO.split('/')[-1]}"
+                )
+
+                print(f"[vlm_ground] Loading transformers VLM from {model_dir}...",
+                      file=sys.stderr)
+
+                # Download from HF if not cached
+                if not os.path.isdir(model_dir) or not os.path.isfile(
+                    os.path.join(model_dir, "config.json")
+                ):
+                    model_id = os.environ.get("VLM_HF_REPO", self.HF_REPO)
+                    self._model = AutoModelForVision2Seq.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto",
+                        trust_remote_code=True,
+                    )
+                    self._processor = AutoProcessor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                    )
+                else:
+                    self._model = AutoModelForVision2Seq.from_pretrained(
+                        model_dir,
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto",
+                        trust_remote_code=True,
+                    )
+                    self._processor = AutoProcessor.from_pretrained(
+                        model_dir,
+                        trust_remote_code=True,
+                    )
+
+                self._backend = "transformers"
+                print(f"[vlm_ground] Transformers model loaded on {self._model.device}",
+                      file=sys.stderr)
+                return
+
+            except ImportError:
+                print("[vlm_ground] qwen_vl_utils not available", file=sys.stderr)
+            except Exception as e:
+                print(f"[vlm_ground] Transformers load failed: {e}", file=sys.stderr)
+
+        self.available = False
+        print("[vlm_ground] No VLM backend available. Download model to "
+              f"/models/vlm/ or install llama-cpp-python/transformers",
+              file=sys.stderr)
+
+    def ground(self, image: np.ndarray, query: str) -> Optional[Dict]:
+        """Ground a natural language query to a specific UI element.
+
+        Args:
+            image: BGR screenshot as numpy array.
+            query: Natural language description, e.g. "the Save button"
+                   or "the File menu item".
+
+        Returns:
+            Dict with bbox, label, confidence, or None if not found.
+            {"bbox": [x, y, w, h], "label": "Save button",
+             "confidence": 0.95, "query": "the Save button"}
+        """
+        self._load_model()
+        if self._model is None:
+            return None
+
+        if self._backend == "llama_cpp":
+            return self._ground_llama_cpp(image, query)
+        elif self._backend == "transformers":
+            return self._ground_transformers(image, query)
+        return None
+
+    def _ground_llama_cpp(self, image: np.ndarray, query: str) -> Optional[Dict]:
+        """Use llama-cpp-python with GGUF-quantized model."""
+        import base64
+
+        # Encode image as base64 JPEG
+        _, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        img_b64 = base64.b64encode(buf).decode("utf-8")
+
+        # Build prompt with image + instruction
+        data_url = f"data:image/jpeg;base64,{img_b64}"
+        prompt = (
+            f"<|vision_start|>{data_url}<|vision_end|>"
+            f"Point to {query}. Return the bounding box coordinates "
+            f"in format [x1, y1, x2, y2] normalized to 0-1000."
+        )
+
+        try:
+            response = self._model.create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=128,
+                temperature=0.0,
+            )
+            text = response["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[vlm_ground] llama.cpp inference error: {e}", file=sys.stderr)
+            return None
+
+        return self._parse_grounding_response(text, query)
+
+    def _ground_transformers(self, image: np.ndarray, query: str) -> Optional[Dict]:
+        """Use transformers with full BF16 model."""
+        import torch
+        from qwen_vl_utils import process_vision_info
+
+        # Convert BGR to RGB
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        from PIL import Image
+        pil_img = Image.fromarray(rgb)
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "image", "image": pil_img},
+                {"type": "text", "text": f"Point to {query}."},
+            ]}
+        ]
+
+        try:
+            text = self._processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            image_inputs, video_inputs = process_vision_info(messages)
+            inputs = self._processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            ).to(self._model.device)
+
+            with torch.no_grad():
+                generated_ids = self._model.generate(
+                    **inputs, max_new_tokens=128, temperature=0.0
+                )
+            generated_ids = [
+                output_ids[len(input_ids):]
+                for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
+            ]
+            response = self._processor.batch_decode(
+                generated_ids, skip_special_tokens=True
+            )[0]
+        except Exception as e:
+            print(f"[vlm_ground] Transformers inference error: {e}", file=sys.stderr)
+            return None
+
+        return self._parse_grounding_response(response, query)
+
+    def _parse_grounding_response(self, text: str, query: str) -> Optional[Dict]:
+        """Parse model output for bounding box coordinates.
+
+        Handles common output formats:
+          - [x1, y1, x2, y2]  (normalized 0-1000 or pixel coords)
+          - <box>x1 y1 x2 y2</box>
+          - JSON-like: {"bbox": [x1, y1, x2, y2]}
+        """
+        import re
+        import json
+
+        # Try to extract coordinates
+        # Pattern 1: [number, number, number, number]
+        m = re.search(r'\[(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)\]', text)
+        if m:
+            coords = [int(m.group(i)) for i in range(1, 5)]
+            # If coordinates are > 1000, they're likely pixel coordinates
+            if max(coords) > 1000:
+                # Already pixel coords, convert from x1y1x2y2 to xywh
+                return {
+                    "bbox": [coords[0], coords[1],
+                             coords[2] - coords[0], coords[3] - coords[1]],
+                    "label": query,
+                    "confidence": 0.85,
+                    "raw_response": text,
+                }
+            else:
+                # Normalized 0-1000 → need image size for conversion
+                return {
+                    "bbox": coords,  # Caller should denormalize
+                    "label": query,
+                    "confidence": 0.85,
+                    "normalized": "0-1000",
+                    "raw_response": text,
+                }
+
+        # Pattern 2: <box>x1 y1 x2 y2</box>
+        m = re.search(r'<box>\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*</box>', text)
+        if m:
+            coords = [int(m.group(i)) for i in range(1, 5)]
+            return {
+                "bbox": [coords[0], coords[1],
+                         coords[2] - coords[0], coords[3] - coords[1]],
+                "label": query,
+                "confidence": 0.85,
+                "raw_response": text,
+            }
+
+        # No coordinate format matched
+        print(f"[vlm_ground] Could not parse coordinates from: {text[:200]}",
+              file=sys.stderr)
+        return {"label": query, "confidence": 0.3, "raw_response": text}
+
+    def detect(self, image: np.ndarray) -> List[Dict]:
+        """VLM grounding is query-driven — detect() returns empty.
+
+        Use ground(image, query) for natural-language element finding.
+        """
+        return []
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 _ui_detector: Optional[UIDetector] = None
@@ -1080,6 +1389,12 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
             print(f"[ui] Wine fine-tuned requested but not available, "
                   f"falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
+    elif backend == "vlm_ground":
+        _ui_detector = VLMGroundingDetector()
+        if not _ui_detector.available:
+            print(f"[ui] VLM grounding requested but no backend available, "
+                  f"falling back to contour", file=sys.stderr)
+            _ui_detector = ContourDetector()
     else:
         _ui_detector = ContourDetector()
 
@@ -1096,6 +1411,7 @@ def available_detectors() -> Dict[str, bool]:
         "screenparser": ScreenParserDetector().available,
         "screenparser_wine": ScreenParserWineDetector().available,
         "wine": WineUIDetector().available,
+        "vlm_ground": VLMGroundingDetector().available,
     }
 
 

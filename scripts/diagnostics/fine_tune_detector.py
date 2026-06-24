@@ -31,38 +31,35 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 
 def verify_dataset(data_yaml: str):
-    """Verify YOLO dataset format."""
+    """Verify YOLO dataset format (reads train/val paths from data.yaml)."""
+    import yaml
     if not os.path.exists(data_yaml):
         print(f"ERROR: data.yaml not found: {data_yaml}", file=sys.stderr)
         sys.exit(1)
 
-    # Check images and labels exist
     base = os.path.dirname(data_yaml)
-    img_dir = os.path.join(base, "images")
-    lbl_dir = os.path.join(base, "labels")
+    with open(data_yaml) as f:
+        cfg = yaml.safe_load(f)
 
-    if not os.path.isdir(img_dir):
-        print(f"ERROR: images directory not found: {img_dir}", file=sys.stderr)
-        sys.exit(1)
+    # Check train images directory
+    train_dir = cfg.get("train", "images")
+    train_img_dir = os.path.join(base, train_dir)
+    val_dir = cfg.get("val", train_dir)
+    val_img_dir = os.path.join(base, val_dir)
 
-    imgs = sorted([f for f in os.listdir(img_dir) if f.endswith(".png")])
-    lbls = sorted([f for f in os.listdir(lbl_dir) if f.endswith(".txt")])
-
-    if not imgs:
-        print(f"ERROR: no images in {img_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Dataset: {len(imgs)} images, {len(lbls)} label files")
-
-    # Count annotations
-    total_boxes = 0
-    for lbl in lbls[:100]:  # Check first 100
-        with open(os.path.join(lbl_dir, lbl)) as f:
-            total_boxes += len([l for l in f if l.strip()])
-
-    print(f"  ~{total_boxes} bounding boxes (in first 100 files)")
+    for label, d in [("train", train_img_dir), ("val", val_img_dir)]:
+        if not os.path.isdir(d):
+            print(f"ERROR: {label} images directory not found: {d}", file=sys.stderr)
+            sys.exit(1)
+        imgs = sorted([f for f in os.listdir(d) if f.endswith(".png")])
+        if not imgs:
+            print(f"ERROR: no images in {label}: {d}", file=sys.stderr)
+            sys.exit(1)
+        print(f"  {label}: {len(imgs)} images in {d}")
 
 
 def fine_tune(model_path: str, data_yaml: str, output_path: str,

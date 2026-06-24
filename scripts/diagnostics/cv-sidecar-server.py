@@ -494,6 +494,70 @@ def create_app() -> FastAPI:
             "elapsed_s": round(float(elapsed), 2),
         })
 
+    @app.post("/ground")
+    async def vlm_ground(request_data: Dict):
+        """Ground a natural language query to a specific UI element using VLM.
+
+        Uses the VLM grounding detector (KV-Ground-8B or similar) to find a
+        specific element described in natural language. Complementary to
+        /analyze — this finds ONE element by description rather than
+        enumerating all elements by class.
+
+        Request body:
+          {"image": "<base64 PNG>", "query": "the blue Submit button",
+           "ui_detector": "vlm_ground"}  # optional override
+
+        Returns:
+          {"found": true, "bbox": [x, y, w, h], "label": "Submit button",
+           "confidence": 0.92, "query": "the blue Submit button"}
+        """
+        img_b64 = request_data.get("image", "")
+        query = request_data.get("query", "")
+
+        if not img_b64:
+            raise HTTPException(status_code=400, detail="image (base64 PNG) required")
+        if not query:
+            raise HTTPException(status_code=400, detail="query required")
+
+        # Decode image
+        try:
+            img_bytes = base64.b64decode(img_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid base64 image")
+
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(status_code=400, detail="could not decode image")
+
+        # Use VLM grounding detector
+        detector_backend = request_data.get("ui_detector", "vlm_ground")
+        detector = get_ui_detector(detector_backend)
+
+        if not hasattr(detector, 'ground'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"detector '{detector.name}' does not support natural language grounding. "
+                       f"Use 'vlm_ground' backend."
+            )
+
+        result = detector.ground(img, query)
+        if result is None or result.get("confidence", 0) < 0.3:
+            return JSONResponse(content={
+                "found": False,
+                "query": query,
+                "detector": detector.name,
+            })
+
+        return JSONResponse(content={
+            "found": True,
+            "bbox": result.get("bbox", [0, 0, 0, 0]),
+            "label": result.get("label", query),
+            "confidence": result.get("confidence", 0.0),
+            "query": query,
+            "detector": detector.name,
+        })
+
     @app.post("/benchmark")
     async def benchmark(request_data: Dict):
         """Run multi-engine benchmark with statistical rigor.

@@ -117,9 +117,61 @@ FRAMEWORK_THEMES = {
 }
 
 
+# ── Split Definitions ─────────────────────────────────────────────────────
+
+TRAIN_SCENES = [
+    "save_dialog", "settings", "error_dialog", "notepad",
+    "control_panel", "file_manager", "multi_window", "browser",
+    "terminal", "context_menu", "wizard", "find_replace", "print_dialog",
+]
+VAL_SCENES = ["about_dialog", "file_properties"]
+TEST_SCENES = ["system_tray", "form_fill"]
+
+TRAIN_FRAMEWORKS = [
+    "win32_classic", "win10_fluent", "qt_fusion",
+    "gtk_adwaita", "java_metal", "tkinter",
+]
+TEST_FRAMEWORKS = ["electron_dark", "classic_95"]
+
+
+def _get_split_scenes(split: str) -> List[str]:
+    if split == "train":
+        return TRAIN_SCENES
+    elif split == "val":
+        return VAL_SCENES
+    elif split == "test":
+        return TEST_SCENES
+    return TRAIN_SCENES + VAL_SCENES + TEST_SCENES  # "all"
+
+
+def _get_split_frameworks(split: str) -> List[Dict]:
+    """Return the list of framework theme dicts for this split."""
+    if split in ("val", "test"):
+        # Val/test use held-out frameworks
+        names = TEST_FRAMEWORKS
+    else:
+        names = TRAIN_FRAMEWORKS
+    return [FRAMEWORK_THEMES[n] for n in names if n in FRAMEWORK_THEMES]
+
+
+_CURRENT_SPLIT = "train"
+
+
+def set_split(split: str):
+    """Set the current split for theme sampling."""
+    global _CURRENT_SPLIT
+    _CURRENT_SPLIT = split
+
+
 def sample_theme() -> Dict:
-    """Randomly sample a UI framework theme with jitter."""
-    theme = random.choice(list(FRAMEWORK_THEMES.values())).copy()
+    """Randomly sample a UI framework theme with jitter.
+
+    Uses the current split (set via set_split()) to determine which
+    frameworks are available. Call set_split("test") before generating
+    test-set images to use held-out frameworks only.
+    """
+    frameworks = _get_split_frameworks(_CURRENT_SPLIT)
+    theme = random.choice(frameworks).copy()
     # Jitter colors slightly
     for key in ["title_color", "button_color", "window_bg", "menu_bg"]:
         if key in theme:
@@ -1821,23 +1873,45 @@ TARGET_RESOLUTIONS = [
 DPI_SCALES = [1.0, 1.25, 1.0, 1.5, 1.0, 1.0, 1.75, 1.0, 1.0, 1.0]  # ~30% chance of fractional scaling
 
 
-def generate_dataset(output_dir: str, count: int, seed: int = 42):
-    """Generate a full labeled dataset with cross-resolution and font variation."""
+def generate_dataset(output_dir: str, count: int, seed: int = 42,
+                     split: str = "all"):
+    """Generate a full labeled dataset with cross-resolution and font variation.
+
+    Args:
+        output_dir: Root output directory.
+        count: Total images to generate (distributed across scenes).
+        seed: Random seed for reproducibility.
+        split: "train", "val", "test", or "all" (uses all scenes).
+    """
     random.seed(seed)
     np.random.seed(seed)
 
-    img_dir = os.path.join(output_dir, "images")
-    lbl_dir = os.path.join(output_dir, "labels")
+    # Set split for theme sampling (controls which frameworks are available)
+    set_split(split)
+
+    # Filter generators by split
+    allowed_scenes = _get_split_scenes(split)
+    generators = [(n, f) for n, f in GENERATORS if n in allowed_scenes]
+    if not generators:
+        print(f"ERROR: No generators for split '{split}'", file=sys.stderr)
+        return {"classes": WINE_CLASSES, "images": []}
+
+    if split != "all":
+        img_dir = os.path.join(output_dir, split, "images")
+        lbl_dir = os.path.join(output_dir, split, "labels")
+    else:
+        img_dir = os.path.join(output_dir, "images")
+        lbl_dir = os.path.join(output_dir, "labels")
     os.makedirs(img_dir, exist_ok=True)
     os.makedirs(lbl_dir, exist_ok=True)
 
-    manifest = {"classes": WINE_CLASSES, "images": []}
+    manifest = {"classes": WINE_CLASSES, "split": split, "images": []}
     ocr_entries = []
 
-    per_generator = max(1, count // len(GENERATORS))
+    per_generator = max(1, count // len(generators))
     img_idx = 0
 
-    for gen_name, gen_fn in GENERATORS:
+    for gen_name, gen_fn in generators:
         for i in range(per_generator):
             # Random resolution + DPI for cross-platform robustness
             base_res = random.choice(TARGET_RESOLUTIONS)
@@ -1952,17 +2026,21 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
             if img_idx % 50 == 0:
                 print(f"  {img_idx}/{count} images...")
 
-    # Write data.yaml for YOLO training
-    yaml_path = os.path.join(output_dir, "data.yaml")
-    with open(yaml_path, "w") as f:
-        f.write(f"# WineBot Ground Truth Dataset — {img_idx} images\n")
-        f.write(f"path: {output_dir}\n")
-        f.write(f"train: images\n")
-        f.write(f"val: images\n")
-        f.write(f"nc: {len(WINE_CLASSES)}\n")
-        f.write("names:\n")
-        for i, name in enumerate(WINE_CLASSES):
-            f.write(f"  {i}: {name}\n")
+    # Write data.yaml for YOLO training (only for "train" or "all" splits)
+    if split in ("train", "all"):
+        yaml_path = os.path.join(output_dir, "data.yaml")
+        train_ref = f"{split}/images" if split != "all" else "images"
+        val_ref = "val/images" if os.path.isdir(os.path.join(output_dir, "val", "images")) else train_ref
+        with open(yaml_path, "w") as f:
+            f.write(f"# WineBot Ground Truth Dataset — {split} split, {img_idx} images\n")
+            f.write(f"# Split info: train={TRAIN_SCENES}, val={VAL_SCENES}, test={TEST_SCENES}\n")
+            f.write(f"path: {output_dir}\n")
+            f.write(f"train: {train_ref}\n")
+            f.write(f"val: {val_ref}\n")
+            f.write(f"nc: {len(WINE_CLASSES)}\n")
+            f.write("names:\n")
+            for i, name in enumerate(WINE_CLASSES):
+                f.write(f"  {i}: {name}\n")
 
     # Write OCR ground truth
     ocr_path = os.path.join(output_dir, "ocr_ground_truth.jsonl")
@@ -1975,10 +2053,11 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42):
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"\nDataset generated: {img_idx} images")
+    print(f"\nDataset generated: {img_idx} images ({split} split)")
     print(f"  Images: {img_dir}/")
     print(f"  Labels: {lbl_dir}/")
-    print(f"  Config: {yaml_path}")
+    if split in ("train", "all"):
+        print(f"  Config: {yaml_path}")
     print(f"  OCR GT: {ocr_path}")
     print(f"  Total elements: {sum(m['elements'] for m in manifest['images'])}")
     print(f"  OCR annotations: {len(ocr_entries)}")
@@ -1996,16 +2075,21 @@ def main():
                         help="Number of images to generate")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
+    parser.add_argument("--split", default="all",
+                        choices=["train", "val", "test", "all"],
+                        help="Dataset split: train/val/test scenes + held-out frameworks")
     args = parser.parse_args()
 
-    print(f"WineBot Ground Truth Generator")
+    allowed = _get_split_scenes(args.split)
+    print(f"WineBot Ground Truth Generator — {args.split.upper()} split")
     print(f"  Output: {args.output}")
     print(f"  Images: {args.count}")
     print(f"  Classes: {len(WINE_CLASSES)}")
-    print(f"  Generators: {len(GENERATORS)}")
+    print(f"  Scenes: {len(allowed)} ({', '.join(allowed)})")
+    print(f"  Frameworks: {len(_get_split_frameworks(args.split))}")
     print()
 
-    generate_dataset(args.output, args.count, args.seed)
+    generate_dataset(args.output, args.count, args.seed, args.split)
 
 
 if __name__ == "__main__":
