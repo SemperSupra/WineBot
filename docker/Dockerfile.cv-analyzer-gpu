@@ -127,17 +127,7 @@ COPY scripts/diagnostics/florence2_captioner.py /scripts/florence2_captioner.py
 
 # ── Pre-download CLIP model weights (survives rebuilds via shared cache) ──────
 # Downloads ~500MB to HuggingFace cache (mounted at /models)
-RUN python3 -c "
-import os
-os.environ['HF_HOME'] = '/models/huggingface'
-try:
-    import open_clip
-    model, _, _ = open_clip.create_model_and_transforms(
-        'ViT-B-32', pretrained='laion2b_s34b_b79k')
-    print('[build] CLIP ViT-B-32 cached successfully')
-except Exception as e:
-    print(f'[build] CLIP pre-download note: {e} (will download on first run)')
-"
+RUN python3 -c "import os; os.environ['HF_HOME'] = '/models/huggingface'; import open_clip; model, _, _ = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k'); print('[build] CLIP ViT-B-32 cached')" || echo "[build] CLIP pre-download skipped (will download on first run)"
 
 WORKDIR /work
 EXPOSE 8001
