@@ -764,7 +764,745 @@ def make_control_panel() -> GeneratedPage:
     return GeneratedPage(image=img, elements=elems)
 
 
+# ── New scenes (Rung 4) ─────────────────────────────────────────────────
+
+def make_browser() -> GeneratedPage:
+    """Web browser window with tabs, address bar, bookmarks toolbar, content area."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    wx, wy, ww, wh = 60, 40, 1160, 640
+    elems += draw_window(img, wx, wy, ww, wh, "WineBot Browser", theme=theme,
+                         menu_items=["File", "Edit", "View", "History", "Bookmarks", "Help"])
+
+    tab_bar_y = wy + theme["title_height"] + 22 + 4
+    tabs = ["Home", "Documentation", "GitHub"]
+    tx = wx + 4
+    for j, tab in enumerate(tabs):
+        tw = cv2.getTextSize(tab, theme["font_face"], 0.4, 1)[0][0]
+        bw = tw + 20
+        bg_color = (255, 255, 255) if j == 0 else (225, 225, 225)
+        cv2.rectangle(img, (tx, tab_bar_y), (tx + bw, tab_bar_y + 28), bg_color, -1)
+        cv2.rectangle(img, (tx, tab_bar_y), (tx + bw, tab_bar_y + 28), (180, 180, 180), 1)
+        cv2.putText(img, tab, (tx + 10, tab_bar_y + 19), theme["font_face"], 0.4, (30, 30, 30), 1)
+        elems.append(UIElement(15, [tx, tab_bar_y, bw, 28], "tab", tab))
+        tx += bw + 1
+
+    # Address bar
+    addr_y = tab_bar_y + 34
+    cv2.rectangle(img, (wx + 4, addr_y), (wx + ww - 8, addr_y + 26), (255, 255, 255), -1)
+    cv2.rectangle(img, (wx + 4, addr_y), (wx + ww - 8, addr_y + 26), (160, 160, 160), 1)
+    url = "https://winebot.local/docs/getting-started"
+    cv2.putText(img, url, (wx + 12, addr_y + 18), theme["font_face"], 0.4, (0, 0, 0), 1)
+    elems.append(UIElement(4, [wx + 4, addr_y, ww - 8, 26], "text_field", url))
+
+    # Bookmarks bar
+    bm_y = addr_y + 32
+    cv2.rectangle(img, (wx + 4, bm_y), (wx + ww - 8, bm_y + 22), (242, 242, 242), -1)
+    bm_items = ["Getting Started", "API Reference", "Examples", "FAQ"]
+    bx = wx + 10
+    for bm in bm_items:
+        tw = cv2.getTextSize(bm, theme["font_face"], 0.4, 1)[0][0]
+        cv2.putText(img, bm, (bx, bm_y + 15), theme["font_face"], 0.4, (0, 0, 200), 1)
+        elems.append(UIElement(19, [bx, bm_y, tw, 22], "link", bm))
+        bx += tw + 20
+
+    # Content area
+    content_y = bm_y + 28
+    content_h = wh - (content_y - wy) - 8
+    cv2.rectangle(img, (wx + 4, content_y), (wx + ww - 8, content_y + content_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (wx + 4, content_y), (wx + ww - 8, content_y + content_h), (200, 200, 200), 1)
+    cv2.putText(img, "Welcome to WineBot", (wx + 20, content_y + 40),
+                theme["font_face"], 0.8, (0, 0, 0), 2)
+    cv2.putText(img, "Getting Started Guide", (wx + 20, content_y + 70),
+                theme["font_face"], 0.5, (0, 100, 200), 1)
+    elems.append(UIElement(19, [wx + 20, content_y + 52, 180, 22], "link", "Getting Started"))
+    for k, line in enumerate(["Install the WineBot package:",
+                                "  pip install winebot-cv",
+                                "",
+                                "Configure your first project:",
+                                "  winebot init my-project",
+                                "",
+                                "Start the sidecar service:",
+                                "  winebot serve --gpu"]):
+        cv2.putText(img, line, (wx + 20, content_y + 110 + k * 20),
+                    theme["font_face"], 0.4, (30, 30, 30), 1)
+
+    # Scrollbar
+    sb_x = wx + ww - 20
+    cv2.rectangle(img, (sb_x, content_y), (sb_x + 16, content_y + content_h), (230, 230, 230), -1)
+    cv2.rectangle(img, (sb_x, content_y + 10), (sb_x + 16, content_y + 80), (180, 180, 180), -1)
+    cv2.rectangle(img, (sb_x, content_y + 10), (sb_x + 16, content_y + 80), (150, 150, 150), 1)
+    elems.append(UIElement(13, [sb_x, content_y, 16, content_h], "scrollbar"))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_terminal() -> GeneratedPage:
+    """Terminal/console window with prompt, command output, scrollback."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    wx, wy, ww, wh = 100, 60, 1080, 580
+    # Dark terminal theme
+    dark_theme = FRAMEWORK_THEMES["electron_dark"].copy()
+    elems += draw_window(img, wx, wy, ww, wh, "Terminal", theme=dark_theme,
+                         menu_items=["File", "Edit", "View", "Terminal", "Help"])
+
+    term_y = wy + dark_theme["title_height"] + 22 + 4
+    term_h = wh - (term_y - wy) - 8
+    cv2.rectangle(img, (wx + 4, term_y), (wx + ww - 8, term_y + term_h), (20, 20, 28), -1)
+    elems.append(UIElement(12, [wx + 4, term_y, ww - 8, term_h], "text_area"))
+
+    # Terminal output with green prompt
+    lines = [
+        ("user@winebot:~$ ", "winebot --version"),
+        ("", "WineBot CV/OCR Engine v2.0.0"),
+        ("user@winebot:~$ ", "python3 train.py --epochs 30 --gpu"),
+        ("", "Training complete: mAP50=0.871, mAP50-95=0.646"),
+        ("", "Model saved: models/yolo/wine-finetuned-v2.pt (6.0MB)"),
+        ("user@winebot:~$ ", "ls -la models/"),
+        ("", "drwxr-xr-x  winebot  yolo/"),
+        ("", "drwxr-xr-x  winebot  ocr/"),
+        ("", "drwxr-xr-x  winebot  uidetr1/"),
+        ("", "drwxr-xr-x  winebot  screenparser/"),
+        ("user@winebot:~$ ", "_"),
+    ]
+    for k, (prompt, output) in enumerate(lines):
+        ly = term_y + 14 + k * 20
+        if prompt:
+            cv2.putText(img, prompt, (wx + 12, ly),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 0), 1)
+            cv2.putText(img, output, (wx + 12 + cv2.getTextSize(prompt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0], ly),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+        else:
+            cv2.putText(img, output, (wx + 12, ly),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+
+    # Scrollbar
+    sb_x = wx + ww - 20
+    cv2.rectangle(img, (sb_x, term_y), (sb_x + 16, term_y + term_h), (40, 40, 48), -1)
+    cv2.rectangle(img, (sb_x + 2, term_y + 30), (sb_x + 14, term_y + 100), (70, 70, 78), -1)
+    cv2.rectangle(img, (sb_x + 2, term_y + 30), (sb_x + 14, term_y + 100), (100, 100, 108), 1)
+    elems.append(UIElement(13, [sb_x, term_y, 16, term_h], "scrollbar"))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_context_menu() -> GeneratedPage:
+    """Right-click context menu popup over a desktop or application."""
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    # A window in the background for context
+    wx, wy, ww, wh = 100, 60, 500, 400
+    bg_theme = sample_theme()
+    elems += draw_window(img, wx, wy, ww, wh, "Documents", theme=bg_theme,
+                         menu_items=["File", "Edit", "View"])
+
+    # Context menu popup (appears at cursor position)
+    cm_x, cm_y = 300, 220
+    cm_w, cm_h = 200, 0
+    items = ["Open", "Edit", "Copy", "Paste", "", "Delete", "Rename", "", "Properties"]
+    row_h = 24
+    cm_h = len(items) * row_h
+
+    # Menu background
+    cv2.rectangle(img, (cm_x, cm_y), (cm_x + cm_w, cm_y + cm_h), (252, 252, 252), -1)
+    cv2.rectangle(img, (cm_x, cm_y), (cm_x + cm_w, cm_y + cm_h), (160, 160, 160), 1)
+
+    for k, item in enumerate(items):
+        iy = cm_y + k * row_h
+        if not item:
+            cv2.line(img, (cm_x + 24, iy + row_h // 2),
+                     (cm_x + cm_w - 6, iy + row_h // 2), (200, 200, 200), 1)
+            continue
+        if k == 0:
+            cv2.rectangle(img, (cm_x + 2, iy), (cm_x + cm_w - 2, iy + row_h), (0, 120, 215), -1)
+            cv2.putText(img, item, (cm_x + 28, iy + 17),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        else:
+            cv2.putText(img, item, (cm_x + 28, iy + 17),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (30, 30, 30), 1)
+        if item:
+            elems.append(UIElement(9, [cm_x + 2, iy, cm_w - 4, row_h], "menu_item", item))
+
+    # Subtle shadow behind menu
+    overlay = img[cm_y + cm_h:cm_y + cm_h + 3, cm_x + 3:cm_x + cm_w + 3].copy()
+    overlay = cv2.convertScaleAbs(overlay, alpha=0.85, beta=0)
+    img[cm_y + cm_h:cm_y + cm_h + 3, cm_x + 3:cm_x + cm_w + 3] = overlay
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_wizard() -> GeneratedPage:
+    """Multi-step installation/setup wizard with Back/Next/Finish buttons."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    wx, wy, ww, wh = 180, 60, 920, 580
+    elems += draw_window(img, wx, wy, ww, wh, "Setup Wizard", theme=theme, has_menu=False)
+
+    content_top = wy + theme["title_height"] + 16
+
+    # Steps indicator
+    steps = ["Welcome", "License", "Directory", "Install", "Finish"]
+    step_w = (ww - 40) // len(steps)
+    for k, step in enumerate(steps):
+        sx = wx + 20 + k * step_w
+        color = (0, 120, 215) if k <= random.randint(1, 3) else (180, 180, 180)
+        cv2.circle(img, (sx + step_w // 2, content_top + 12), 12, color, 2)
+        cv2.putText(img, str(k + 1), (sx + step_w // 2 - 4, content_top + 17),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        tw = cv2.getTextSize(step, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)[0][0]
+        cv2.putText(img, step, (sx + (step_w - tw) // 2, content_top + 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        elems.append(UIElement(15, [sx, content_top, step_w, 46], "tab", step))
+
+    # Connector lines between steps
+    for k in range(len(steps) - 1):
+        sx1 = wx + 20 + k * step_w + step_w // 2 + 14
+        sx2 = wx + 20 + (k + 1) * step_w + step_w // 2 - 14
+        cv2.line(img, (sx1, content_top + 12), (sx2, content_top + 12),
+                 (180, 180, 180), 2)
+
+    # Step content area
+    step_y = content_top + 60
+    step_h = wh - (step_y - wy) - 60
+    cv2.rectangle(img, (wx + 16, step_y), (wx + ww - 16, step_y + step_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (wx + 16, step_y), (wx + ww - 16, step_y + step_h), (200, 200, 200), 1)
+
+    # Current step content (varies)
+    current_step = random.randint(1, 4)
+    if current_step <= 2:
+        cv2.putText(img, "License Agreement", (wx + 36, step_y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        license_box = (wx + 36, step_y + 44, ww - 72, step_h - 80)
+        cv2.rectangle(img, (license_box[0], license_box[1]),
+                      (license_box[0] + license_box[2], license_box[1] + license_box[3]),
+                      (248, 248, 248), -1)
+        cv2.rectangle(img, (license_box[0], license_box[1]),
+                      (license_box[0] + license_box[2], license_box[1] + license_box[3]),
+                      (190, 190, 190), 1)
+        for kl, lc_line in enumerate(["END USER LICENSE AGREEMENT",
+                                        "",
+                                        "This software is provided as-is.",
+                                        "You may freely use, copy, and distribute",
+                                        "this software subject to the license terms.",
+                                        "",
+                                        "Copyright (C) 2026 WineBot Project"]):
+            cv2.putText(img, lc_line, (license_box[0] + 10, license_box[1] + 22 + kl * 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (30, 30, 30), 1)
+        # Radio: accept
+        rb_y = license_box[1] + license_box[3] + 14
+        cv2.circle(img, (wx + 56, rb_y + 8), 8, (100, 100, 100), 1)
+        if random.random() > 0.3:
+            cv2.circle(img, (wx + 56, rb_y + 8), 4, (0, 150, 0), -1)
+        cv2.putText(img, "I accept the agreement", (wx + 74, rb_y + 13),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
+        elems.append(UIElement(7, [wx + 36, rb_y, 200, 24], "radio", "accept"))
+    elif current_step == 3:
+        cv2.putText(img, "Installation Directory", (wx + 36, step_y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        tf_y = step_y + 64
+        cv2.rectangle(img, (wx + 36, tf_y), (wx + ww - 100, tf_y + 30), (255, 255, 255), -1)
+        cv2.rectangle(img, (wx + 36, tf_y), (wx + ww - 100, tf_y + 30), (150, 150, 150), 1)
+        path = "C:\\Program Files\\WineBot"
+        cv2.putText(img, path, (wx + 44, tf_y + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
+        elems.append(UIElement(4, [wx + 36, tf_y, ww - 136, 30], "text_field", path))
+        elems.append(draw_button(img, wx + ww - 56, tf_y, 48, 30, "...", theme))
+        # Disk space
+        cv2.putText(img, "Required space: 250 MB", (wx + 36, tf_y + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1)
+        cv2.putText(img, f"Available space: {random.randint(50,500)} GB",
+                    (wx + 36, tf_y + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1)
+    elif current_step == 4:
+        cv2.putText(img, "Ready to Install", (wx + 36, step_y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        cv2.putText(img, "The wizard is ready to begin installation.", (wx + 36, step_y + 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (50, 50, 50), 1)
+        # Progress bar
+        pb_y = step_y + 120
+        pb_w_c = ww - 80
+        pb_h = 26
+        cv2.rectangle(img, (wx + 36, pb_y), (wx + 36 + pb_w_c, pb_y + pb_h), (230, 230, 230), -1)
+        cv2.rectangle(img, (wx + 36, pb_y), (wx + 36 + pb_w_c, pb_y + pb_h), (150, 150, 150), 1)
+        fill = int(pb_w_c * random.uniform(0.3, 0.9))
+        cv2.rectangle(img, (wx + 36, pb_y), (wx + 36 + fill, pb_y + pb_h),
+                      (0, 160, 0), -1)
+        pct = int(fill / pb_w_c * 100)
+        cv2.putText(img, f"{pct}%", (wx + 36 + pb_w_c // 2 - 15, pb_y + 19),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        elems.append(UIElement(16, [wx + 36, pb_y, pb_w_c, pb_h], "progress_bar"))
+
+    # Navigation buttons
+    btn_y = wy + wh - 46
+    if current_step > 1:
+        elems.append(draw_button(img, wx + ww - 220, btn_y, 80, 30, "< Back", theme))
+    if current_step < 4:
+        elems.append(draw_button(img, wx + ww - 120, btn_y, 80, 30, "Next >", theme, primary=True))
+    else:
+        elems.append(draw_button(img, wx + ww - 120, btn_y, 80, 30, "Finish", theme, primary=True))
+    if current_step < 4:
+        elems.append(draw_button(img, wx + ww - 320, btn_y, 80, 30, "Cancel", theme))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+# ── Workflow scenes ─────────────────────────────────────────────────────
+
+def make_find_replace() -> GeneratedPage:
+    """Find/Replace dialog — common in text editors, IDEs, word processors."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    dlg_w, dlg_h = 420, 200
+    dlg_x, dlg_y = (DESKTOP_SIZE[0] - dlg_w) // 2, 120
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (150, 150, 150), 2)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + theme["title_height"]),
+                  theme["title_color"], -1)
+    cv2.putText(img, "Find and Replace", (dlg_x + 10, dlg_y + theme["title_height"] - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dlg_x, dlg_y, dlg_w, theme["title_height"]], "title_bar"))
+    elems.append(UIElement(1, [dlg_x + 10, dlg_y + 3, 120, theme["title_height"] - 6],
+                           "title_text", "Find and Replace"))
+
+    content_y = dlg_y + theme["title_height"] + 10
+    labels = ["Find what:", "Replace with:"]
+    for k, label in enumerate(labels):
+        ly = content_y + k * 34
+        cv2.putText(img, label, (dlg_x + 12, ly + 16), theme["font_face"], 0.45, (50, 50, 50), 1)
+        tf_x = dlg_x + 110
+        tf_w = dlg_w - 130
+        tf_h = 26
+        cv2.rectangle(img, (tf_x, ly), (tf_x + tf_w, ly + tf_h), (255, 255, 255), -1)
+        cv2.rectangle(img, (tf_x, ly), (tf_x + tf_w, ly + tf_h), (150, 150, 150), 1)
+        text = "winebot" if k == 0 else "WineBot"
+        cv2.putText(img, text, (tf_x + 6, ly + 18), theme["font_face"], 0.45, (0, 0, 0), 1)
+        elems.append(UIElement(4, [tf_x, ly, tf_w, tf_h], "text_field", text))
+
+    # Checkboxes
+    cb_y = content_y + 80
+    for j, cb_label in enumerate(["Match case", "Match whole word only", "Wrap around"]):
+        bx = dlg_x + 12 + j * 140
+        cv2.rectangle(img, (bx, cb_y), (bx + 16, cb_y + 16), (255, 255, 255), -1)
+        cv2.rectangle(img, (bx, cb_y), (bx + 16, cb_y + 16), (100, 100, 100), 1)
+        if j == 0 or j == 2:
+            cv2.line(img, (bx + 3, cb_y + 8), (bx + 8, cb_y + 12), (0, 150, 0), 2)
+            cv2.line(img, (bx + 8, cb_y + 12), (bx + 14, cb_y + 3), (0, 150, 0), 2)
+        cv2.putText(img, cb_label, (bx + 22, cb_y + 13), theme["font_face"], 0.35, (30, 30, 30), 1)
+        elems.append(UIElement(6, [bx, cb_y, 16, 16], "checkbox", cb_label))
+
+    # Buttons
+    btn_y = dlg_y + dlg_h - 40
+    for bx, label, primary in [
+        (dlg_x + dlg_w - 240, "Find Next", True),
+        (dlg_x + dlg_w - 160, "Replace", False),
+        (dlg_x + dlg_w - 80, "Replace All", False),
+    ]:
+        elems.append(draw_button(img, bx, btn_y, 72, 28, label, theme, primary=primary))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_print_dialog() -> GeneratedPage:
+    """Print dialog — printer selection, page range, copies."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    dlg_w, dlg_h = 480, 340
+    dlg_x, dlg_y = (DESKTOP_SIZE[0] - dlg_w) // 2, 80
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (150, 150, 150), 2)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + theme["title_height"]),
+                  theme["title_color"], -1)
+    cv2.putText(img, "Print", (dlg_x + 10, dlg_y + theme["title_height"] - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dlg_x, dlg_y, dlg_w, theme["title_height"]], "title_bar"))
+
+    content_y = dlg_y + theme["title_height"] + 10
+    # Printer group
+    cv2.putText(img, "Printer", (dlg_x + 12, content_y + 16), theme["font_face"], 0.5, (0, 0, 0), 1)
+    printers = ["HP LaserJet P3015 (network)", "PDF Writer", "Microsoft Print to PDF"]
+    dd_x, dd_y = dlg_x + 100, content_y
+    dd_w, dd_h = dlg_w - 120, 26
+    cv2.rectangle(img, (dd_x, dd_y), (dd_x + dd_w, dd_y + dd_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (dd_x, dd_y), (dd_x + dd_w, dd_y + dd_h), (150, 150, 150), 1)
+    cv2.putText(img, random.choice(printers), (dd_x + 6, dd_y + 18),
+                theme["font_face"], 0.45, (0, 0, 0), 1)
+    elems.append(UIElement(5, [dd_x, dd_y, dd_w, dd_h], "dropdown", printers[0]))
+
+    # Print range
+    range_y = content_y + 40
+    cv2.rectangle(img, (dlg_x + 10, range_y), (dlg_x + dlg_w - 20, range_y + 70), (248, 248, 248), -1)
+    cv2.putText(img, "Print range", (dlg_x + 18, range_y + 20), theme["font_face"], 0.45, (50, 50, 50), 1)
+    options = ["All", "Selection", "Pages:", "Current page"]
+    for j, opt in enumerate(options):
+        rx = dlg_x + 24 + j * 110
+        cv2.circle(img, (rx + 8, range_y + 42), 8, (100, 100, 100), 1)
+        if j == 0:
+            cv2.circle(img, (rx + 8, range_y + 42), 4, (0, 120, 215), -1)
+        cv2.putText(img, opt, (rx + 20, range_y + 47), theme["font_face"], 0.35, (30, 30, 30), 1)
+        elems.append(UIElement(7, [rx, range_y + 30, 70, 24], "radio", opt))
+    # Pages input if "Pages:" selected
+    pg_x = dlg_x + 24 + 3 * 110 + 30
+    cv2.rectangle(img, (pg_x, range_y + 32), (pg_x + 60, range_y + 56), (255, 255, 255), -1)
+    cv2.rectangle(img, (pg_x, range_y + 32), (pg_x + 60, range_y + 56), (150, 150, 150), 1)
+    cv2.putText(img, "1-5", (pg_x + 4, range_y + 50), theme["font_face"], 0.4, (0, 0, 0), 1)
+    elems.append(UIElement(4, [pg_x, range_y + 32, 60, 24], "text_field", "1-5"))
+
+    # Copies
+    cp_y = range_y + 80
+    cv2.putText(img, "Copies:", (dlg_x + 12, cp_y + 16), theme["font_face"], 0.45, (50, 50, 50), 1)
+    # Spinner
+    sp_x = dlg_x + 80
+    sp_w, sp_h = 60, 26
+    cv2.rectangle(img, (sp_x, cp_y), (sp_x + sp_w, cp_y + sp_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (sp_x, cp_y), (sp_x + sp_w, cp_y + sp_h), (150, 150, 150), 1)
+    cv2.putText(img, "1", (sp_x + 4, cp_y + 18), theme["font_face"], 0.45, (0, 0, 0), 1)
+    # Up/down arrows
+    cv2.rectangle(img, (sp_x + sp_w - 18, cp_y + 2), (sp_x + sp_w - 2, cp_y + 12), (220, 220, 220), -1)
+    cv2.rectangle(img, (sp_x + sp_w - 18, cp_y + 14), (sp_x + sp_w - 2, cp_y + 24), (220, 220, 220), -1)
+    cv2.putText(img, "^", (sp_x + sp_w - 16, cp_y + 10), theme["font_face"], 0.3, (50, 50, 50), 1)
+    cv2.putText(img, "v", (sp_x + sp_w - 16, cp_y + 22), theme["font_face"], 0.3, (50, 50, 50), 1)
+    elems.append(UIElement(21, [sp_x, cp_y, sp_w, sp_h], "spinner_button", "1"))
+
+    # Collate checkbox
+    cb_x = dlg_x + 180
+    cv2.rectangle(img, (cb_x, cp_y), (cb_x + 16, cp_y + 16), (255, 255, 255), -1)
+    cv2.rectangle(img, (cb_x, cp_y), (cb_x + 16, cp_y + 16), (100, 100, 100), 1)
+    cv2.line(img, (cb_x + 3, cp_y + 8), (cb_x + 8, cp_y + 12), (0, 150, 0), 2)
+    cv2.line(img, (cb_x + 8, cp_y + 12), (cb_x + 14, cp_y + 3), (0, 150, 0), 2)
+    cv2.putText(img, "Collate", (cb_x + 22, cp_y + 13), theme["font_face"], 0.4, (30, 30, 30), 1)
+    elems.append(UIElement(6, [cb_x, cp_y, 16, 16], "checkbox", "Collate"))
+
+    # Buttons
+    btn_y = dlg_y + dlg_h - 40
+    elems.append(draw_button(img, dlg_x + dlg_w - 180, btn_y, 80, 28, "Cancel", theme))
+    elems.append(draw_button(img, dlg_x + dlg_w - 90, btn_y, 70, 28, "Print", theme, primary=True))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_about_dialog() -> GeneratedPage:
+    """About/Help → About dialog with version, copyright, credits."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    dlg_w, dlg_h = 380, 240
+    dlg_x, dlg_y = (DESKTOP_SIZE[0] - dlg_w) // 2, 120
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (150, 150, 150), 2)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + theme["title_height"]),
+                  theme["title_color"], -1)
+    title = f"About {random.choice(['WineBot', 'Notepad', '7-Zip', 'VLC Media Player'])}"
+    cv2.putText(img, title, (dlg_x + 10, dlg_y + theme["title_height"] - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dlg_x, dlg_y, dlg_w, theme["title_height"]], "title_bar"))
+
+    content_y = dlg_y + theme["title_height"] + 8
+    # Icon
+    cv2.rectangle(img, (dlg_x + 20, content_y + 20), (dlg_x + 80, content_y + 80),
+                  (0, 120, 215), -1)
+    cv2.putText(img, "WB", (dlg_x + 30, content_y + 60),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+    elems.append(UIElement(20, [dlg_x + 20, content_y + 20, 60, 60], "icon"))
+
+    lines = ["WineBot CV/OCR Engine",
+             "Version 2.0.0",
+             "",
+             "Copyright (C) 2026 WineBot Project",
+             "Licensed under AGPL-3.0",
+             "",
+             "Build: winebot-cv:gpu",
+             "Commit: 6981d2b"]
+    for k, line in enumerate(lines):
+        ly = content_y + 20 + k * 20
+        color = (0, 0, 0) if k < 2 else (80, 80, 80)
+        cv2.putText(img, line, (dlg_x + 100, ly), theme["font_face"], 0.4, color, 1)
+
+    elems.append(draw_button(img, dlg_x + dlg_w - 90, dlg_y + dlg_h - 40, 70, 28,
+                             "OK", theme, primary=True))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_file_properties() -> GeneratedPage:
+    """File/folder Properties dialog — General, Security, Details tabs."""
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    dlg_w, dlg_h = 400, 380
+    dlg_x, dlg_y = (DESKTOP_SIZE[0] - dlg_w) // 2, 80
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + dlg_h), (150, 150, 150), 2)
+    cv2.rectangle(img, (dlg_x, dlg_y), (dlg_x + dlg_w, dlg_y + theme["title_height"]),
+                  theme["title_color"], -1)
+    cv2.putText(img, "document.txt Properties", (dlg_x + 10, dlg_y + theme["title_height"] - 7),
+                theme["font_face"], theme["title_font_scale"], theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dlg_x, dlg_y, dlg_w, theme["title_height"]], "title_bar"))
+
+    # Tabs
+    tab_y = dlg_y + theme["title_height"]
+    tabs = ["General", "Security", "Details", "Previous Versions"]
+    tx = dlg_x + 4
+    for tab in tabs:
+        tw = cv2.getTextSize(tab, theme["font_face"], 0.4, 1)[0][0]
+        cv2.rectangle(img, (tx, tab_y + 2), (tx + tw + 12, tab_y + 24), (240, 240, 240), -1)
+        cv2.rectangle(img, (tx, tab_y + 2), (tx + tw + 12, tab_y + 24), (180, 180, 180), 1)
+        cv2.putText(img, tab, (tx + 6, tab_y + 18), theme["font_face"], 0.4, (30, 30, 30), 1)
+        elems.append(UIElement(15, [tx, tab_y + 2, tw + 12, 22], "tab", tab))
+        tx += tw + 16
+
+    content_y = tab_y + 32
+    # File icon + name
+    cv2.rectangle(img, (dlg_x + 20, content_y), (dlg_x + 68, content_y + 48), (0, 120, 215), -1)
+    cv2.putText(img, "TXT", (dlg_x + 28, content_y + 33),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    elems.append(UIElement(20, [dlg_x + 20, content_y, 48, 48], "icon"))
+    cv2.putText(img, "document.txt", (dlg_x + 80, content_y + 28),
+                theme["font_face"], 0.5, (0, 0, 0), 1)
+
+    # Property rows
+    fields = [
+        ("Type of file:", "Text Document (.txt)"),
+        ("Opens with:", "Notepad"),
+        ("Location:", "C:\\Users\\winebot\\Documents"),
+        ("Size:", f"{random.randint(1,500):,} bytes"),
+        ("Size on disk:", f"{random.randint(4,504):,} bytes"),
+        ("Created:", "June 23, 2026 10:15 AM"),
+        ("Modified:", "June 23, 2026 2:30 PM"),
+        ("Accessed:", "June 23, 2026 2:30 PM"),
+    ]
+    for k, (label, value) in enumerate(fields):
+        fy = content_y + 60 + k * 28
+        cv2.putText(img, label, (dlg_x + 20, fy + 15), theme["font_face"], 0.4, (60, 60, 60), 1)
+        cv2.putText(img, value, (dlg_x + 140, fy + 15), theme["font_face"], 0.4, (0, 0, 0), 1)
+
+    # Attributes checkboxes
+    attr_y = content_y + 60 + len(fields) * 28 + 10
+    for j, attr in enumerate(["Read-only", "Hidden"]):
+        ax = dlg_x + 20 + j * 120
+        cv2.rectangle(img, (ax, attr_y), (ax + 16, attr_y + 16), (255, 255, 255), -1)
+        cv2.rectangle(img, (ax, attr_y), (ax + 16, attr_y + 16), (100, 100, 100), 1)
+        cv2.putText(img, attr, (ax + 22, attr_y + 13), theme["font_face"], 0.4, (30, 30, 30), 1)
+        elems.append(UIElement(6, [ax, attr_y, 16, 16], "checkbox", attr))
+
+    # Buttons
+    btn_y = dlg_y + dlg_h - 40
+    elems.append(draw_button(img, dlg_x + dlg_w - 180, btn_y, 80, 28, "Cancel", theme))
+    elems.append(draw_button(img, dlg_x + dlg_w - 90, btn_y, 70, 28, "OK", theme, primary=True))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_system_tray_popup() -> GeneratedPage:
+    """System tray notification/popup above the taskbar clock."""
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+
+    # A background window for context
+    wx, wy, ww, wh = 200, 80, 600, 400
+    bg_theme = sample_theme()
+    elems += draw_window(img, wx, wy, ww, wh, "Application", theme=bg_theme,
+                         menu_items=["File", "Edit", "Help"])
+
+    # System tray popup (rises from taskbar, right-aligned)
+    popup_w, popup_h = 320, 200
+    px = DESKTOP_SIZE[0] - popup_w - 10
+    py = DESKTOP_SIZE[1] - TASKBAR_HEIGHT - popup_h - 4
+    cv2.rectangle(img, (px, py), (px + popup_w, py + popup_h), (255, 255, 255), -1)
+    cv2.rectangle(img, (px, py), (px + popup_w, py + popup_h), (150, 150, 150), 1)
+
+    # Title bar
+    popup_theme = sample_theme()
+    cv2.rectangle(img, (px, py), (px + popup_w, py + popup_theme["title_height"]),
+                  popup_theme["title_color"], -1)
+    notif_title = random.choice(["WineBot Update", "Backup Complete",
+                                  "Scan Finished", "New Message"])
+    cv2.putText(img, notif_title, (px + 8, py + popup_theme["title_height"] - 7),
+                popup_theme["font_face"], popup_theme["title_font_scale"], (255, 255, 255), 1)
+    elems.append(UIElement(0, [px, py, popup_w, popup_theme["title_height"]], "title_bar"))
+
+    # Content
+    cv2.putText(img, notif_title, (px + 12, py + popup_theme["title_height"] + 24),
+                popup_theme["font_face"], 0.5, (0, 0, 0), 1)
+    body = random.choice([
+        "A new version of WineBot is available.\nClick to download and install.",
+        "Your backup completed successfully.\nAll files were saved.",
+        "Threat scan complete. No threats detected.\nLast scan: 2 minutes ago.",
+    ])
+    for k, body_line in enumerate(body.split("\n")):
+        cv2.putText(img, body_line, (px + 12, py + popup_theme["title_height"] + 48 + k * 20),
+                    popup_theme["font_face"], 0.38, (60, 60, 60), 1)
+
+    # Action buttons/links
+    link_y = py + popup_h - 30
+    cv2.putText(img, "Open WineBot", (px + 12, link_y + 12),
+                popup_theme["font_face"], 0.4, (0, 100, 200), 1)
+    elems.append(UIElement(19, [px + 12, link_y, 90, 20], "link", "Open WineBot"))
+    cv2.putText(img, "Dismiss", (px + popup_w - 60, link_y + 12),
+                popup_theme["font_face"], 0.4, (120, 120, 120), 1)
+    elems.append(UIElement(19, [px + popup_w - 60, link_y, 50, 20], "link", "Dismiss"))
+
+    return GeneratedPage(image=img, elements=elems)
+
+
 # ── Generator registry ──────────────────────────────────────────────────
+
+def make_form_fill() -> GeneratedPage:
+    """Dense government/customs form with labeled fields, checkboxes, signature block.
+
+    Simulates PS Form 2976, I-9, W-4, or similar structured forms that combine
+    text fields, checkboxes, radio groups, date pickers, and signature areas
+    in a dense single-page layout — common in PDF/acrobat workflows.
+    """
+    theme = sample_theme()
+    img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    wx, wy, ww, wh = 80, 40, 1120, 640
+    elems += draw_window(img, wx, wy, ww, wh,
+                         random.choice(["PS Form 2976 — Customs Declaration",
+                                        "Form I-9 — Employment Eligibility",
+                                        "Form W-4 — Employee's Withholding"]),
+                         theme=theme, has_menu=False)
+
+    content_y = wy + theme["title_height"] + 8
+
+    # ── Section headers with horizontal rules ──
+    sections = [
+        ("Sender Information", ["Full Name:", "Street Address:", "City/State/ZIP:",
+                                 "CMR/PSC Box:", "APO/FPO/DPO:"]),
+        ("Addressee Information", ["Full Name:", "Company:", "Street Address:",
+                                    "City/State/ZIP:", "Country:"]),
+        ("Item Description (USPS 2026 — detailed required)",
+         ["Item 1:", "  Description:", "  HS Code:", "  Value ($):", "  Weight (lbs):",
+          "Item 2:", "  Description:", "  HS Code:", "  Value ($):", "  Weight (lbs):"]),
+        ("Declaration", ["Category:", "  [ ] Gift  [ ] Commercial Sample  [ ] Documents",
+                         "  [x] Returned Goods  [ ] Other",
+                         "Signature:", "Date:"]),
+    ]
+
+    section_y = content_y
+    for section_title, fields in sections:
+        # Section header
+        cv2.rectangle(img, (wx + 8, section_y), (wx + ww - 8, section_y + 22),
+                      (230, 230, 240), -1)
+        cv2.putText(img, section_title, (wx + 12, section_y + 16),
+                    theme["font_face"], 0.5, (0, 0, 0), 1)
+        section_y += 28
+
+        for field in fields:
+            if field.strip().startswith("["):
+                # Checkbox/radio line
+                cv2.putText(img, field, (wx + 16, section_y + 14),
+                            theme["font_face"], 0.4, (30, 30, 30), 1)
+                if "x" in field.split("]")[0]:
+                    cv2.rectangle(img, (wx + 20, section_y), (wx + 34, section_y + 16),
+                                  (255, 255, 255), -1)
+                    cv2.rectangle(img, (wx + 20, section_y), (wx + 34, section_y + 16),
+                                  (100, 100, 100), 1)
+                    # Draw checkmark
+                    cv2.line(img, (wx + 23, section_y + 8), (wx + 27, section_y + 12),
+                             (0, 140, 0), 2)
+                    cv2.line(img, (wx + 27, section_y + 12), (wx + 32, section_y + 3),
+                             (0, 140, 0), 2)
+                section_y += 20
+            elif field == "Signature:":
+                cv2.putText(img, field, (wx + 16, section_y + 14),
+                            theme["font_face"], 0.4, (30, 30, 30), 1)
+                # Signature line
+                sig_x = wx + 100
+                cv2.line(img, (sig_x, section_y + 16), (sig_x + 200, section_y + 16),
+                         (180, 180, 180), 1)
+                elems.append(UIElement(4, [sig_x, section_y, 200, 20], "text_field", "signature"))
+                section_y += 24
+            elif field == "Date:":
+                cv2.putText(img, field, (wx + 16, section_y + 14),
+                            theme["font_face"], 0.4, (30, 30, 30), 1)
+                dt = f"{random.randint(1,12):02d}/{random.randint(1,28):02d}/{random.randint(2022,2026)}"
+                cv2.putText(img, dt, (wx + 100, section_y + 14),
+                            theme["font_face"], 0.4, (0, 0, 0), 1)
+                elems.append(UIElement(4, [wx + 100, section_y, 80, 20], "text_field", dt))
+                section_y += 24
+            elif field.startswith("  "):
+                # Indented sub-field
+                cv2.putText(img, field.strip(), (wx + 32, section_y + 14),
+                            theme["font_face"], 0.38, (50, 50, 50), 1)
+                # Small text field for value
+                tf_x = wx + 180
+                tf_w = 180 if "Description" in field else 80
+                if "HS Code" in field or "Value" in field or "Weight" in field:
+                    cv2.rectangle(img, (tf_x, section_y), (tf_x + tf_w, section_y + 18),
+                                  (255, 255, 255), -1)
+                    cv2.rectangle(img, (tf_x, section_y), (tf_x + tf_w, section_y + 18),
+                                  (180, 180, 180), 1)
+                    val = random.choice(["8471.30", "29.99", "0.75", "8544.42", "20.00", "0.5"])
+                    cv2.putText(img, val, (tf_x + 4, section_y + 13),
+                                theme["font_face"], 0.35, (0, 0, 0), 1)
+                    elems.append(UIElement(4, [tf_x, section_y, tf_w, 18], "text_field", val))
+                section_y += 20
+            else:
+                # Label + text field
+                cv2.putText(img, field, (wx + 16, section_y + 14),
+                            theme["font_face"], 0.4, (30, 30, 30), 1)
+                tf_x = wx + 180
+                tf_w = ww - 220
+                tf_h = 18
+                cv2.rectangle(img, (tf_x, section_y), (tf_x + tf_w, section_y + tf_h),
+                              (255, 255, 255), -1)
+                cv2.rectangle(img, (tf_x, section_y), (tf_x + tf_w, section_y + tf_h),
+                              (180, 180, 180), 1)
+                # Pre-fill some fields
+                fill_map = {
+                    "Full Name:": "SGT Michael Rodriguez",
+                    "Company:": "Amazon Returns Center",
+                    "Street Address:": "1850 Mercer Road",
+                    "City/State/ZIP:": "Lexington, KY 40511",
+                    "Country:": "United States",
+                    "CMR/PSC Box:": "CMR 451 Box 1234",
+                    "APO/FPO/DPO:": "APO AE 09128",
+                }
+                val = fill_map.get(field, field.replace(":", "").lower())
+                cv2.putText(img, val, (tf_x + 4, section_y + 13),
+                            theme["font_face"], 0.38, (0, 0, 0), 1)
+                elems.append(UIElement(4, [tf_x, section_y, tf_w, tf_h], "text_field", val))
+                section_y += 22
+
+        section_y += 6  # Gap between sections
+
+    # ── Action buttons at bottom ──
+    btn_y = wy + wh - 40
+    elems.append(draw_button(img, wx + ww - 300, btn_y, 90, 28, "Reset Form", theme))
+    elems.append(draw_button(img, wx + ww - 200, btn_y, 90, 28, "Save Draft", theme))
+    elems.append(draw_button(img, wx + ww - 100, btn_y, 90, 28, "Submit", theme, primary=True))
+
+    # ── Status bar ──
+    sb_y = wy + wh - 20
+    cv2.rectangle(img, (wx, sb_y), (wx + ww, sb_y + 20), (240, 240, 240), -1)
+    cv2.rectangle(img, (wx, sb_y), (wx + ww, sb_y + 20), WINDOW_BORDER, 1)
+    cv2.putText(img, "Form PS 2976 | Page 1 of 1 | Fields: 18 completed / 22 total",
+                (wx + 8, sb_y + 14), theme["font_face"], 0.35, (80, 80, 80), 1)
+    elems.append(UIElement(18, [wx, sb_y, ww, 20], "status_bar"))
+
+    return GeneratedPage(image=img, elements=elems)
+
 
 def make_file_manager() -> GeneratedPage:
     """File manager with tree sidebar, file list, toolbar, path bar."""
@@ -887,6 +1625,16 @@ GENERATORS = [
     ("control_panel", make_control_panel),
     ("file_manager", make_file_manager),
     ("multi_window", make_multi_window),
+    ("browser", make_browser),
+    ("terminal", make_terminal),
+    ("context_menu", make_context_menu),
+    ("wizard", make_wizard),
+    ("find_replace", make_find_replace),
+    ("print_dialog", make_print_dialog),
+    ("about_dialog", make_about_dialog),
+    ("file_properties", make_file_properties),
+    ("system_tray", make_system_tray_popup),
+    ("form_fill", make_form_fill),
 ]
 
 
