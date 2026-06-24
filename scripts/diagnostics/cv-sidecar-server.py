@@ -47,6 +47,12 @@ from ocr_engines import (
     get_ocr_engine, available_backends, current_backend,
     OCREngine, TesseractEngine, PaddleOCREngine,
 )
+# Ollama VLM backend (activated via env var VLM_PROVIDER=ollama)
+try:
+    from vlm_ollama import get_ollama_vlm
+    _HAS_OLLAMA = True
+except ImportError:
+    _HAS_OLLAMA = False
 
 # ── FastAPI (imported lazily in serve() to allow CLI-only usage) ─────────────
 
@@ -154,6 +160,23 @@ def create_app() -> FastAPI:
         active_detector = current_detector()
         active_ocr = current_backend()
 
+        # Check VLM provider (Ollama or local)
+        vlm_status = "disabled"
+        vlm_model = None
+        vlm_host = None
+        vlm_provider = os.environ.get("VLM_PROVIDER", "").lower()
+
+        if vlm_provider == "ollama" and _HAS_OLLAMA:
+            ollama = get_ollama_vlm()
+            if ollama and ollama.available:
+                vlm_status = "connected"
+                vlm_model = ollama.model
+                vlm_host = ollama.host
+            else:
+                vlm_status = "unreachable"
+        elif detectors.get("vlm_ground"):
+            vlm_status = "local"
+
         return {
             "status": "healthy",
             "opencv": cv2.__version__,
@@ -163,6 +186,12 @@ def create_app() -> FastAPI:
             },
             "available_detectors": detectors,
             "available_ocr_backends": ocr_backends,
+            "vlm": {
+                "provider": vlm_provider or "none",
+                "status": vlm_status,
+                "model": vlm_model,
+                "host": vlm_host,
+            },
             "env": {
                 "UI_DETECTOR": os.environ.get("UI_DETECTOR", "contour"),
                 "OCR_BACKEND": os.environ.get("OCR_BACKEND", "tesseract"),
@@ -496,26 +525,27 @@ def create_app() -> FastAPI:
 
     @app.post("/ground")
     async def vlm_ground(request_data: Dict):
-        """Ground a natural language query to a specific UI element using VLM.
+        """Ground a natural language query to a specific UI element.
 
-        Uses the VLM grounding detector (KV-Ground-8B or similar) to find a
-        specific element described in natural language. Complementary to
-        /analyze — this finds ONE element by description rather than
-        enumerating all elements by class.
+        Tries Ollama VLM first (if VLM_PROVIDER=ollama is set and
+        OLLAMA_HOST points to a reachable server), falls back to
+        the local VLM grounding detector (KV-Ground-8B).
 
         Request body:
-          {"image": "<base64 PNG>", "query": "the blue Submit button",
-           "ui_detector": "vlm_ground"}  # optional override
+          {"image": "<base64 PNG>", "query": "the blue Submit button"}
 
         Returns:
           {"found": true, "bbox": [x, y, w, h], "label": "Submit button",
-           "confidence": 0.92, "query": "the blue Submit button"}
+           "confidence": 0.92, "query": "the blue Submit button",
+           "backend": "ollama"}
         """
+        import time as _time
+
         img_b64 = request_data.get("image", "")
         query = request_data.get("query", "")
 
         if not img_b64:
-            raise HTTPException(status_code=400, detail="image (base64 PNG) required")
+            raise HTTPException(status_code=400, detail="image required")
         if not query:
             raise HTTPException(status_code=400, detail="query required")
 
@@ -530,15 +560,44 @@ def create_app() -> FastAPI:
         if img is None:
             raise HTTPException(status_code=400, detail="could not decode image")
 
-        # Use VLM grounding detector
+        # --- Try Ollama VLM first ---
+        if _HAS_OLLAMA:
+            ollama = get_ollama_vlm()
+            if ollama is not None:
+                t0 = _time.time()
+                result = ollama.ground(img, query)
+                elapsed = (_time.time() - t0) * 1000
+
+                if result and result.get("bbox") and result.get("confidence", 0) >= 0.3:
+                    return JSONResponse(content={
+                        "found": True,
+                        "bbox": result["bbox"],
+                        "label": result.get("label", query),
+                        "confidence": result.get("confidence", 0.0),
+                        "query": query,
+                        "backend": "ollama",
+                        "model": ollama.model,
+                        "inference_ms": round(elapsed, 1),
+                    })
+                if result:
+                    # VLM responded but couldn't parse coordinates
+                    return JSONResponse(content={
+                        "found": False,
+                        "query": query,
+                        "backend": "ollama",
+                        "raw_response": result.get("raw_response", ""),
+                    })
+
+        # --- Fall back to local VLM detector ---
         detector_backend = request_data.get("ui_detector", "vlm_ground")
         detector = get_ui_detector(detector_backend)
 
         if not hasattr(detector, 'ground'):
             raise HTTPException(
                 status_code=400,
-                detail=f"detector '{detector.name}' does not support natural language grounding. "
-                       f"Use 'vlm_ground' backend."
+                detail=f"detector '{detector.name}' does not support grounding. "
+                       f"Set VLM_PROVIDER=ollama OLLAMA_HOST=... or use 'vlm_ground' "
+                       f"with a local model."
             )
 
         result = detector.ground(img, query)
@@ -546,7 +605,7 @@ def create_app() -> FastAPI:
             return JSONResponse(content={
                 "found": False,
                 "query": query,
-                "detector": detector.name,
+                "backend": detector.name,
             })
 
         return JSONResponse(content={
@@ -555,29 +614,25 @@ def create_app() -> FastAPI:
             "label": result.get("label", query),
             "confidence": result.get("confidence", 0.0),
             "query": query,
-            "detector": detector.name,
+            "backend": detector.name,
         })
 
     @app.post("/describe")
     async def describe_frame(request_data: Dict):
         """Generate a natural language description of a UI screenshot.
 
-        Uses Florence-2 to produce human-readable captions of the scene.
+        Tries Ollama VLM first (if VLM_PROVIDER=ollama is set),
+        falls back to local Florence-2.
 
         Request body:
           {"image": "<base64 PNG>", "style": "detailed"}
 
-        Style options:
-          - "brief": Short one-line caption
-          - "detailed": Paragraph describing all elements
-          - "more_detailed": Even more detail
-          - "od": Per-region object descriptions
-          - "ocr": Extracted text content
+        Style options (Florence-2): brief, detailed, more_detailed, od, ocr
+        Style options (Ollama):    brief, detailed
 
         Returns:
-          {"caption": "A save dialog titled 'Save As' with a filename text
-                      field, a file type dropdown, and Save/Cancel buttons.",
-           "style": "detailed", "inference_ms": 145}
+          {"caption": "...", "style": "detailed", "backend": "ollama",
+           "model": "qwen3.5:35b", "inference_ms": 450}
         """
         import time as _time
 
@@ -598,20 +653,38 @@ def create_app() -> FastAPI:
         if img is None:
             raise HTTPException(status_code=400, detail="could not decode image")
 
-        # Lazy-load captioner
+        # --- Try Ollama VLM first ---
+        if _HAS_OLLAMA:
+            ollama = get_ollama_vlm()
+            if ollama is not None:
+                t0 = _time.time()
+                caption = ollama.describe(img, style=style)
+                elapsed = (_time.time() - t0) * 1000
+
+                if caption:
+                    return JSONResponse(content={
+                        "caption": caption,
+                        "style": style,
+                        "backend": "ollama",
+                        "model": ollama.model,
+                        "inference_ms": round(elapsed, 1),
+                    })
+
+        # --- Fall back to local Florence-2 ---
         try:
             from florence2_captioner import get_captioner
         except ImportError:
             raise HTTPException(
                 status_code=501,
-                detail="Florence-2 captioner not available")
+                detail="No captioner available. Set VLM_PROVIDER=ollama "
+                       "OLLAMA_HOST=... or install transformers + Florence-2.")
 
         captioner = get_captioner()
         if not captioner.available:
             raise HTTPException(
                 status_code=503,
-                detail="Florence-2 model not loaded. Install transformers +"
-                       " download microsoft/Florence-2-base to /models/florence2/")
+                detail="No captioner available. Set VLM_PROVIDER=ollama "
+                       "or install Florence-2 to /models/florence2/")
 
         t0 = _time.time()
         caption = captioner.caption(img, style=style)
@@ -620,8 +693,8 @@ def create_app() -> FastAPI:
         return JSONResponse(content={
             "caption": caption,
             "style": style,
+            "backend": captioner.name,
             "inference_ms": round(elapsed, 1),
-            "model": captioner.name,
         })
 
     @app.post("/search")
@@ -880,6 +953,21 @@ def serve(host: str = "0.0.0.0", port: int = 8001):
     print(f"  Detectors available: {', '.join(k for k,v in all_detectors.items() if v)}")
     print(f"  OCR backends available: {', '.join(k for k,v in all_ocr.items() if v)}")
     print(f"  Switch via: UI_DETECTOR=<name> OCR_BACKEND=<name>")
+
+    # Show VLM status
+    vlm_provider = os.environ.get("VLM_PROVIDER", "").lower()
+    if vlm_provider == "ollama":
+        ohost = os.environ.get("OLLAMA_HOST", "localhost:11434")
+        omodel = os.environ.get("OLLAMA_VLM_MODEL", "qwen3.5:35b")
+        print(f"  VLM Provider: ollama ({omodel} @ {ohost})")
+        try:
+            from vlm_ollama import get_ollama_vlm
+            o = get_ollama_vlm()
+            print(f"  VLM Status: {'connected' if (o and o.available) else 'unreachable'}")
+        except ImportError:
+            print(f"  VLM Status: module unavailable")
+    else:
+        print(f"  VLM Provider: local (set VLM_PROVIDER=ollama for remote)")
 
     uvicorn.run(app, host=host, port=port, log_level="info")
 
