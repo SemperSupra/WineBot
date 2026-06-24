@@ -158,11 +158,12 @@ class OllamaVLM:
         Returns:
             Dict with bbox, label, confidence, or None.
         """
+        h, w = image.shape[:2]
         prompt = (
             f"Point to {query}. Output ONLY the bounding box as "
-            f"[x1, y1, x2, y2] in pixel coordinates. The image is "
-            f"{image.shape[1]} pixels wide and {image.shape[0]} pixels tall. "
-            f"Do not explain — output only the coordinates in brackets."
+            f"[x1, y1, x2, y2] where each coordinate is normalized "
+            f"to 0-1000 (0=left/top, 1000=right/bottom). "
+            f"Do not explain — output only the four numbers in brackets."
         )
 
         response = self.chat(
@@ -173,7 +174,7 @@ class OllamaVLM:
         if not response:
             return None
 
-        return self._parse_coordinates(response, query, image)
+        return self._parse_coordinates(response, query, image, normalized=True)
 
     def describe(self, image: np.ndarray, style: str = "detailed") -> Optional[str]:
         """Describe a UI screenshot in natural language.
@@ -205,8 +206,17 @@ class OllamaVLM:
         )
 
     def _parse_coordinates(self, text: str, query: str,
-                            image: np.ndarray) -> Optional[Dict]:
-        """Parse model output for bounding box coordinates."""
+                            image: np.ndarray,
+                            normalized: bool = False) -> Optional[Dict]:
+        """Parse model output for bounding box coordinates.
+
+        Args:
+            text: Raw model response.
+            query: Original grounding query.
+            image: Source image (for size reference).
+            normalized: If True, coordinates are in 0-1000 range
+                        and should be denormalized to pixels.
+        """
         import re
 
         # Pattern: [number, number, number, number]
@@ -217,12 +227,27 @@ class OllamaVLM:
         if m:
             coords = [int(m.group(i)) for i in range(1, 5)]
             x1, y1, x2, y2 = coords
-            # Clamp to image bounds
             h, w = image.shape[:2]
+
+            if normalized:
+                # Denormalize from 0-1000 to pixel coordinates
+                x1 = int(x1 * w / 1000)
+                y1 = int(y1 * h / 1000)
+                x2 = int(x2 * w / 1000)
+                y2 = int(y2 * h / 1000)
+
+            # Clamp to image bounds
             x1 = max(0, min(w, x1))
             y1 = max(0, min(h, y1))
             x2 = max(0, min(w, x2))
             y2 = max(0, min(h, y2))
+
+            # Ensure minimum size
+            if x2 - x1 < 2:
+                x2 = x1 + 2
+            if y2 - y1 < 2:
+                y2 = y1 + 2
+
             return {
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "label": query,
