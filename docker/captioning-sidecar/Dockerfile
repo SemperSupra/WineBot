@@ -2,9 +2,8 @@
 # Isolated dependency space: no ultralytics, rfdetr, onnxruntime, or tesseract.
 # Deploy on any GPU host (TrueNAS A5000, RTX 3090, etc.).
 #
-# Build:
-#   docker build -f docker/captioning-sidecar/Dockerfile -t winebot-captioner:latest .
-# Run:
+# Build (from repo root: context = docker/captioning-sidecar/):
+#   docker build -f docker/captioning-sidecar/Dockerfile -t winebot-captioner:latest docker/captioning-sidecar/
 #   docker run -d --gpus all --name winebot-captioner -p 8002:8002 \
 #     -v /mnt/Storage/models/captioning:/models \
 #     -v /mnt/Storage/models/huggingface:/root/.cache/huggingface \
@@ -49,7 +48,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 RUN python3 -c "from transformers import AutoProcessor, AutoModelForCausalLM; import torch; mid='microsoft/Florence-2-base'; print(f'Pre-downloading {mid}...'); m=AutoModelForCausalLM.from_pretrained(mid, torch_dtype=torch.bfloat16, trust_remote_code=True); p=AutoProcessor.from_pretrained(mid, trust_remote_code=True); print('Florence-2-base cached')"
 
 # ── Copy server ───────────────────────────────────────────────────────────
-COPY docker/captioning-sidecar/server.py /server.py
+COPY server.py /server.py
 
 WORKDIR /work
 EXPOSE 8002
