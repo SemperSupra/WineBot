@@ -558,6 +558,233 @@ def create_app() -> FastAPI:
             "detector": detector.name,
         })
 
+    @app.post("/describe")
+    async def describe_frame(request_data: Dict):
+        """Generate a natural language description of a UI screenshot.
+
+        Uses Florence-2 to produce human-readable captions of the scene.
+
+        Request body:
+          {"image": "<base64 PNG>", "style": "detailed"}
+
+        Style options:
+          - "brief": Short one-line caption
+          - "detailed": Paragraph describing all elements
+          - "more_detailed": Even more detail
+          - "od": Per-region object descriptions
+          - "ocr": Extracted text content
+
+        Returns:
+          {"caption": "A save dialog titled 'Save As' with a filename text
+                      field, a file type dropdown, and Save/Cancel buttons.",
+           "style": "detailed", "inference_ms": 145}
+        """
+        import time as _time
+
+        img_b64 = request_data.get("image", "")
+        style = request_data.get("style", "detailed")
+
+        if not img_b64:
+            raise HTTPException(status_code=400, detail="image required")
+
+        # Decode image
+        try:
+            img_bytes = base64.b64decode(img_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid base64 image")
+
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(status_code=400, detail="could not decode image")
+
+        # Lazy-load captioner
+        try:
+            from florence2_captioner import get_captioner
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="Florence-2 captioner not available")
+
+        captioner = get_captioner()
+        if not captioner.available:
+            raise HTTPException(
+                status_code=503,
+                detail="Florence-2 model not loaded. Install transformers +"
+                       " download microsoft/Florence-2-base to /models/florence2/")
+
+        t0 = _time.time()
+        caption = captioner.caption(img, style=style)
+        elapsed = (_time.time() - t0) * 1000
+
+        return JSONResponse(content={
+            "caption": caption,
+            "style": style,
+            "inference_ms": round(elapsed, 1),
+            "model": captioner.name,
+        })
+
+    @app.post("/search")
+    async def search_frames(request_data: Dict):
+        """Semantic search over the frame archive using natural language.
+
+        Uses CLIP embeddings to find frames matching a text description.
+        Requires a pre-built frame index (created via /search/build).
+
+        Request body:
+          {"query": "a save dialog with a filename text field",
+           "k": 10, "index_dir": "/data/frame_index"}
+
+        Returns:
+          {"results": [{path, similarity, metadata}, ...], "query_ms": 15}
+        """
+        import time as _time
+
+        query = request_data.get("query", "")
+        k = int(request_data.get("k", 10))
+        index_dir = request_data.get("index_dir", "/data/frame_index")
+
+        if not query:
+            raise HTTPException(status_code=400, detail="query required")
+
+        # Lazy-load embedder + index
+        try:
+            from clip_embedder import get_clip_embedder
+            from clip_index import FrameIndex
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="CLIP embedder not available")
+
+        clip = get_clip_embedder()
+        if not clip.available:
+            raise HTTPException(
+                status_code=503,
+                detail="No CLIP backend available")
+
+        t0 = _time.time()
+        idx = FrameIndex(index_dir)
+        results = idx.search(query, k=k, clip_embedder=clip)
+        elapsed = (_time.time() - t0) * 1000
+
+        return JSONResponse(content={
+            "query": query,
+            "total_in_index": len(idx),
+            "results": results,
+            "query_ms": round(elapsed, 1),
+        })
+
+    @app.post("/search/build")
+    async def build_search_index(request_data: Dict):
+        """Build a CLIP embedding index from a directory of frames.
+
+        Processes all PNG frames, embeds them with CLIP, and persists
+        the index for later search.
+
+        Request body:
+          {"frames_dir": "/data/frames", "index_dir": "/data/frame_index",
+           "max_frames": 10000, "metadata": {"workflow": "demo-1"}}
+
+        Returns:
+          {"total_frames": 520, "build_time_s": 6.2,
+           "embeddings_per_second": 83}
+        """
+        import time as _time
+
+        frames_dir = request_data.get("frames_dir", "")
+        index_dir = request_data.get("index_dir", "/data/frame_index")
+        max_frames = int(request_data.get("max_frames", 10000))
+        base_metadata = request_data.get("metadata", {})
+
+        if not frames_dir or not os.path.isdir(frames_dir):
+            raise HTTPException(status_code=400,
+                                detail="frames_dir required and must exist")
+
+        try:
+            from clip_embedder import get_clip_embedder
+            from clip_index import FrameIndex
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="CLIP embedder not available")
+
+        clip = get_clip_embedder()
+        if not clip.available:
+            raise HTTPException(
+                status_code=503,
+                detail="No CLIP backend available")
+
+        # Collect frame files
+        frame_files = sorted([
+            f for f in os.listdir(frames_dir)
+            if f.endswith(('.png', '.PNG'))
+        ])[:max_frames]
+
+        if not frame_files:
+            raise HTTPException(status_code=400,
+                                detail=f"No PNG frames in {frames_dir}")
+
+        # Also load manifest if present
+        manifest_path = os.path.join(frames_dir, "manifest.json")
+        manifest = {}
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+            except Exception:
+                pass
+
+        # Embed frames in batches for efficiency
+        idx = FrameIndex(index_dir)
+        batch_size = 32
+        total = 0
+        t0 = _time.time()
+
+        for batch_start in range(0, len(frame_files), batch_size):
+            batch_files = frame_files[batch_start:batch_start + batch_size]
+            batch_imgs = []
+            batch_meta = []
+
+            for fname in batch_files:
+                fpath = os.path.join(frames_dir, fname)
+                img = cv2.imread(fpath)
+                if img is None:
+                    continue
+                batch_imgs.append(img)
+                # Merge base metadata with per-frame info
+                meta = dict(base_metadata)
+                meta["filename"] = fname
+                batch_meta.append(meta)
+
+            if not batch_imgs:
+                continue
+
+            embeddings = clip.embed_batch(batch_imgs)
+            idx.add_batch(
+                [os.path.join(frames_dir, f) for f in batch_files[:len(batch_imgs)]],
+                embeddings,
+                batch_meta,
+            )
+            total += len(batch_imgs)
+
+            if total % 500 == 0:
+                print(f"[search/build] {total}/{len(frame_files)} frames indexed",
+                      file=sys.stderr)
+
+        idx.save()
+        elapsed = _time.time() - t0
+
+        print(f"[search/build] Indexed {total} frames in {elapsed:.1f}s "
+              f"({total/elapsed:.0f} fps)", file=sys.stderr)
+
+        return JSONResponse(content={
+            "total_frames": total,
+            "index_dir": index_dir,
+            "build_time_s": round(elapsed, 2),
+            "embeddings_per_second": round(total / max(elapsed, 0.001), 0),
+            "stats": idx.stats(),
+        })
+
     @app.post("/benchmark")
     async def benchmark(request_data: Dict):
         """Run multi-engine benchmark with statistical rigor.
