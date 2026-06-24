@@ -727,6 +727,35 @@ def create_app() -> FastAPI:
                         "provenance": ollama.provenance,
                     })
 
+        # --- Try captioning sidecar ---
+        captioning_url = os.environ.get("CAPTIONING_SIDECAR_URL", "")
+        if captioning_url:
+            try:
+                body = json.dumps({
+                    "image": img_b64, "style": style
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{captioning_url}/caption",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                t0 = _time.time()
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    result = json.loads(resp.read().decode())
+                    elapsed = (_time.time() - t0) * 1000
+                    if result.get("caption"):
+                        return JSONResponse(content={
+                            "caption": result["caption"],
+                            "style": style,
+                            "backend": "captioning_sidecar",
+                            "model": result.get("model", "Florence-2"),
+                            "inference_ms": round(elapsed, 1),
+                        })
+            except Exception as e:
+                print(f"[describe] Captioning sidecar unavailable: {e}",
+                      file=sys.stderr)
+
         # --- Fall back to local Florence-2 ---
         try:
             from florence2_captioner import get_captioner
