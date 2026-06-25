@@ -533,8 +533,13 @@ class ModelRegistry:
             deployment=ModelDeployment(
                 vram_estimate_mb=16000.0,
                 gpu_compatible=True,
+                sha256="5efcdade5cf37f58e30d1b6f9ad6cd0264e5b71548af44aeef8ef6fca3604981",
+                file_size_bytes=4789196800,
+                quantization="Q4_K_M",
+                deployment_timestamp="2026-06-25T16:14:00Z",
+                deployment_platform="Ollama on TrueNAS A5000 #0",
             ),
-            status="development",
+            status="active",
         ))
 
         # Ollama-served VLM (runtime reference only — provenance lives on the server)
@@ -543,13 +548,14 @@ class ModelRegistry:
             role="grounding",
             pipeline_stage=5,
             description="Any Ollama-served vision model. Model name, SHA256 tracked at runtime via vlm_ollama.py provenance. "
-                       "Current: qwen3.5:35b (Q4_K_M, 36B params MoE, Apache 2.0).",
+                       "Primary: qwen3.5:35b (Q4_K_M, 36B params MoE, Apache 2.0). "
+                       "Optional: kv-ground-8b (GGUF Q4_K_M, 5.0 GB, CC BY-NC-SA, text-only GGUF — vision container pending).",
             upstream=UpstreamSource(
-                project="Qwen3.5 (Alibaba/Qwen)",
-                repository="https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Instruct",
-                model_id="Qwen3.5-35B-A3B-Instruct → Ollama GGUF Q4_K_M",
-                license="Apache-2.0",
-                license_url="https://www.apache.org/licenses/LICENSE-2.0",
+                project="Qwen3.5 (Alibaba/Qwen) / KV-Ground-8B (Kingsware & Vocaela AI)",
+                repository="https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Instruct / "
+                          "https://huggingface.co/vocaela/KV-Ground-8B-BaseGuiOwl1.5-0315",
+                model_id="Multi-model: qwen3.5:35b + kv-ground-8b",
+                license="Apache-2.0 / CC BY-NC-SA 4.0",
             ),
             status="active",
         ))
