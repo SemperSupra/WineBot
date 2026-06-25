@@ -97,12 +97,20 @@ def fine_tune(data_path: str, output_dir: str,
     # Import model and processor
     print("Loading Florence-2 model...")
     from transformers import AutoProcessor, AutoModelForCausalLM
+    from transformers import AutoConfig
+
+    # Force eager attention to avoid _supports_sdpa / flash_attn issues with
+    # transformers 5.x (Florence-2's custom modeling code was written for 4.x)
+    config = AutoConfig.from_pretrained(base_model, trust_remote_code=True)
+    config._attn_implementation = "eager"
 
     processor = AutoProcessor.from_pretrained(base_model, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
+        config=config,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+        attn_implementation="eager",
     ).to(device)
 
     # Freeze vision encoder (we only fine-tune the language decoder)
@@ -139,6 +147,11 @@ def fine_tune(data_path: str, output_dir: str,
         def __init__(self, records, processor):
             self.records = records
             self.processor = processor
+            # Override tokenizer's model_max_length — Florence-2's processor
+            # sets this incorrectly on some transformers versions
+            if hasattr(processor, 'tokenizer'):
+                processor.tokenizer.model_max_length = 512
+                processor.tokenizer.max_length = 512
 
         def __len__(self):
             return len(self.records)
@@ -155,17 +168,23 @@ def fine_tune(data_path: str, output_dir: str,
             caption = rec["caption"]
 
             # Florence-2 uses a specific prompt format
+            # Florence-2's DaViT encoder requires square inputs. Our GT dataset
+            # images are 1280x720, so resize explicitly to 768x768 first.
+            image = image.resize((768, 768), Image.LANCZOS)
+
             prompt = "<CAPTION>"
+            # processor subtracts image_seq_length (~577) from max_length,
+            # so pass a total that leaves room for text tokens
             inputs = self.processor(
                 text=prompt,
                 images=image,
                 return_tensors="pt",
                 padding="max_length",
-                max_length=512,
+                max_length=1024,
                 truncation=True,
             )
 
-            # Tokenize target caption
+            # Tokenize target caption (no image tokens here, so 512 is fine)
             target = self.processor.tokenizer(
                 caption,
                 return_tensors="pt",
@@ -217,6 +236,11 @@ def fine_tune(data_path: str, output_dir: str,
         for step, batch in enumerate(train_loader):
             # Move batch to device
             batch = {k: v.to(device) for k, v in batch.items()}
+
+            # Cast pixel_values to model dtype (image processor returns float32
+            # but model may be bfloat16)
+            if "pixel_values" in batch and batch["pixel_values"].dtype != next(model.parameters()).dtype:
+                batch["pixel_values"] = batch["pixel_values"].to(dtype=next(model.parameters()).dtype)
 
             outputs = model(**batch)
             loss = outputs.loss

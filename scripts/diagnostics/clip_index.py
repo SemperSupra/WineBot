@@ -214,6 +214,28 @@ class FrameIndex:
         return [i for i, m in enumerate(self._metadata)
                 if start_ms <= m.get("timestamp_ms", 0) <= end_ms]
 
+    def find_by_path(self, frame_path: str) -> Optional[Dict]:
+        """Look up a frame by its path and return its embedding + metadata.
+
+        Args:
+            frame_path: Full or relative path to the frame file (matched
+                        against the tail of stored paths).
+
+        Returns:
+            Dict with {"path", "embedding", "metadata"} or None if not found.
+        """
+        path_tail = frame_path.replace("\\", "/").split("/")[-1]
+        for i in range(self._n):
+            stored = self._paths[i].replace("\\", "/")
+            if stored.endswith(path_tail):
+                return {
+                    "path": self._paths[i],
+                    "embedding": self._embeddings[i].copy(),
+                    "metadata": self._metadata[i],
+                    "index": i,
+                }
+        return None
+
     # ── Persistence ────────────────────────────────────────────────────────
 
     def save(self):
