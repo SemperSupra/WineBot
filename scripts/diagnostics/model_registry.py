@@ -87,6 +87,9 @@ class ModelDeployment:
     validation_split: str = ""       # Which split was used for validation
     gpu_compatible: bool = True
     vram_estimate_mb: float = 0.0
+    quantization: str = ""
+    deployment_timestamp: str = ""
+    deployment_platform: str = ""
     notes: str = ""
 
 
@@ -533,7 +536,7 @@ class ModelRegistry:
             deployment=ModelDeployment(
                 vram_estimate_mb=16000.0,
                 gpu_compatible=True,
-                sha256="5efcdade5cf37f58e30d1b6f9ad6cd0264e5b71548af44aeef8ef6fca3604981",
+                content_sha256="5efcdade5cf37f58e30d1b6f9ad6cd0264e5b71548af44aeef8ef6fca3604981",
                 file_size_bytes=4789196800,
                 quantization="Q4_K_M",
                 deployment_timestamp="2026-06-25T16:14:00Z",
