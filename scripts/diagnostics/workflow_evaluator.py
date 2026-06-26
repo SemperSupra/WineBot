@@ -369,29 +369,33 @@ class FrameProcessor:
             return []
         return self._detector.detect(img)
 
-    def _detect_api(self, img: np.ndarray) -> List[Dict]:
-        """Use CV sidecar API for detection."""
-        import io
-        import requests
+    def _detect_api(self, img: np.ndarray, frame_path: str = "") -> List[Dict]:
+        """Use CV sidecar API for detection.
 
-        _, buf = cv2.imencode(".png", img)
-        files = {"image": ("frame.png", io.BytesIO(buf.tobytes()), "image/png")}
-        data = {"ui_detector": self.ui_detector_name,
-                "ocr_backend": self.ocr_backend_name}
+        Passes the frame file path (which must be accessible from the
+        sidecar container). Falls back to saving a temp file if needed.
+        """
+        import requests
+        import tempfile
 
         try:
-            r = requests.post(f"{self.api_url}/analyze", files=files,
-                            data=data, timeout=30)
+            # Prefer passing image_path (sidecar reads from shared filesystem)
+            payload = {"image_path": frame_path,
+                       "ui_detector": self.ui_detector_name,
+                       "ocr_backend": self.ocr_backend_name}
+            r = requests.post(f"{self.api_url}/analyze",
+                              json=payload, timeout=30)
             r.raise_for_status()
             result = r.json()
             return result.get("elements", [])
         except Exception as e:
-            print(f"  [API] Detection error: {e}", file=sys.stderr)
+            print(f"  [API] Detection error ({type(e).__name__}): {e}",
+                  file=sys.stderr)
             return []
 
-    def detect(self, img: np.ndarray) -> List[Dict]:
+    def detect(self, img: np.ndarray, frame_path: str = "") -> List[Dict]:
         if self.api_url:
-            return self._detect_api(img)
+            return self._detect_api(img, frame_path)
         return self._detect_local(img)
 
 
@@ -436,7 +440,7 @@ def process_frames(frame_dir: str, processor: FrameProcessor,
             print(f"  [WARN] Could not read {fpath.name}", file=sys.stderr)
             continue
 
-        elements = processor.detect(img)
+        elements = processor.detect(img, frame_path=str(fpath))
         timestamp = start_time_ms + (idx * 1000.0 / 5.0)  # assume ~5fps if unknown
         sm.add_frame(elements, idx, img.shape[:2], timestamp)
 
