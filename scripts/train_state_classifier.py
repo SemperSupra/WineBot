@@ -23,12 +23,8 @@ sys.path.insert(0, "/scripts")
 from clip_embedder import get_clip_embedder
 
 MODEL_DIR = "/models/state_classifier"
-MANIFEST = "/models/wine-dataset-10k/manifest.json"
-IMAGE_DIRS = {
-    "train": "/models/wine-dataset-10k/train/images",
-    "val": "/models/wine-dataset-10k/val/images",
-    "test": "/models/wine-dataset-10k/test/images",
-}
+MANIFEST = "/models/state-dataset/manifest.json"
+IMAGE_DIR = "/models/state-dataset/images"
 
 # All 15 scene types
 SCENE_TYPES = [
@@ -41,19 +37,16 @@ SCENE_TO_IDX = {s: i for i, s in enumerate(SCENE_TYPES)}
 
 
 def load_manifest(path: str) -> dict:
-    """Load manifest and return {filename: {scene_type, split, elements, ocr_texts}}."""
+    """Load manifest and return {filename: {scene_type, elements, ocr_texts}}."""
     with open(path) as f:
         manifest = json.load(f)
     entries = {}
-    # Handle both list and dict-with-split formats
     images = manifest if isinstance(manifest, list) else manifest.get("images", [])
     for entry in images:
         fname = entry.get("file", "")
         scene = entry.get("generator", "unknown")
-        split = entry.get("split", "unknown")
         entries[fname] = {
             "scene": scene,
-            "split": split,
             "elements": entry.get("elements", 0),
             "ocr_texts": entry.get("ocr_texts", 0),
         }
@@ -184,8 +177,7 @@ def main():
     gt = load_manifest(MANIFEST)
     print(f"  Loaded {len(gt)} entries")
 
-    # Manifest only covers test split (system_tray, form_fill).
-    # Stratified 70/30 split to preserve class balance.
+    # Stratified 80/20 split to preserve class balance across all 15 scene types.
     from collections import defaultdict
     items_by_scene = defaultdict(list)
     for fname, info in gt.items():
@@ -198,7 +190,7 @@ def main():
     for scene, items in items_by_scene.items():
         items.sort()  # deterministic
         n = len(items)
-        n_train = int(n * 0.7)
+        n_train = int(n * 0.8)
         for fname, info in items[:n_train]:
             train_fnames.append(fname)
             train_labels.append(SCENE_TO_IDX[scene])
@@ -208,7 +200,8 @@ def main():
 
     print(f"  Train: {len(train_fnames)} images")
     print(f"  Test:  {len(test_fnames)} images")
-    print(f"  Classes: {set(SCENE_TYPES[i] for i in set(train_labels + test_labels))}")
+    classes = set(SCENE_TYPES[i] for i in set(train_labels + test_labels))
+    print(f"  Classes: {len(classes)} — {sorted(classes)}")
 
     splits = {"train": (train_fnames, train_labels), "test": (test_fnames, test_labels)}
 
@@ -217,13 +210,11 @@ def main():
         valid_fnames, valid_labels = splits[split_name]
         print(f"\nExtracting CLIP embeddings for {split_name} ({len(valid_fnames)} images)...")
 
-        # All images are in the test directory (manifest covers test split only)
-        image_dir = "/models/wine-dataset-10k/test/images"
-        if not os.path.isdir(image_dir):
-            print(f"  SKIP: {image_dir} not found")
+        if not os.path.isdir(IMAGE_DIR):
+            print(f"  SKIP: {IMAGE_DIR} not found")
             continue
 
-        embeddings, loaded_fnames = extract_clip_embeddings(clip, image_dir, valid_fnames)
+        embeddings, loaded_fnames = extract_clip_embeddings(clip, IMAGE_DIR, valid_fnames)
 
         # Align labels with loaded files
         label_map = {f: l for f, l in zip(valid_fnames, valid_labels)}
