@@ -18,19 +18,23 @@ def load_model():
         return
 
     print(f"Loading KV-Ground-8B in 4-bit on {DEVICE}...")
-    from transformers import AutoModelForCausalLM, AutoProcessor
+    from transformers import AutoModelForMultimodalLM, AutoProcessor, BitsAndBytesConfig
 
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
     print("Processor loaded")
 
-    model = AutoModelForCausalLM.from_pretrained(
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+    )
+
+    model = AutoModelForMultimodalLM.from_pretrained(
         MODEL_ID,
         trust_remote_code=True,
         torch_dtype=torch.float16,
         device_map="auto",
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4",
+        quantization_config=bnb_config,
     )
     print(f"Model loaded. VRAM: {torch.cuda.memory_allocated()/1024**3:.1f}GB")
 
@@ -48,7 +52,9 @@ async def ground(request: Request):
 
     image = Image.open(image_path).convert("RGB")
     t0 = time.time()
-    inputs = processor(text=query, images=image, return_tensors="pt").to(DEVICE)
+    # Qwen3-VL requires explicit vision tokens for image processing
+    prompt = f"<|vision_start|><|image_pad|><|vision_end|>{query}"
+    inputs = processor(text=prompt, images=image, return_tensors="pt").to(DEVICE)
     with torch.no_grad():
         outputs = model.generate(**inputs, max_new_tokens=128, do_sample=False)
     result = processor.decode(outputs[0], skip_special_tokens=True)
