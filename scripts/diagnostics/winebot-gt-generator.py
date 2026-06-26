@@ -1693,12 +1693,23 @@ GENERATORS = [
 # ── Output methods ──────────────────────────────────────────────────────
 
 def yolo_label(element: UIElement, img_w: int, img_h: int) -> str:
-    """Convert UIElement to YOLO format string."""
+    """Convert UIElement to YOLO format string.
+
+    Coordinates are clamped to [0, 1] to prevent out-of-bounds labels
+    from elements that extend past the image edge (e.g., taskbars at
+    the bottom edge, dialog shadows at the right edge).
+    """
     x, y, bw, bh = element.bbox
     cx = (x + bw / 2) / img_w
     cy = (y + bh / 2) / img_h
     nw = bw / img_w
     nh = bh / img_h
+    # Clamp to valid [0, 1] range — elements past the image edge get
+    # their center pulled inward so the box is still learnable.
+    cx = max(0.0, min(1.0, cx))
+    cy = max(0.0, min(1.0, cy))
+    nw = max(0.001, min(1.0, nw))
+    nh = max(0.001, min(1.0, nh))
     return f"{element.cls_id} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}"
 
 
