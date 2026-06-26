@@ -72,6 +72,65 @@ except ImportError:
     HAS_FASTAPI = False
 
 
+# ── ML State Classifier ──────────────────────────────────────────────────────
+
+_state_classifier = None
+_state_classifier_labels = None
+_state_clip_embedder = None
+
+
+def _load_state_classifier():
+    """Lazy-load the trained screen state classifier."""
+    global _state_classifier, _state_classifier_labels, _state_clip_embedder
+
+    if _state_classifier is not None:
+        return True
+
+    model_path = "/models/state_classifier/state_classifier.pkl"
+    if not os.path.isfile(model_path):
+        print("[state] No trained classifier found — using heuristic fallback",
+              file=sys.stderr)
+        return False
+
+    try:
+        import pickle
+        from clip_embedder import get_clip_embedder
+
+        with open(model_path, "rb") as f:
+            data = pickle.load(f)
+
+        _state_classifier = data["classifier"]
+        _state_classifier_labels = data["scene_types"]
+        _state_clip_embedder = get_clip_embedder()
+
+        print(f"[state] Loaded ML classifier: {len(_state_classifier_labels)} classes",
+              file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[state] Failed to load classifier: {e}", file=sys.stderr)
+        return False
+
+
+def classify_state_ml(img: np.ndarray) -> str:
+    """Classify screen state using trained ML model on CLIP embeddings.
+
+    Falls back to heuristic if ML model unavailable.
+    """
+    if not _load_state_classifier():
+        return "unknown"
+
+    try:
+        emb = _state_clip_embedder.embed_image(img)
+        emb = emb.reshape(1, -1)
+        pred = _state_classifier.predict(emb)[0]
+        if pred < len(_state_classifier_labels):
+            return _state_classifier_labels[pred]
+        return "unknown"
+    except Exception as e:
+        print(f"[state] ML classification error: {e}", file=sys.stderr)
+        return "unknown"
+
+
 def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
                   ocr_backend: Optional[str] = None) -> Dict:
     """Full analysis of a single image using configured engines. Returns structured JSON.
@@ -85,6 +144,11 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
     detector = get_ui_detector(ui_detector)
     ui_elements = detector.detect(img)
     ui_state = detector.classify_ui_state(img, ui_elements)
+
+    # ML screen state classification (overrides heuristic if available)
+    ml_state = classify_state_ml(img)
+    if ml_state != "unknown":
+        ui_state = ml_state
 
     ocr = get_ocr_engine(ocr_backend)
     ocr_regions = ocr.detect_text(img)
