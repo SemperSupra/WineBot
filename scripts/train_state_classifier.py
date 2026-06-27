@@ -33,6 +33,7 @@ SCENE_TYPES = [
     "terminal", "context_menu", "wizard", "find_replace",
     "print_dialog", "about_dialog", "file_properties",
     "system_tray", "form_fill",
+    "login", "toast", "data_table", "drag_drop", "loading",
 ]
 SCENE_TO_IDX = {s: i for i, s in enumerate(SCENE_TYPES)}
 

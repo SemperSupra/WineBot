@@ -40,6 +40,11 @@ GENERATORS = [
     ("form_fill", gen.make_form_fill),
     ("find_replace", gen.make_find_replace),
     ("print_dialog", gen.make_print_dialog),
+    ("login", gen.make_login_screen),
+    ("toast", gen.make_toast_notification),
+    ("data_table", gen.make_data_table),
+    ("drag_drop", gen.make_drag_drop),
+    ("loading", gen.make_loading_screen),
 ]
 
 # Resolutions for variation

@@ -1816,7 +1816,7 @@ def make_drag_drop() -> GeneratedPage:
         elems.append(UIElement(20, [sx + 12, fy + 4, 14, 22], "icon"))
     tx, ty, tw, th = sx + sw + 30, ct, 260, wh - 80
     cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (235, 248, 240), -1)
-    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (120, 200, 140), 2, cv2.LINE_DASH)
+    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (120, 200, 140), 2)
     cv2.putText(img, "Drop files here", (tx + 50, ty + th // 2 - 10), theme["font_face"], 0.5, (80, 140, 100), 1)
     cv2.putText(img, "or click to browse", (tx + 45, ty + th // 2 + 15), theme["font_face"], 0.35, (120, 160, 130), 1)
     elems.append(UIElement(2, [tx, ty, tw, th], "button", "drop_zone"))
