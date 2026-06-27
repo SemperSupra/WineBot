@@ -131,6 +131,107 @@ def classify_state_ml(img: np.ndarray) -> str:
         return "unknown"
 
 
+# ── Temporal Consistency Tracker ─────────────────────────────────────────────
+
+_TEMPORAL_WINDOW = 5          # Keep last 5 frames of detection history
+_temporal_buffer = []          # Ring buffer: list of (elements, state, timestamp)
+_frame_counter = 0
+_state_history = []             # Track state transitions
+
+
+def _iou(bbox_a: List[int], bbox_b: List[int]) -> float:
+    """IoU of two bounding boxes [x, y, w, h]."""
+    ax, ay, aw, ah = bbox_a
+    bx, by, bw, bh = bbox_b
+    xi = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    yi = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = xi * yi
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _match_elements(prev_elements: List[Dict], curr_elements: List[Dict],
+                     iou_thresh: float = 0.3) -> dict:
+    """Match current elements to previous elements by IoU.
+
+    Returns annotated current elements with temporal status.
+    """
+    matched_curr = set()
+    element_map = []
+
+    for ce in curr_elements:
+        cbox = ce.get("bbox", [0, 0, 0, 0])
+        ctype = ce.get("type", "")
+        best_iou = iou_thresh
+        best_prev = None
+
+        for pe in prev_elements:
+            pbox = pe.get("bbox", [0, 0, 0, 0])
+            ptype = pe.get("type", "")
+            if ctype != ptype:
+                continue
+            iou = _iou(cbox, pbox)
+            if iou > best_iou:
+                best_iou = iou
+                best_prev = pe
+
+        if best_prev is not None:
+            # Existing element — track persistence
+            ce["temporal"] = "persistent"
+            ce["persistence"] = best_prev.get("persistence", 1) + 1
+        else:
+            # New element
+            ce["temporal"] = "new"
+            ce["persistence"] = 1
+
+        element_map.append(ce)
+
+    return element_map
+
+
+def _apply_temporal(elements: List[Dict], ui_state: str) -> dict:
+    """Apply temporal consistency: track elements, detect transitions.
+
+    Args:
+        elements: Current frame's detected elements.
+        ui_state: Current frame's classified state.
+
+    Returns:
+        Dict with temporal annotations, state transitions, and filtered elements.
+    """
+    global _temporal_buffer, _frame_counter, _state_history
+    _frame_counter += 1
+
+    # Filter flickering elements (persistence < 2 → likely noise)
+    stable_elements = [e for e in elements if e.get("persistence", 0) >= 2
+                       or e.get("temporal") == "new"]
+
+    # Track state transitions
+    transition = None
+    if _state_history and _state_history[-1] != ui_state:
+        transition = {
+            "from": _state_history[-1],
+            "to": ui_state,
+            "at_frame": _frame_counter,
+        }
+    _state_history.append(ui_state)
+    if len(_state_history) > 20:
+        _state_history.pop(0)
+
+    # Maintain ring buffer
+    _temporal_buffer.append((elements, ui_state, _frame_counter))
+    if len(_temporal_buffer) > _TEMPORAL_WINDOW:
+        _temporal_buffer.pop(0)
+
+    return {
+        "stable_count": len(stable_elements),
+        "total_elements": len(elements),
+        "transition": transition,
+        "state_history": _state_history[-5:] if _state_history else [],
+        "frame_number": _frame_counter,
+    }
+
+
 def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
                   ocr_backend: Optional[str] = None) -> Dict:
     """Full analysis of a single image using configured engines. Returns structured JSON.
@@ -150,6 +251,13 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
     if ml_state != "unknown":
         ui_state = ml_state
 
+    # Temporal consistency: match against previous frame
+    global _temporal_buffer
+    if _temporal_buffer:
+        prev_elements = _temporal_buffer[-1][0]
+        ui_elements = _match_elements(prev_elements, ui_elements)
+    temporal = _apply_temporal(ui_elements, ui_state)
+
     ocr = get_ocr_engine(ocr_backend)
     ocr_regions = ocr.detect_text(img)
 
@@ -167,6 +275,7 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
         "ocr_regions": len(ocr_regions),
         "key_text": [r["text"] for r in ocr_regions[:30] if r.get("confidence", 0) > 30],
         "click_targets": click_targets,
+        "temporal": temporal,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -316,6 +425,15 @@ def create_app() -> FastAPI:
             "citation": _model_registry.get_citation(),
             "audit_trail": _model_registry.audit_trail(),
         })
+
+    @app.post("/temporal/reset")
+    async def reset_temporal():
+        """Reset the temporal consistency tracker (start of new workflow)."""
+        global _temporal_buffer, _frame_counter, _state_history
+        _temporal_buffer = []
+        _frame_counter = 0
+        _state_history = []
+        return JSONResponse(content={"status": "reset", "frame": 0})
 
     @app.post("/analyze")
     async def analyze(request_data: Dict):
