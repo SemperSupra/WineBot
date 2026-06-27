@@ -1669,6 +1669,192 @@ def make_multi_window() -> GeneratedPage:
     return GeneratedPage(image=img, elements=elems)
 
 
+# ── Additional Scene Types ────────────────────────────────────────────────
+# Login screen, toast notifications, data tables, drag-and-drop, loading screens
+
+
+def make_login_screen() -> GeneratedPage:
+    """Login/authentication screen with username, password, and submit."""
+    theme = sample_theme()
+    dw, dh = DESKTOP_SIZE
+    img = np.ones((dh, dw, 3), dtype=np.uint8) * 60
+    overlay = img.copy()
+    cv2.rectangle(overlay, (0, 0), (dw, dh), (70, 70, 90), -1)
+    cv2.addWeighted(overlay, 0.3, img, 0.7, 0, img)
+    pw, ph = 340, 320
+    px, py = (dw - pw) // 2, (dh - ph) // 2 - 40
+    cv2.rectangle(img, (px, py), (px + pw, py + ph), (240, 240, 245), -1)
+    cv2.rectangle(img, (px, py), (px + pw, py + ph), (180, 180, 190), 1)
+    cv2.putText(img, "Sign In", (px + 20, py + 40), theme["font_face"], 0.8, (40, 40, 50), 1)
+    cv2.putText(img, "Username", (px + 20, py + 80), theme["font_face"], 0.4, (80, 80, 90), 1)
+    ux, uy, uw, uh = px + 20, py + 88, pw - 40, 30
+    cv2.rectangle(img, (ux, uy), (ux + uw, uy + uh), (255, 255, 255), -1)
+    cv2.rectangle(img, (ux, uy), (ux + uw, uy + uh), (200, 200, 210), 1)
+    cv2.putText(img, "user@example.com", (ux + 6, uy + 20), theme["font_face"], 0.4, (120, 120, 130), 1)
+    elems = [UIElement(4, [ux, uy, uw, uh], "text_field", "username")]
+    pw_y = py + 148
+    cv2.rectangle(img, (px + 20, pw_y), (px + 20 + uw, pw_y + uh), (255, 255, 255), -1)
+    cv2.rectangle(img, (px + 20, pw_y), (px + 20 + uw, pw_y + uh), (200, 200, 210), 1)
+    cv2.putText(img, "••••••••", (px + 26, pw_y + 20), theme["font_face"], 0.4, (80, 80, 90), 1)
+    elems.append(UIElement(4, [px + 20, pw_y, uw, uh], "text_field", "password"))
+    cb_y = pw_y + 45
+    cv2.rectangle(img, (px + 22, cb_y), (px + 38, cb_y + 16), (255, 255, 255), -1)
+    cv2.rectangle(img, (px + 22, cb_y), (px + 38, cb_y + 16), (150, 150, 160), 1)
+    cv2.putText(img, "✓", (px + 24, cb_y + 13), theme["font_face"], 0.4, (60, 60, 180), 1)
+    cv2.putText(img, "Remember me", (px + 44, cb_y + 13), theme["font_face"], 0.4, (80, 80, 90), 1)
+    elems.append(UIElement(6, [px + 22, cb_y, 16, 16], "checkbox", "remember"))
+    btn = draw_button(img, px + 20, py + ph - 55, uw, 32, "Sign In", theme, primary=True)
+    elems.append(btn)
+    elems.extend(draw_taskbar(img))
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_toast_notification() -> GeneratedPage:
+    """Toast/popup notification from system tray."""
+    theme = sample_theme()
+    dw, dh = DESKTOP_SIZE
+    img = np.ones((dh, dw, 3), dtype=np.uint8) * 200
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = []
+    tw, th = 320, 100
+    tx, ty = dw - tw - 20, 20
+    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (255, 255, 255), -1)
+    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (200, 200, 210), 1)
+    cv2.rectangle(img, (tx + 10, ty + 10), (tx + 36, ty + 36), (0, 120, 215), -1)
+    elems.append(UIElement(20, [tx + 10, ty + 10, 26, 26], "icon"))
+    app = random.choice(["Email", "Calendar", "Slack", "Teams"])
+    cv2.putText(img, app, (tx + 44, ty + 24), theme["font_face"], 0.45, (40, 40, 50), 1)
+    msg = random.choice(["New message from Alice", "Meeting in 15 minutes", "File upload complete", "Update available"])
+    cv2.putText(img, msg, (tx + 10, ty + 60), theme["font_face"], 0.4, (60, 60, 70), 1)
+    cv2.putText(img, "×", (tx + tw - 20, ty + 20), theme["font_face"], 0.5, (120, 120, 130), 1)
+    elems.append(UIElement(3, [tx + tw - 26, ty + 4, 22, 22], "close_button"))
+    for i, icon_name in enumerate(["My Computer", "Recycle Bin", "Documents"]):
+        ix, iy = 20 + i * 100, dh - 160
+        cv2.rectangle(img, (ix + 15, iy), (ix + 65, iy + 50), (100, 150, 200), -1)
+        cv2.putText(img, icon_name, (ix, iy + 70), theme["font_face"], 0.3, (60, 60, 70), 1)
+        elems.append(UIElement(20, [ix + 15, iy, 50, 50], "icon"))
+    elems.extend(draw_taskbar(img))
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_data_table() -> GeneratedPage:
+    """Data table/grid with headers, rows, sortable columns, and scrollbar."""
+    theme = sample_theme()
+    dw, dh = DESKTOP_SIZE
+    img = np.ones((dh, dw, 3), dtype=np.uint8) * 200
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    ww, wh = 700, 420
+    wx, wy = (dw - ww) // 2, 60
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + wh), (250, 250, 255), -1)
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + wh), (180, 180, 190), 1)
+    title_h = 28
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + title_h), theme["title_color"], -1)
+    cv2.putText(img, "Data Browser", (wx + 8, wy + title_h - 7), theme["font_face"], 0.45, theme["title_text_color"], 1)
+    elems.append(UIElement(0, [wx, wy, ww, title_h], "title_bar"))
+    tb_y = wy + title_h + 4
+    for i, btn_lbl in enumerate(["Add", "Edit", "Delete", "Refresh", "Export"]):
+        elems.append(draw_button(img, wx + 8 + i * 70, tb_y, 62, 22, btn_lbl, theme))
+    hdr_y = tb_y + 30
+    cols, col_widths = ["Name", "Type", "Size", "Modified", "Status"], [160, 100, 80, 140, 100]
+    hx = wx + 10
+    for ci, (col, cw) in enumerate(zip(cols, col_widths)):
+        cv2.rectangle(img, (hx, hdr_y), (hx + cw, hdr_y + 24), (230, 230, 240), -1)
+        cv2.putText(img, col, (hx + 6, hdr_y + 17), theme["font_face"], 0.4, (40, 40, 50), 1)
+        hx += cw
+    data = [("report_v2.pdf", "PDF", "2.4 MB", "Today 3:45 PM", "Synced"),
+            ("screenshot.png", "Image", "856 KB", "Today 2:10 PM", "Synced"),
+            ("notes.txt", "Text", "12 KB", "Yesterday", "Modified"),
+            ("budget.xlsx", "Sheet", "48 KB", "Jun 24", "Modified"),
+            ("presentation.pptx", "Slides", "3.1 MB", "Jun 23", "New"),
+            ("archive.zip", "Archive", "15.6 MB", "Jun 22", "Uploading"),
+            ("config.json", "JSON", "4 KB", "Jun 21", "Synced"),
+            ("backup.db", "DB", "128 MB", "Jun 20", "Synced")]
+    for ri, (name, ftype, size, date, status) in enumerate(data):
+        row_y = hdr_y + 24 + ri * 24
+        row_color = (245, 245, 250) if ri % 2 == 0 else (250, 250, 255)
+        cv2.rectangle(img, (wx + 10, row_y), (wx + ww - 30, row_y + 24), row_color, -1)
+        hx = wx + 10
+        for vi, (val, cw) in enumerate(zip([name, ftype, size, date, status], col_widths)):
+            cv2.putText(img, val, (hx + 6, row_y + 17), theme["font_face"], 0.35, (60, 60, 70), 1)
+            hx += cw
+            if vi == 0:
+                elems.append(UIElement(14, [hx - cw, row_y, cw, 24], "list_item", name))
+    sb_y, sb_h = hdr_y, len(data) * 24
+    cv2.rectangle(img, (wx + ww - 22, sb_y), (wx + ww - 10, sb_y + sb_h), (230, 230, 240), -1)
+    cv2.rectangle(img, (wx + ww - 22, sb_y), (wx + ww - 10, sb_y + 60), (180, 180, 195), -1)
+    elems.append(UIElement(13, [wx + ww - 22, sb_y, 12, sb_h], "scrollbar"))
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_drag_drop() -> GeneratedPage:
+    """Drag-and-drop interface with file list and drop target."""
+    theme = sample_theme()
+    dw, dh = DESKTOP_SIZE
+    img = np.ones((dh, dw, 3), dtype=np.uint8) * 200
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    ww, wh = 640, 400
+    wx, wy = (dw - ww) // 2, 80
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + wh), (248, 248, 252), -1)
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + wh), (180, 180, 190), 1)
+    title_h = 28
+    cv2.rectangle(img, (wx, wy), (wx + ww, wy + title_h), theme["title_color"], -1)
+    cv2.putText(img, "File Upload", (wx + 8, wy + title_h - 7), theme["font_face"], 0.45, theme["title_text_color"], 1)
+    elems.append(UIElement(0, [wx, wy, ww, title_h], "title_bar"))
+    ct = wy + title_h + 20
+    sx, sy, sw, sh = wx + 20, ct, 260, wh - 80
+    cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (240, 240, 248), -1)
+    cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (200, 200, 210), 1)
+    cv2.putText(img, "Files to upload", (sx + 8, sy + 20), theme["font_face"], 0.4, (40, 40, 50), 1)
+    for fi, fn in enumerate(["document.pdf", "image.png", "data.csv", "presentation.pptx", "notes.txt"]):
+        fy = sy + 32 + fi * 36
+        cv2.rectangle(img, (sx + 8, fy), (sx + sw - 8, fy + 30), (255, 255, 255), -1)
+        cv2.rectangle(img, (sx + 8, fy), (sx + sw - 8, fy + 30), (210, 210, 220), 1)
+        cv2.rectangle(img, (sx + 12, fy + 4), (sx + 26, fy + 26), (80, 140, 200), -1)
+        cv2.putText(img, fn, (sx + 34, fy + 20), theme["font_face"], 0.35, (40, 40, 50), 1)
+        elems.append(UIElement(20, [sx + 12, fy + 4, 14, 22], "icon"))
+    tx, ty, tw, th = sx + sw + 30, ct, 260, wh - 80
+    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (235, 248, 240), -1)
+    cv2.rectangle(img, (tx, ty), (tx + tw, ty + th), (120, 200, 140), 2, cv2.LINE_DASH)
+    cv2.putText(img, "Drop files here", (tx + 50, ty + th // 2 - 10), theme["font_face"], 0.5, (80, 140, 100), 1)
+    cv2.putText(img, "or click to browse", (tx + 45, ty + th // 2 + 15), theme["font_face"], 0.35, (120, 160, 130), 1)
+    elems.append(UIElement(2, [tx, ty, tw, th], "button", "drop_zone"))
+    elems.append(draw_button(img, wx + ww - 120, wh - 45, 100, 28, "Upload All", theme, primary=True))
+    return GeneratedPage(image=img, elements=elems)
+
+
+def make_loading_screen() -> GeneratedPage:
+    """Loading/progress dialog with progress bar and spinner."""
+    theme = sample_theme()
+    dw, dh = DESKTOP_SIZE
+    img = np.ones((dh, dw, 3), dtype=np.uint8) * 200
+    img[:] = random.choice(DESKTOP_BG_THEMES)
+    elems = draw_taskbar(img)
+    dlw, dlh = 400, 180
+    dlx, dly = (dw - dlw) // 2, (dh - dlh) // 2
+    cv2.rectangle(img, (dlx, dly), (dlx + dlw, dly + dlh), (255, 255, 255), -1)
+    cv2.rectangle(img, (dlx, dly), (dlx + dlw, dly + dlh), (180, 180, 190), 1)
+    title_h = 28
+    cv2.rectangle(img, (dlx, dly), (dlx + dlw, dly + title_h), theme["title_color"], -1)
+    cv2.putText(img, "Processing", (dlx + 8, dly + title_h - 7), theme["font_face"], 0.45, theme["title_text_color"], 1)
+    elems.append(UIElement(0, [dlx, dly, dlw, title_h], "title_bar"))
+    sx, sy = dlx + 30, dly + title_h + 30
+    for angle in range(0, 360, 30):
+        rad = np.radians(angle)
+        cv2.circle(img, (int(sx + 15 * np.cos(rad)), int(sy + 15 * np.sin(rad))), 3, (80, 140, 200), -1)
+    status = random.choice(["Installing components...", "Downloading updates...", "Extracting files...", "Please wait..."])
+    cv2.putText(img, status, (dlx + 70, dly + title_h + 37), theme["font_face"], 0.45, (60, 60, 70), 1)
+    pb_x, pb_y, pb_w, pb_h = dlx + 30, dly + title_h + 60, dlw - 60, 20
+    cv2.rectangle(img, (pb_x, pb_y), (pb_x + pb_w, pb_y + pb_h), (220, 220, 230), -1)
+    progress = random.randint(30, 90)
+    cv2.rectangle(img, (pb_x, pb_y), (pb_x + int(pb_w * progress / 100), pb_y + pb_h), (0, 120, 215), -1)
+    elems.append(UIElement(16, [pb_x, pb_y, pb_w, pb_h], "progress_bar"))
+    cv2.putText(img, f"{progress}% complete", (dlx + 30, dly + title_h + 100), theme["font_face"], 0.35, (100, 100, 110), 1)
+    elems.append(draw_button(img, dlx + dlw - 90, dly + dlh - 40, 70, 26, "Cancel", theme))
+    return GeneratedPage(image=img, elements=elems)
+
+
 GENERATORS = [
     ("save_dialog", make_save_dialog),
     ("settings", make_settings_window),
@@ -1687,6 +1873,11 @@ GENERATORS = [
     ("file_properties", make_file_properties),
     ("system_tray", make_system_tray_popup),
     ("form_fill", make_form_fill),
+    ("login", make_login_screen),
+    ("toast", make_toast_notification),
+    ("data_table", make_data_table),
+    ("drag_drop", make_drag_drop),
+    ("loading", make_loading_screen),
 ]
 
 
