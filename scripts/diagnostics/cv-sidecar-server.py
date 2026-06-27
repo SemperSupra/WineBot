@@ -242,8 +242,23 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
     """
     h, w = img.shape[:2]
 
+    # Detect with primary detector
     detector = get_ui_detector(ui_detector)
     ui_elements = detector.detect(img)
+
+    # Fallback chain: if primary detector returns nothing, try alternatives
+    if len(ui_elements) == 0:
+        for fallback_name in ["screenparser", "contour"]:
+            fb_detector = get_ui_detector(fallback_name)
+            if fb_detector.available and fb_detector.name != detector.name:
+                fb_elements = fb_detector.detect(img)
+                if len(fb_elements) > 0:
+                    print(f"[fallback] {detector.name}→{fb_detector.name}: "
+                          f"{len(fb_elements)} elements", file=sys.stderr)
+                    ui_elements = fb_elements
+                    detector = fb_detector
+                    break
+
     ui_state = detector.classify_ui_state(img, ui_elements)
 
     # ML screen state classification (overrides heuristic if available)
@@ -260,6 +275,17 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
 
     ocr = get_ocr_engine(ocr_backend)
     ocr_regions = ocr.detect_text(img)
+
+    # OCR fallback: if primary returns nothing, try Tesseract
+    if len(ocr_regions) == 0 and ocr.name != "tesseract":
+        fb_ocr = get_ocr_engine("tesseract")
+        if fb_ocr.available:
+            fb_texts = fb_ocr.detect_text(img)
+            if len(fb_texts) > 0:
+                print(f"[fallback] OCR {ocr.name}→tesseract: "
+                      f"{len(fb_texts)} texts", file=sys.stderr)
+                ocr_regions = fb_texts
+                ocr = fb_ocr
 
     # Find click targets from OCR text
     click_targets = _find_click_targets(ocr_regions)
