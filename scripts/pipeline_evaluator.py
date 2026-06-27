@@ -367,15 +367,18 @@ def evaluate_pipeline(dataset_dir: str, api_url: str,
 
     # ── Aggregate Results ───────────────────────────────────────────────
 
-    # Detection: bootstrapped F1
+    # Detection: bootstrapped F1 (per-frame metric — reflects typical frame quality)
     print(f"\nComputing bootstrapped confidence intervals ({len(detection_scores)} frames)...")
     det_ci = bootstrap_ci(detection_scores)
 
-    # Detection: aggregate per-class across all frames (use default img size)
+    # Detection: aggregate per-class across all frames — macro metrics
     agg_eval = eval_detection(
         [e for sublist in all_predicted_elements for e in sublist],
         [e for sublist in all_gt_elements for e in sublist],
     )
+    # Compute macro-averaged F1 (unweighted mean of per-class F1)
+    per_class_f1s = [pc["f1"] for pc in agg_eval["per_class"].values()]
+    macro_f1 = sum(per_class_f1s) / len(per_class_f1s) if per_class_f1s else 0.0
 
     # State classification
     state_results = eval_state_classification(state_predicted, state_actual)
@@ -433,11 +436,12 @@ def print_report(results: Dict):
     # Detection
     d = results["detection"]
     print(f"  --- Detection ---")
-    print(f"  Overall F1:    {d['overall']['f1']:.4f}")
-    print(f"  Precision:     {d['overall']['precision']:.4f}")
-    print(f"  Recall:        {d['overall']['recall']:.4f}")
-    print(f"  F1 95% CI:     ({d['f1_bootstrap']['ci_low']}, {d['f1_bootstrap']['ci_high']})")
-    print(f"  Bootstrap n:   {d['f1_bootstrap']['n_resamples']} resamples")
+    print(f"  Macro F1 (class-averaged): {d.get('macro_f1', 0):.4f}")
+    print(f"  Per-frame F1:             {d['f1_bootstrap']['mean']:.4f}")
+    print(f"  Per-frame F1 95% CI:      ({d['f1_bootstrap']['ci_low']}, {d['f1_bootstrap']['ci_high']})")
+    print(f"  Precision (aggregate):    {d['overall']['precision']:.4f}")
+    print(f"  Recall (aggregate):       {d['overall']['recall']:.4f}")
+    print(f"  Bootstrap:                {d['f1_bootstrap']['n_resamples']} resamples")
     print()
     print(f"  Per-Class Detection:")
     print(f"  {'Class':<20s} {'F1':>6s} {'Prec':>6s} {'Rec':>6s} {'GT':>5s} {'TP':>4s} {'FP':>4s} {'FN':>4s}")
