@@ -38,6 +38,8 @@ GENERATORS = [
     ("file_properties", gen.make_file_properties),
     ("system_tray", gen.make_system_tray_popup),
     ("form_fill", gen.make_form_fill),
+    ("find_replace", gen.make_find_replace),
+    ("print_dialog", gen.make_print_dialog),
 ]
 
 # Resolutions for variation

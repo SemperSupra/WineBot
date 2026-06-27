@@ -30,8 +30,9 @@ IMAGE_DIR = "/models/state-dataset/images"
 SCENE_TYPES = [
     "save_dialog", "settings", "error_dialog", "notepad",
     "control_panel", "file_manager", "multi_window", "browser",
-    "terminal", "context_menu", "wizard", "about_dialog",
-    "file_properties", "system_tray", "form_fill",
+    "terminal", "context_menu", "wizard", "find_replace",
+    "print_dialog", "about_dialog", "file_properties",
+    "system_tray", "form_fill",
 ]
 SCENE_TO_IDX = {s: i for i, s in enumerate(SCENE_TYPES)}
 
