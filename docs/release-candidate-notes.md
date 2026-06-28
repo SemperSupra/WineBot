@@ -1,5 +1,23 @@
 # Release Candidate Notes
 
+## v0.9.8 Sidecar Extraction
+- Date: 2026-06-28
+- Branch: `main`
+- Scope:
+  - Extracted CV/OCR pipeline to `github.com/SemperSupra/desktop-ui-cv` (v0.1.0)
+  - Extracted KV-Ground-8B server to `github.com/SemperSupra/kv-ground-server` (v0.1.0)
+  - Extracted captioning server to `github.com/SemperSupra/ui-captioning` (v0.1.0)
+  - CV sidecar now imports from `winebot_cv` package instead of loose files
+  - CI/CD pipelines for all extracted repos
+  - Dockerfiles support local wheel fallback for private repo builds
+  - Full rebuild and E2E test: 14/14 endpoints verified passing
+  - Fixed FastAPI binary upload crash (exception handler, #71)
+  - Demo pipeline verified: AHK handler, notepad automation, state assertions
+  - Xvfb 2D-only limitation documented
+  - GPU proxy research documented
+  - Credential scrub script (scripts/ci/check-credentials.sh) added
+  - Structured JSON logging added to TrueNAS deployment scripts
+
 ## v0.9.7a Container Rebuild
 - Date: 2026-05-04
 - Branch: `main`

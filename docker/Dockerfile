@@ -160,7 +160,7 @@ ARG SOURCE_REPO
 ENV BUILD_INTENT=slim
 # Purge build-time cache and temporary files to further reduce size
 RUN rm -rf /root/.cache /tmp/* /var/tmp/*
-LABEL io.winebot.version="0.9.7" \
+LABEL io.winebot.version="0.9.8" \
       io.winebot.build_intent="slim" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -172,7 +172,7 @@ ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_REPO
 ENV BUILD_INTENT=rel-runner
-LABEL io.winebot.version="0.9.7" \
+LABEL io.winebot.version="0.9.8" \
       io.winebot.build_intent="rel-runner" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -184,7 +184,7 @@ ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_REPO
 ENV BUILD_INTENT=rel
-LABEL io.winebot.version="0.9.7" \
+LABEL io.winebot.version="0.9.8" \
       io.winebot.build_intent="rel" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -205,7 +205,7 @@ RUN chown -R winebot:winebot /tests /docker /compose \
     && find /tests -name "*.sh" -exec chmod +x {} + \
     && find /tests -name "*.py" -exec chmod +x {} +
 ENV BUILD_INTENT=test
-LABEL io.winebot.version="0.9.7" \
+LABEL io.winebot.version="0.9.8" \
       io.winebot.build_intent="test" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -218,7 +218,7 @@ ARG BUILD_DATE
 ARG SOURCE_REPO
 RUN apt-get update && apt-get install -y --no-install-recommends strace lsof nano && rm -rf /var/lib/apt/lists/*
 ENV BUILD_INTENT=dev
-LABEL io.winebot.version="0.9.7" \
+LABEL io.winebot.version="0.9.8" \
       io.winebot.build_intent="dev" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
