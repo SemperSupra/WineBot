@@ -98,3 +98,68 @@ External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`
 -   **User Profiles:** At session start/resume, the Windows user profile (`C:\users\winebot`) is dynamically symlinked to a sub-folder within the persistent `/artifacts` directory. This ensures that application data (AppData, Desktop, Documents) persists across sessions even if the container is recreated.
 
 -   **`/apps`:** Volume for external Windows executables and installers.
+
+---
+
+## Sidecar Architecture
+
+WineBot's computer vision, OCR, and ML capabilities are provided by **sidecar containers** —
+separate Docker images that communicate with the core WineBot container over HTTP.
+This separation keeps the core image small, GPU-agnostic, and focused on Wine automation.
+
+### Sidecar Landscape
+
+| Sidecar | Repo | Port | GPU | Status |
+|:---|:---|:---|:---|:---|
+| **CV/OCR** | [`github.com/sempersupra/desktop-ui-cv`](https://github.com/sempersupra/desktop-ui-cv) (private) | 8001 | Optional (GPU image available) | ✅ Active — phases 1-3 complete |
+| **Captioning** | `github.com/sempersupra/ui-captioning` (planned) | 8002 | Required | 📅 Planned |
+| **KV-Ground-8B** | `github.com/sempersupra/kv-ground-server` (planned) | 8003/8004 | Required | 🚧 TrueNAS deployment active, repo extraction planned |
+
+### CV/OCR Sidecar (`winebot-cv`)
+
+**Python package:** `desktop-ui-cv` — provides `winebot_cv` module with detectors, OCR, CLIP embedding, model registry, and GT dataset generator.
+
+**Server:** `desktop-ui-cv[server]` extra — FastAPI application with endpoints:
+- `GET /health` — liveness check
+- `POST /analyze` — UI element detection + OCR on a single image
+- `POST /batch` — batch analysis of video frames
+- `POST /describe` — natural language scene description
+- `POST /ground` — natural language element grounding
+
+**Image variants:**
+- `Dockerfile.cv-analyzer` — CPU-only, Tesseract + OpenCV baseline
+- `Dockerfile.cv-analyzer-gpu` — GPU-accelerated, PyTorch + YOLO + CLIP + Florence-2
+
+**Integration:** Core WineBot calls sidecar via HTTP at `http://winebot-cv:8001`. The sidecar URL is configured via `INFRA_WINEBOT_SIDECAR_URL`.
+
+### Repo Separation Plan
+
+The sidecar code is being extracted from the WineBot monorepo into independent repositories:
+
+```
+Phase 1-2: ✅ Package skeleton + engines moved to packages/desktop-ui-cv/
+Phase 3:   ✅ Sidecar server imports from the package
+Phase 4:   🔄 CI/CD pipeline for the package
+Phase 5:   📅 Extract to github.com/sempersupra/desktop-ui-cv (tag v0.1.0)
+Phase 6:   📅 Extract kv-ground-server to its own repo
+Phase 7:   📅 Extract captioning sidecar to its own repo
+```
+
+### Naming Convention
+
+| Artifact | Name |
+|:---|:---|
+| GitHub org | `sempersupra` (private repos initially) |
+| CV/OCR repo | `desktop-ui-cv` |
+| Python package | `desktop-ui-cv` (import as `winebot_cv`) |
+| Server extra | `desktop-ui-cv[server]` |
+| Docker image | `ghcr.io/sempersupra/desktop-ui-cv-sidecar` |
+| KV-Ground repo | `kv-ground-server` |
+| Captioning repo | `ui-captioning` |
+
+### Design Principles
+
+1. **API-first:** Sidecars communicate via stable HTTP APIs. Consumers (WineBot, WinBot, research scripts) never import the package directly — they call the API.
+2. **Independent release cycles:** Each sidecar has its own CI/CD, version tag, and image registry.
+3. **GPU optional:** The CV sidecar has CPU and GPU image variants. GPU is never required for core WineBot functionality.
+4. **Private then public:** Repos start private for controlled maturation, then release publicly when stable.
