@@ -4,7 +4,8 @@
 Adds 5 missing scene types: login, toast notification, data table,
 drag-and-drop, and loading screen.
 """
-import importlib.util, random
+import importlib.util
+import random
 
 import cv2
 import numpy as np

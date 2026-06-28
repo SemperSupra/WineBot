@@ -1,7 +1,8 @@
-import httpx
 import asyncio
 import json
 import os
+
+import httpx
 
 
 async def check_lifecycle():

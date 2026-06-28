@@ -74,5 +74,5 @@ results = model.train(
     exist_ok=True,
 )
 
-print(f"\nTraining complete!")
+print("\nTraining complete!")
 print(f"Results saved to {OUTPUT}")

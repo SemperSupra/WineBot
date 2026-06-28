@@ -2,14 +2,14 @@
 import argparse
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
-
+from typing import Any
 
 DEFAULT_DENY = "GPL-2.0,GPL-3.0,AGPL,SSPL,COMMONS-CLAUSE"
 
 
-def _deny_tokens() -> List[str]:
+def _deny_tokens() -> list[str]:
     raw = os.getenv("WINEBOT_LICENSE_DENY", DEFAULT_DENY)
     return [item.strip().upper() for item in raw.split(",") if item.strip()]
 
@@ -19,11 +19,11 @@ def _allow_unknown() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def _license_names(component: Dict[str, Any]) -> Iterable[str]:
+def _license_names(component: dict[str, Any]) -> Iterable[str]:
     licenses = component.get("licenses")
     if not isinstance(licenses, list):
         return []
-    values: List[str] = []
+    values: list[str] = []
     for item in licenses:
         if not isinstance(item, dict):
             continue
@@ -52,8 +52,8 @@ def main() -> int:
 
     deny = _deny_tokens()
     allow_unknown = _allow_unknown()
-    violations: List[str] = []
-    unknown: List[str] = []
+    violations: list[str] = []
+    unknown: list[str] = []
     for component in components:
         if not isinstance(component, dict):
             continue

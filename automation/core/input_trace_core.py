@@ -5,9 +5,9 @@ import os
 import re
 import selectors
 import signal
-import time
 import subprocess
-from typing import Optional, Dict, Any
+import time
+from typing import Any
 
 try:
     from api.core.versioning import EVENT_SCHEMA_VERSION
@@ -47,9 +47,9 @@ def write_pid(session_dir: str, pid: int) -> None:
         pass
 
 
-def read_pid(session_dir: str) -> Optional[int]:
+def read_pid(session_dir: str) -> int | None:
     try:
-        with open(trace_pid_path(session_dir), "r") as f:
+        with open(trace_pid_path(session_dir)) as f:
             return int(f.read().strip())
     except Exception:
         return None
@@ -63,7 +63,7 @@ def write_state(session_dir: str, state: str) -> None:
         pass
 
 
-def session_id_from_dir(session_dir: str) -> Optional[str]:
+def session_id_from_dir(session_dir: str) -> str | None:
     try:
         name = os.path.basename(session_dir.rstrip("/"))
         return name or None
@@ -71,10 +71,10 @@ def session_id_from_dir(session_dir: str) -> Optional[str]:
         return None
 
 
-def now_payload(session_id: Optional[str]) -> dict:
+def now_payload(session_id: str | None) -> dict:
     return {
         "timestamp_epoch_ms": int(time.time() * 1000),
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "session_id": session_id,
     }
 
@@ -89,7 +89,7 @@ def check_xinput_test() -> bool:
         return False
 
 
-def parse_stream(stream, session_id: Optional[str], motion_sample_ms: int):
+def parse_stream(stream, session_id: str | None, motion_sample_ms: int):
     seq = 0
     last_motion_ms = 0
     for line in stream:
@@ -97,7 +97,7 @@ def parse_stream(stream, session_id: Optional[str], motion_sample_ms: int):
         if not line:
             continue
         event = None
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "source": DEFAULT_SOURCE,
             "layer": DEFAULT_LAYER,
             "origin": "unknown",
@@ -157,7 +157,7 @@ def run_xinput(args):
         return 1, "", ""
 
 
-def resolve_device_id(name: str) -> Optional[int]:
+def resolve_device_id(name: str) -> int | None:
     code, stdout, _stderr = run_xinput(["list", "--id-only", name])
     if code == 0:
         value = stdout.strip()
@@ -366,7 +366,7 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                         if not line:
                             continue
                         event = None
-                        payload: Dict[str, Any] = {
+                        payload: dict[str, Any] = {
                             "schema_version": EVENT_SCHEMA_VERSION,
                             "source": DEFAULT_SOURCE,
                             "layer": DEFAULT_LAYER,

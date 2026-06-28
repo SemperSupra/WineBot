@@ -1,7 +1,7 @@
 import os
 import time
-import requests
 
+import requests
 
 API_URL = "http://winebot-interactive:8000"
 
@@ -12,7 +12,7 @@ def get_token() -> str:
         return env_token
     for token_path in ("/winebot-shared/winebot_api_token", "/tmp/winebot_api_token"):
         if os.path.exists(token_path):
-            with open(token_path, "r") as f:
+            with open(token_path) as f:
                 return f.read().strip()
     return ""
 

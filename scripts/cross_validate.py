@@ -10,9 +10,11 @@ our results are across different data splits, not just one held-out set.
 Usage:
   docker exec winebot-cv python3 /tmp/cross_validate.py --folds 5
 """
-import argparse, json, os, sys, time, random
-from collections import defaultdict
-from pathlib import Path
+import argparse
+import json
+import os
+import random
+import sys
 
 sys.path.insert(0, "/scripts")
 import cv2
@@ -35,7 +37,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"  K-FOLD CROSS-VALIDATION")
+    print("  K-FOLD CROSS-VALIDATION")
     print(f"  Folds: {args.folds}   Images/fold/scene: {args.images_per_fold}")
     print(f"  Epochs: {args.epochs}")
     print(f"{'='*60}\n")
@@ -154,11 +156,11 @@ def main():
 
     # Summary
     print(f"\n{'='*60}")
-    print(f"  CROSS-VALIDATION RESULTS")
+    print("  CROSS-VALIDATION RESULTS")
     print(f"{'='*60}")
     map50s = [r["best_mAP50"] for r in fold_results]
     print(f"  Mean mAP50: {np.mean(map50s):.4f} ± {np.std(map50s):.4f}")
-    print(f"  Per fold:")
+    print("  Per fold:")
     for r in fold_results:
         print(f"    Fold {r['fold']}: mAP50={r['best_mAP50']:.4f} "
               f"(val: {r['val_scenes']})")

@@ -1,9 +1,10 @@
-import requests
-import time
-from playwright.sync_api import Page, expect
-import pytest
 import re
-from _auth import API_URL, auth_headers, ui_url, ensure_agent_control, ensure_openbox_running
+import time
+
+import pytest
+import requests
+from _auth import API_URL, auth_headers, ensure_agent_control, ensure_openbox_running, ui_url
+from playwright.sync_api import Page, expect
 
 
 def wait_dashboard_poll_ready(page: Page, timeout_seconds: int = 45) -> None:
@@ -140,14 +141,14 @@ def test_b_recording_state_machine_ui(page: Page):
 
     # Wait for visibility
     expect(start_btn).to_be_visible(timeout=10000)
-    
+
     # Wait for first poll to settle UI
     expect(page.locator("#badge-health")).not_to_contain_text("pending", timeout=20000)
 
     # Reset to idle if needed (force stop via API if UI is stuck)
     requests.post(f"{API_URL}/recording/stop", headers=auth_headers())
     wait_recording_idle(timeout_seconds=60)
-    
+
     expect(start_btn).to_be_enabled(timeout=30000)
     expect(pause_btn).to_be_disabled()
     expect(stop_btn).to_be_disabled()

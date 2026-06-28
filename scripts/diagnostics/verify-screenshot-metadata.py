@@ -6,7 +6,6 @@ import struct
 import sys
 import zlib
 
-
 REQUIRED_KEYS = [
     "winebot_request_id",
     "winebot_timestamp_unix",
@@ -55,7 +54,7 @@ def main():
     parser.add_argument("--tag", required=True, dest="tag")
     args = parser.parse_args()
 
-    with open(args.json_path, "r", encoding="utf-8") as f:
+    with open(args.json_path, encoding="utf-8") as f:
         data = json.load(f)
 
     if data.get("request_id") != args.req_id:

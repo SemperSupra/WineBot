@@ -1,6 +1,5 @@
-from playwright.sync_api import Page, expect
-
 from _auth import ui_url
+from playwright.sync_api import Page, expect
 
 
 def test_keyboard_navigation_basics(page: Page):

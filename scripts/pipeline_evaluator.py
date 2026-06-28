@@ -19,12 +19,13 @@ Usage:
   # Ablation: compare OCR engines
   python3 pipeline_evaluator.py --dataset /models/eval-dataset --ocr paddle_onnx:tiny --ablation-ocr tesseract
 """
-import argparse, json, os, sys, time, csv
-from collections import Counter, defaultdict
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+import argparse
+import json
+import os
+import sys
+import time
+from collections import defaultdict
 
-import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "diagnostics"))
@@ -32,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "diagnostics"))
 # ── Bounding Box Utilities ───────────────────────────────────────────────────
 
 
-def iou(bbox_a: List[float], bbox_b: List[float]) -> float:
+def iou(bbox_a: list[float], bbox_b: list[float]) -> float:
     """IoU of two [x, y, w, h] boxes (pixel coords or normalized)."""
     ax, ay, aw, ah = bbox_a
     bx, by, bw, bh = bbox_b
@@ -57,7 +58,7 @@ CLASS_NAMES = {
 CLASS_TO_IDX = {v: k for k, v in CLASS_NAMES.items()}
 
 
-def load_gt_labels(label_path: str) -> List[Dict]:
+def load_gt_labels(label_path: str) -> list[dict]:
     """Load YOLO-format label file. Returns list of {cls_id, bbox}."""
     elements = []
     if not os.path.isfile(label_path):
@@ -83,8 +84,8 @@ def load_gt_labels(label_path: str) -> List[Dict]:
 # ── Stage 1: Detection Evaluation ────────────────────────────────────────────
 
 
-def eval_detection(predicted: List[Dict], ground_truth: List[Dict],
-                   iou_thresh: float = 0.5, img_size: tuple = (1280, 720)) -> Dict:
+def eval_detection(predicted: list[dict], ground_truth: list[dict],
+                   iou_thresh: float = 0.5, img_size: tuple = (1280, 720)) -> dict:
     """Evaluate detection against ground truth.
 
     Handles GT boxes in normalized [x,y,w,h] format (0-1 range) and
@@ -184,8 +185,8 @@ def eval_detection(predicted: List[Dict], ground_truth: List[Dict],
 # ── Bootstrapping ────────────────────────────────────────────────────────────
 
 
-def bootstrap_ci(per_frame_metrics: List[float], n_resamples: int = 1000,
-                 ci: float = 0.95) -> Dict:
+def bootstrap_ci(per_frame_metrics: list[float], n_resamples: int = 1000,
+                 ci: float = 0.95) -> dict:
     """Compute bootstrapped confidence interval for a metric.
 
     Uses the percentile method with n_resamples resamples.
@@ -215,8 +216,8 @@ def bootstrap_ci(per_frame_metrics: List[float], n_resamples: int = 1000,
     }
 
 
-def mcnemar_test(pred_a: List[int], pred_b: List[int],
-                  ground_truth: List[int]) -> Dict:
+def mcnemar_test(pred_a: list[int], pred_b: list[int],
+                  ground_truth: list[int]) -> dict:
     """McNemar's test comparing two classifiers on paired predictions.
 
     Returns chi-squared statistic and p-value.
@@ -240,8 +241,8 @@ def mcnemar_test(pred_a: List[int], pred_b: List[int],
 # ── Stage 2: State Classification Evaluation ─────────────────────────────────
 
 
-def eval_state_classification(predicted_states: List[str],
-                               ground_truth_states: List[str]) -> Dict:
+def eval_state_classification(predicted_states: list[str],
+                               ground_truth_states: list[str]) -> dict:
     """Evaluate screen state classification.
 
     Returns accuracy, per-class accuracy, and confusion matrix.
@@ -276,7 +277,7 @@ def eval_state_classification(predicted_states: List[str],
 
 def evaluate_pipeline(dataset_dir: str, api_url: str,
                       detector: str = "wine",
-                      ocr_backend: str = "paddle_onnx:tiny") -> Dict:
+                      ocr_backend: str = "paddle_onnx:tiny") -> dict:
     """Run full pipeline evaluation on a dataset.
 
     Args:
@@ -415,10 +416,10 @@ def evaluate_pipeline(dataset_dir: str, api_url: str,
 # ── Report Printer ───────────────────────────────────────────────────────────
 
 
-def print_report(results: Dict):
+def print_report(results: dict):
     """Pretty-print evaluation results."""
     print(f"\n{'='*72}")
-    print(f"  PIPELINE EVALUATION REPORT")
+    print("  PIPELINE EVALUATION REPORT")
     print(f"{'='*72}")
     print(f"  Dataset:  {results['config']['dataset']}")
     print(f"  Detector: {results['config']['detector']}")
@@ -427,7 +428,7 @@ def print_report(results: Dict):
     print()
 
     # Pipeline summary
-    print(f"  --- Pipeline Summary ---")
+    print("  --- Pipeline Summary ---")
     print(f"  Mean latency:  {results['latency_ms']['mean']} ms")
     print(f"  95% CI:        ({results['latency_ms']['ci_low']}, {results['latency_ms']['ci_high']}) ms")
     print(f"  FPS:           {results['pipeline']['fps']:.1f}")
@@ -435,7 +436,7 @@ def print_report(results: Dict):
 
     # Detection
     d = results["detection"]
-    print(f"  --- Detection ---")
+    print("  --- Detection ---")
     print(f"  Macro F1 (class-averaged): {d.get('macro_f1', 0):.4f}")
     print(f"  Per-frame F1:             {d['f1_bootstrap']['mean']:.4f}")
     print(f"  Per-frame F1 95% CI:      ({d['f1_bootstrap']['ci_low']}, {d['f1_bootstrap']['ci_high']})")
@@ -443,7 +444,7 @@ def print_report(results: Dict):
     print(f"  Recall (aggregate):       {d['overall']['recall']:.4f}")
     print(f"  Bootstrap:                {d['f1_bootstrap']['n_resamples']} resamples")
     print()
-    print(f"  Per-Class Detection:")
+    print("  Per-Class Detection:")
     print(f"  {'Class':<20s} {'F1':>6s} {'Prec':>6s} {'Rec':>6s} {'GT':>5s} {'TP':>4s} {'FP':>4s} {'FN':>4s}")
     print(f"  {'-'*20} {'-'*6} {'-'*6} {'-'*6} {'-'*5} {'-'*4} {'-'*4} {'-'*4}")
     for cls_name in sorted(d["per_class"].keys()):
@@ -453,7 +454,7 @@ def print_report(results: Dict):
 
     # State classification
     s = results["state_classification"]
-    print(f"\n  --- State Classification ---")
+    print("\n  --- State Classification ---")
     print(f"  Accuracy: {s['accuracy']*100:.1f}% ({s['correct']}/{s['total']})")
     if s.get("per_class"):
         print(f"  {'Scene':<25s} {'Accuracy':>10s}")
@@ -468,7 +469,7 @@ def print_report(results: Dict):
 
 
 def run_ablation(dataset_dir: str, api_url: str, baseline_detector: str,
-                 ablation_detector: str, ocr: str = "paddle_onnx:tiny") -> Dict:
+                 ablation_detector: str, ocr: str = "paddle_onnx:tiny") -> dict:
     """Compare two detectors with statistical significance testing."""
     print(f"\n{'='*72}")
     print(f"  ABLATION STUDY: {baseline_detector} vs {ablation_detector}")
@@ -485,7 +486,7 @@ def run_ablation(dataset_dir: str, api_url: str, baseline_detector: str,
     base_lat = base["latency_ms"]["mean"]
     abl_lat = ablated["latency_ms"]["mean"]
 
-    print(f"\n  --- Comparison ---")
+    print("\n  --- Comparison ---")
     print(f"  {'Metric':<30s} {'Baseline':>12s} {'Ablated':>12s} {'Δ':>10s}")
     print(f"  {'-'*30} {'-'*12} {'-'*12} {'-'*10}")
     print(f"  {'Detection F1':<30s} {base_f1:>10.4f}   {abl_f1:>10.4f}   {delta_f1:>+8.4f}")

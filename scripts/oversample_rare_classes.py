@@ -10,9 +10,13 @@ Low-F1 classes and their source scenes:
 
 Strategy: Generate 5× more images of scenes containing rare classes.
 """
-import importlib.util, json, os, sys, time, random
+import importlib.util
+import json
+import os
+import random
+import time
+
 import cv2
-import numpy as np
 
 spec = importlib.util.spec_from_file_location("winebot_gt", "/scripts/winebot-gt-generator.py")
 gen = importlib.util.module_from_spec(spec)
@@ -71,7 +75,7 @@ def main():
     total = 0
     rare_counts = {}
 
-    print(f"Generating oversampled dataset...\n")
+    print("Generating oversampled dataset...\n")
     t0 = time.time()
 
     for scene_name, scene_fn, count in GENERATORS:
@@ -105,7 +109,7 @@ def main():
         json.dump(manifest, f, indent=2)
 
     print(f"\nTotal: {total} images in {time.time()-t0:.0f}s")
-    print(f"\nRare class counts:")
+    print("\nRare class counts:")
     for cls, count in sorted(rare_counts.items()):
         print(f"  {cls:<20s} {count:>6d}")
 

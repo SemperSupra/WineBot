@@ -7,10 +7,14 @@ for statistically meaningful per-class metrics.
 Usage:
   docker exec winebot-cv python3 /tmp/generate_eval_dataset.py
 """
-import importlib.util, json, os, sys, time, random
+import importlib.util
+import json
+import os
+import random
+import time
 from collections import Counter
+
 import cv2
-import numpy as np
 
 # Import GT generator
 spec = importlib.util.spec_from_file_location(

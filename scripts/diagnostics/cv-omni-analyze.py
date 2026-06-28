@@ -22,10 +22,7 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -77,7 +74,7 @@ class RecordingAnalyzer:
             print(f"  YOLOv8 not available: {e}")
         return None
 
-    def _concat_parts(self, session_dir: str, parts: List[Path]) -> Path:
+    def _concat_parts(self, session_dir: str, parts: list[Path]) -> Path:
         """Concatenate segmented MKV parts."""
         concat_list = self.out_dir / "concat.txt"
         with open(concat_list, "w") as f:
@@ -90,7 +87,7 @@ class RecordingAnalyzer:
         ], capture_output=True)
         return output
 
-    def extract_frames(self) -> List[Tuple[float, np.ndarray]]:
+    def extract_frames(self) -> list[tuple[float, np.ndarray]]:
         """Extract key frames from video at frame_interval seconds."""
         frames = []
         tmpdir = self.out_dir / "frames"
@@ -114,10 +111,10 @@ class RecordingAnalyzer:
         print(f"  Extracted {len(frames)} frames")
         return frames
 
-    def detect_ui_elements(self, img: np.ndarray) -> Dict:
+    def detect_ui_elements(self, img: np.ndarray) -> dict:
         """Run full UI element detection on a frame."""
         h, w = img.shape[:2]
-        result: Dict = {
+        result: dict = {
             "size": f"{w}x{h}",
             "yolo_objects": [],
             "text_regions": [],
@@ -165,7 +162,7 @@ class RecordingAnalyzer:
 
         return result
 
-    def find_click_targets(self, elements: List[Dict]) -> Dict[str, Tuple[int, int]]:
+    def find_click_targets(self, elements: list[dict]) -> dict[str, tuple[int, int]]:
         """From detected text, find click targets for common UI buttons."""
         targets = {}
         for r in elements:
@@ -193,7 +190,7 @@ class RecordingAnalyzer:
                     break
         return targets
 
-    def analyze(self) -> Dict:
+    def analyze(self) -> dict:
         """Full analysis: extract frames, detect elements, find targets."""
         results = []
         frames = self.extract_frames()
@@ -330,7 +327,7 @@ def main():
 
     print(f"CV Analyzer — {args.session_dir}")
     if not Path(args.session_dir).is_dir():
-        print(f"ERROR: Session dir not found")
+        print("ERROR: Session dir not found")
         sys.exit(1)
 
     analyzer = RecordingAnalyzer(args.session_dir, args.frame_interval)
@@ -343,7 +340,7 @@ def main():
 
     summary = analyzer.analyze()
 
-    print(f"\nAnalysis complete:")
+    print("\nAnalysis complete:")
     print(f"  Frames: {summary['frames_analyzed']}")
     print(f"  Click targets found in: {len(summary['click_target_timeline'])} frames")
     for t in summary["click_target_timeline"]:

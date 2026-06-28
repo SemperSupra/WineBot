@@ -1,9 +1,9 @@
-from typing import List
+
 from .models import Event
 
 
 class SubtitleGenerator:
-    def __init__(self, events: List[Event]):
+    def __init__(self, events: list[Event]):
         self.events = sorted(events, key=lambda e: e.t_rel_ms)
 
     def _ms_to_vtt(self, ms: int) -> str:

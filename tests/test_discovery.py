@@ -1,8 +1,10 @@
 import os
+from unittest.mock import MagicMock, mock_open, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
 from zeroconf import ServiceStateChange
-from api.core.discovery import DiscoveryManager, SERVICE_TYPE
+
+from api.core.discovery import SERVICE_TYPE, DiscoveryManager
 
 
 @pytest.fixture

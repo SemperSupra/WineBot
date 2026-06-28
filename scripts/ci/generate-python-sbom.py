@@ -5,15 +5,15 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
-def _component_for_distribution(dist: importlib.metadata.Distribution) -> Dict[str, Any]:
+def _component_for_distribution(dist: importlib.metadata.Distribution) -> dict[str, Any]:
     metadata = dist.metadata
     name = metadata.get("Name") or dist.name or "unknown"
     version = dist.version or "0"
     license_name = (metadata.get("License") or "").strip() or "NOASSERTION"
-    component: Dict[str, Any] = {
+    component: dict[str, Any] = {
         "type": "library",
         "name": str(name),
         "version": str(version),
@@ -23,8 +23,8 @@ def _component_for_distribution(dist: importlib.metadata.Distribution) -> Dict[s
     return component
 
 
-def build_sbom() -> Dict[str, Any]:
-    components: List[Dict[str, Any]] = []
+def build_sbom() -> dict[str, Any]:
+    components: list[dict[str, Any]] = []
     for dist in sorted(importlib.metadata.distributions(), key=lambda d: (d.metadata.get("Name") or d.name or "").lower()):
         try:
             components.append(_component_for_distribution(dist))
@@ -42,7 +42,7 @@ def build_sbom() -> Dict[str, Any]:
         "serialNumber": f"urn:uuid:{os.urandom(16).hex()}",
         "version": 1,
         "metadata": {
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
             "component": {
                 "type": "application",
                 "name": "winebot",

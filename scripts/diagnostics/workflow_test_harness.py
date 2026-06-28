@@ -27,9 +27,7 @@ import json
 import os
 import random
 import sys
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -56,7 +54,7 @@ try:
     Page = gen_mod.Page
     GENERATORS = gen_mod.GENERATORS
     _HAS_GENERATOR = True
-except Exception as e:
+except Exception:
     _HAS_GENERATOR = False
 
 
@@ -111,8 +109,8 @@ class WorkflowStep:
     name: str                    # e.g., "open_save_dialog"
     description: str             # e.g., "File > Save As in Notepad"
     scene_type: str              # Which generator scene this maps to
-    expected_elements: List[str] # Element types that must be present
-    expected_text: List[str]     # Text strings that should be visible
+    expected_elements: list[str] # Element types that must be present
+    expected_text: list[str]     # Text strings that should be visible
     duration_frames: int = 3     # How many frames this step occupies
 
 
@@ -121,7 +119,7 @@ class WorkflowScenario:
     """A multi-step workflow that tests CV/OCR across state transitions."""
     name: str
     description: str
-    steps: List[WorkflowStep]
+    steps: list[WorkflowStep]
     # Which visual parameters to vary across runs
     fuzz_themes: bool = True
     fuzz_fonts: bool = True
@@ -243,9 +241,9 @@ class FuzzConfig:
     font_face: int
     font_scale: float
     font_thickness: int
-    resolution: Tuple[int, int]
-    window_offset: Tuple[int, int]   # px offset from default position
-    hsv_jitter: Tuple[int, int, int]  # H, S, V shifts
+    resolution: tuple[int, int]
+    window_offset: tuple[int, int]   # px offset from default position
+    hsv_jitter: tuple[int, int, int]  # H, S, V shifts
     contrast: float
     noise_sigma: float
     seed: int
@@ -318,7 +316,7 @@ class WorkflowFrameGenerator:
         return img
 
     def _render_synthetic_frame(self, scene_type: str, step_name: str,
-                                 cfg: FuzzConfig, global_seed: int) -> Tuple[np.ndarray, Dict]:
+                                 cfg: FuzzConfig, global_seed: int) -> tuple[np.ndarray, dict]:
         """Render a single frame using the GT generator primitives.
 
         Falls back to simple OpenCV rendering if generator not available.
@@ -428,7 +426,7 @@ class WorkflowFrameGenerator:
     def generate_workflow(self, scenario: WorkflowScenario,
                            n_variations: int = 5,
                            base_seed: int = 0,
-                           split: str = "test") -> List[Dict]:
+                           split: str = "test") -> list[dict]:
         """Generate N visual variations of a workflow scenario.
 
         Each variation uses a different FuzzConfig (different theme, font,
@@ -481,7 +479,7 @@ class WorkflowFrameGenerator:
 
 # ── Evaluation Metrics ─────────────────────────────────────────────────────
 
-def compute_consistency(detection_results: List[Dict]) -> Dict:
+def compute_consistency(detection_results: list[dict]) -> dict:
     """Measure how consistently the CV/OCR pipeline performs across variations.
 
     For each workflow step, we have N variations with different visual params.
@@ -585,8 +583,8 @@ def compute_consistency(detection_results: List[Dict]) -> Dict:
 
 
 def evaluate_detections(results_dir: str, detector_name: str = "wine",
-                         api_url: Optional[str] = None,
-                         ocr_backend: str = "tesseract") -> Dict:
+                         api_url: str | None = None,
+                         ocr_backend: str = "tesseract") -> dict:
     """Run CV/OCR detection on all frames in a test suite and compute consistency.
 
     Args:
@@ -608,11 +606,12 @@ def evaluate_detections(results_dir: str, detector_name: str = "wine",
     # Initialize detector
     if api_url:
         import io
+
         import requests
         _use_api = True
     else:
-        from ui_detectors import get_ui_detector
         from ocr_engines import get_ocr_engine
+        from ui_detectors import get_ui_detector
         detector = get_ui_detector(detector_name)
         ocr = get_ocr_engine(ocr_backend)
         _use_api = False
@@ -641,6 +640,7 @@ def evaluate_detections(results_dir: str, detector_name: str = "wine",
 
                 if _use_api:
                     import io
+
                     import requests
                     _, buf = cv2.imencode(".png", img)
                     files = {"image": (frame_name, io.BytesIO(buf.tobytes()), "image/png")}
@@ -798,7 +798,7 @@ def generate_test_suite(output_dir: str, n_variations: int = 5,
     return manifest
 
 
-def print_consistency_report(consistency: Dict):
+def print_consistency_report(consistency: dict):
     """Pretty-print the consistency evaluation results."""
     print()
     print("=" * 72)

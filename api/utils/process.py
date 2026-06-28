@@ -1,19 +1,20 @@
 import asyncio
+import datetime
 import os
+import random
 import shutil
 import subprocess
-import time
-import datetime
-import random
 import threading
+import time
 from collections import deque
-from typing import List, Dict, Any, Optional, Final, Set
-from functools import lru_cache
 from contextlib import asynccontextmanager
+from functools import cache
+from typing import Any, Final
+
 from api.core.session_context import get_current_session_dir
 
 # Store strong references to Popen objects
-process_store: Set[subprocess.Popen] = set()
+process_store: set[subprocess.Popen] = set()
 process_store_lock = threading.Lock()
 
 # Default timeout for safe_command and safe_async_command (can be overridden by WINEBOT_COMMAND_TIMEOUT)
@@ -98,13 +99,13 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
     return max(minimum, value)
 
 
-def _csv_set(value: Optional[str]) -> Set[str]:
+def _csv_set(value: str | None) -> set[str]:
     if not value:
         return set()
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-def _allowlist_match(value: str, allowlist: Set[str]) -> bool:
+def _allowlist_match(value: str, allowlist: set[str]) -> bool:
     if not allowlist:
         return True
     return value in allowlist
@@ -148,7 +149,7 @@ def _command_telemetry_allowed() -> bool:
     return _rate_limit_ok(max_events_per_min)
 
 
-def _command_telemetry_path() -> Optional[str]:
+def _command_telemetry_path() -> str | None:
     session_dir = get_current_session_dir() or os.getenv("WINEBOT_SESSION_DIR", "").strip()
     if not session_dir:
         return None
@@ -161,16 +162,16 @@ def _emit_command_telemetry(
     duration_ms: float,
     result: str,
     error_class: str = "",
-    exit_code: Optional[int] = None,
+    exit_code: int | None = None,
 ) -> None:
     if not _command_telemetry_allowed():
         return
     path = _command_telemetry_path()
     if not path:
         return
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema_version": "1.0",
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
         "event": "performance_metric",
         "metric": f"command.{operation}.latency",
@@ -201,13 +202,13 @@ def _emit_command_telemetry(
         pass
 
 
-async def run_async_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+async def run_async_command(cmd: list[str], timeout: int | None = None) -> dict[str, Any]:
     """Run a command asynchronously without blocking the event loop. Uses DEFAULT_TIMEOUT if timeout is not provided."""
     to = timeout if timeout is not None else DEFAULT_TIMEOUT
     return await safe_async_command(cmd, timeout=to)
 
 
-def find_processes(pattern: str, exact: bool = False) -> List[int]:
+def find_processes(pattern: str, exact: bool = False) -> list[int]:
     """Find PIDs of processes matching a name or command line pattern (pure Python pgrep)."""
     pids = []
     try:
@@ -218,7 +219,7 @@ def find_processes(pattern: str, exact: bool = False) -> List[int]:
             try:
                 if exact:
                     matched = False
-                    with open(f"/proc/{pid}/comm", "r") as f:
+                    with open(f"/proc/{pid}/comm") as f:
                         comm = f.read().strip()
                         if comm == pattern:
                             matched = True
@@ -252,7 +253,7 @@ def find_processes(pattern: str, exact: bool = False) -> List[int]:
     return pids
 
 
-def run_command(cmd: List[str]):
+def run_command(cmd: list[str]):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=DEFAULT_TIMEOUT)
         return result.stdout.strip()
@@ -260,7 +261,7 @@ def run_command(cmd: List[str]):
         raise Exception(f"Command failed: {e.stderr}")
 
 
-def safe_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+def safe_command(cmd: list[str], timeout: int | None = None) -> dict[str, Any]:
     to = timeout if timeout is not None else DEFAULT_TIMEOUT
     started = time.perf_counter()
     command_name = (cmd[0] if cmd else "unknown").strip()
@@ -316,14 +317,14 @@ def safe_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any
         }
 
 
-@lru_cache(maxsize=None)
-def check_binary(name: str) -> Dict[str, Any]:
+@cache
+def check_binary(name: str) -> dict[str, Any]:
     path = shutil.which(name)
     return {"present": path is not None, "path": path}
 
 
 @asynccontextmanager
-async def async_subprocess_context(cmd: List[str], timeout: Optional[int] = None):
+async def async_subprocess_context(cmd: list[str], timeout: int | None = None):
     """Context manager to ensure a subprocess is reaped even on error or cancellation."""
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -335,7 +336,7 @@ async def async_subprocess_context(cmd: List[str], timeout: Optional[int] = None
             try:
                 proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=1.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     proc.kill()
                     await proc.wait()
@@ -343,7 +344,7 @@ async def async_subprocess_context(cmd: List[str], timeout: Optional[int] = None
                     pass
 
 
-async def safe_async_command(cmd: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+async def safe_async_command(cmd: list[str], timeout: int | None = None) -> dict[str, Any]:
     to = timeout if timeout is not None else DEFAULT_TIMEOUT
     started = time.perf_counter()
     command_name = (cmd[0] if cmd else "unknown").strip()
@@ -365,7 +366,7 @@ async def safe_async_command(cmd: List[str], timeout: Optional[int] = None) -> D
                     exit_code=proc.returncode,
                 )
                 return payload
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _emit_command_telemetry(
                     "safe_async_command",
                     command_name,

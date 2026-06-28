@@ -29,10 +29,8 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import cv2
 import numpy as np
@@ -81,7 +79,7 @@ def classify_region(x: int, y: int, w: int, h: int) -> str:
     return "unknown"
 
 
-def detect_rectangular_regions(img: np.ndarray) -> List[Dict]:
+def detect_rectangular_regions(img: np.ndarray) -> list[dict]:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 30, 120)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -103,7 +101,7 @@ def detect_rectangular_regions(img: np.ndarray) -> List[Dict]:
     return regions
 
 
-def detect_text_regions(img: np.ndarray) -> List[Dict]:
+def detect_text_regions(img: np.ndarray) -> list[dict]:
     if not HAS_TESSERACT:
         return []
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -159,7 +157,7 @@ def detect_text_regions(img: np.ndarray) -> List[Dict]:
     return regions
 
 
-def find_click_targets(ocr_regions: List[Dict]) -> Dict[str, List[int]]:
+def find_click_targets(ocr_regions: list[dict]) -> dict[str, list[int]]:
     button_map = {
         "save": "save_button", "&save": "save_button",
         "cancel": "cancel_button", "&cancel": "cancel_button",
@@ -213,7 +211,7 @@ class CVTestRunner:
         if mode == "full" and HAS_YOLO:
             self.yolo_model = self._load_yolo()
 
-        self.results: List[Dict] = []
+        self.results: list[dict] = []
 
     def _load_yolo(self):
         model_paths = [
@@ -232,7 +230,7 @@ class CVTestRunner:
             print(f"  YOLOv8 not loaded: {e}")
             return None
 
-    def extract_frames(self) -> List[Tuple[float, Path]]:
+    def extract_frames(self) -> list[tuple[float, Path]]:
         """Extract frames from video. Returns [(timestamp_s, frame_path), ...]."""
         # Clean previous frames
         for f in self.frames_dir.glob("frame_*.png"):
@@ -256,10 +254,10 @@ class CVTestRunner:
         return frames
 
     def analyze_frame(self, img: np.ndarray, timestamp_s: float,
-                      frame_path: Path) -> Dict:
+                      frame_path: Path) -> dict:
         """Run full analysis on a single frame."""
         h, w = img.shape[:2]
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "timestamp_s": round(timestamp_s, 1),
             "frame_path": str(frame_path),
             "resolution": f"{w}x{h}",
@@ -331,7 +329,7 @@ class CVTestRunner:
 
         return result
 
-    def annotate_frame(self, img: np.ndarray, result: Dict) -> str:
+    def annotate_frame(self, img: np.ndarray, result: dict) -> str:
         """Draw bounding boxes on the frame image. Returns path to annotated PNG."""
         annotated = img.copy()
 
@@ -374,7 +372,7 @@ class CVTestRunner:
         cv2.imwrite(str(ann_path), annotated)
         return str(ann_path)
 
-    def run(self) -> Dict:
+    def run(self) -> dict:
         """Main entry point: extract frames, analyze, generate report."""
         print(f"CV Test Runner — {self.video_path.name}")
         print(f"  Mode: {self.mode}")
@@ -486,7 +484,7 @@ class CVTestRunner:
 
         return summary
 
-    def _generate_report(self, summary: Dict) -> Path:
+    def _generate_report(self, summary: dict) -> Path:
         """Generate a visual HTML report."""
         report_path = self.out_dir / "report.html"
 
@@ -601,7 +599,7 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    print(f"\nAnalysis complete!")
+    print("\nAnalysis complete!")
     if "error" in summary:
         print(f"   Error:  {summary['error']}")
         return

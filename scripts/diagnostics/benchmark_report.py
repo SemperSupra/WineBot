@@ -11,7 +11,7 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def _markdown_table(headers: list, rows: list, align: list = None) -> str:
@@ -74,7 +74,7 @@ def generate_report(benchmark_data: dict) -> str:
     sections = []
 
     # ── Header ─────────────────────────────────────────────────────────
-    sections.append(f"# WineBot CV/OCR Engine Benchmark Report")
+    sections.append("# WineBot CV/OCR Engine Benchmark Report")
     sections.append(f"**Benchmark ID:** `{bm_id}`  ")
     sections.append(f"**Date:** {ts[:19].replace('T', ' ')} UTC  ")
     sections.append(f"**Frames:** {config.get('total_frames', '?')} total "
@@ -279,8 +279,8 @@ def generate_report(benchmark_data: dict) -> str:
         sections.append("- **Hardware:** Benchmark run inside Docker with `--gpus all`. GPU availability depends on container runtime.")
 
     sections.append("")
-    sections.append(f"---")
-    sections.append(f"*Report generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC*")
+    sections.append("---")
+    sections.append(f"*Report generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC*")
 
     return "\n".join(sections)
 
@@ -294,7 +294,7 @@ def main():
     args = parser.parse_args()
 
     if args.input:
-        with open(args.input, "r", encoding="utf-8") as f:
+        with open(args.input, encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)

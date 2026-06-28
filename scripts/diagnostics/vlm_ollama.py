@@ -22,14 +22,13 @@ import json
 import os
 import re
 import sys
-import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from typing import Any
 
 import cv2
 import numpy as np
-import urllib.request
-import urllib.error
 
 
 class OllamaVLM:
@@ -41,11 +40,11 @@ class OllamaVLM:
     """
 
     def __init__(self,
-                 host: Optional[str] = None,
-                 model: Optional[str] = None,
+                 host: str | None = None,
+                 model: str | None = None,
                  timeout: int = 60,
                  keep_alive: int = 3600,
-                 auto_pull: Optional[bool] = None):
+                 auto_pull: bool | None = None):
         """
         Args:
             host: Ollama API host URL (reads OLLAMA_HOST env var if None).
@@ -74,7 +73,7 @@ class OllamaVLM:
         return self._available
 
     @property
-    def provenance(self) -> Optional[Dict]:
+    def provenance(self) -> dict | None:
         """Return the model's provenance record (cached after first check)."""
         if self._provenance is None and self.available:
             self._provenance = self._fingerprint()
@@ -130,7 +129,7 @@ class OllamaVLM:
                 return True
         return False
 
-    def _list_models(self) -> List[str]:
+    def _list_models(self) -> list[str]:
         """Return list of model names on the server."""
         try:
             req = urllib.request.Request(
@@ -185,7 +184,7 @@ class OllamaVLM:
             print(f"[ollama] Pull error: {e}", file=sys.stderr)
             return False
 
-    def _fingerprint(self) -> Optional[Dict]:
+    def _fingerprint(self) -> dict | None:
         """Get model provenance via POST /api/show.
 
         Returns:
@@ -217,7 +216,7 @@ class OllamaVLM:
                 "model_format": details.get("format", ""),
                 "quantization": details.get("quantization_level", "BF16"),
                 "ollama_host": self.host,
-                "fingerprinted_at": datetime.now(timezone.utc).isoformat(),
+                "fingerprinted_at": datetime.now(UTC).isoformat(),
             }
 
             if sha256:
@@ -232,13 +231,13 @@ class OllamaVLM:
             return {
                 "model_name": self.model,
                 "ollama_host": self.host,
-                "fingerprinted_at": datetime.now(timezone.utc).isoformat(),
+                "fingerprinted_at": datetime.now(UTC).isoformat(),
             }
 
     # ── Inference ──────────────────────────────────────────────────────────
 
-    def chat(self, messages: List[Dict], image: Optional[np.ndarray] = None,
-             system_prompt: Optional[str] = None) -> Optional[str]:
+    def chat(self, messages: list[dict], image: np.ndarray | None = None,
+             system_prompt: str | None = None) -> str | None:
         """Send a chat completion request, optionally with an image.
 
         Args:
@@ -249,7 +248,7 @@ class OllamaVLM:
         Returns:
             Response text, or None on failure.
         """
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [],
             "stream": False,
@@ -302,7 +301,7 @@ class OllamaVLM:
             print(f"[ollama] Request failed: {e}", file=sys.stderr)
             return None
 
-    def ground(self, image: np.ndarray, query: str) -> Optional[Dict]:
+    def ground(self, image: np.ndarray, query: str) -> dict | None:
         """Ground a natural language query to a specific UI element."""
         h, w = image.shape[:2]
         prompt = (
@@ -322,7 +321,7 @@ class OllamaVLM:
 
         return self._parse_coordinates(response, query, image, normalized=True)
 
-    def describe(self, image: np.ndarray, style: str = "detailed") -> Optional[str]:
+    def describe(self, image: np.ndarray, style: str = "detailed") -> str | None:
         """Describe a UI screenshot in natural language."""
         if style == "brief":
             prompt = "Describe this UI screenshot in one sentence. Focus on what the user sees: dialog titles, button labels, text fields, checkboxes. Be specific about visible text."
@@ -345,7 +344,7 @@ class OllamaVLM:
 
     def _parse_coordinates(self, text: str, query: str,
                             image: np.ndarray,
-                            normalized: bool = False) -> Optional[Dict]:
+                            normalized: bool = False) -> dict | None:
         """Parse model output for bounding box coordinates."""
         m = re.search(
             r'\[\s*(\d+)\s*[,\s]\s*(\d+)\s*[,\s]\s*(\d+)\s*[,\s]\s*(\d+)\s*\]',
@@ -384,11 +383,11 @@ class OllamaVLM:
 
 # ── Factory ────────────────────────────────────────────────────────────────────
 
-_ollama_vlm: Optional[OllamaVLM] = None
+_ollama_vlm: OllamaVLM | None = None
 
 
-def get_ollama_vlm(host: Optional[str] = None,
-                    model: Optional[str] = None) -> Optional[OllamaVLM]:
+def get_ollama_vlm(host: str | None = None,
+                    model: str | None = None) -> OllamaVLM | None:
     """Get or create the Ollama VLM client.
 
     Only activates when VLM_PROVIDER env var is set to "ollama".

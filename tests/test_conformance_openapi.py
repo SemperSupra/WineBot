@@ -6,7 +6,6 @@ from openapi_spec_validator import validate
 
 from api.server import app
 
-
 client = TestClient(app)
 
 

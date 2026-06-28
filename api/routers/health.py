@@ -1,25 +1,25 @@
-from fastapi import APIRouter
-from typing import Optional
 import os
-import time
 import platform
-from api.utils.process import (
-    check_binary,
-    safe_command,
-    safe_async_command,
-    find_processes,
-    pid_running,
-)
-from api.utils.files import (
-    statvfs_info,
-    read_session_dir,
-    recorder_pid,
-)
-from api.core.recorder import recording_status
-from api.core.telemetry import emit_operation_timing
+import time
+
+from fastapi import APIRouter
+
 from api.core.broker import broker
 from api.core.config_guard import validate_runtime_configuration
-
+from api.core.recorder import recording_status
+from api.core.telemetry import emit_operation_timing
+from api.utils.files import (
+    read_session_dir,
+    recorder_pid,
+    statvfs_info,
+)
+from api.utils.process import (
+    check_binary,
+    find_processes,
+    pid_running,
+    safe_async_command,
+    safe_command,
+)
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -29,7 +29,7 @@ START_TIME = time.time()
 def meminfo_summary() -> dict:
     data = {}
     try:
-        with open("/proc/meminfo", "r") as f:
+        with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemTotal:"):
                     data["mem_total_kb"] = int(line.split()[1])
@@ -40,7 +40,7 @@ def meminfo_summary() -> dict:
     return data
 
 
-def _process_running(name: str, pid: Optional[int]) -> bool:
+def _process_running(name: str, pid: int | None) -> bool:
     """Check if process is running by name and optional PID file."""
     if pid is not None:
         if pid_running(pid):
@@ -449,10 +449,10 @@ async def health_recording():
     op_started = time.perf_counter()
     session_dir = read_session_dir()
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"
-    
+
     r_pid = recorder_pid(session_dir) if session_dir else None
     recorder_ok = _process_running("automation.recorder start", r_pid)
-    
+
     status = recording_status(session_dir, enabled)
     payload = {
         "enabled": enabled,

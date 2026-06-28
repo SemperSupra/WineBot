@@ -16,13 +16,12 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 # Add scripts to path so we can import engines
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ui_detectors import YOLOUIDetector
 import cv2
+from ui_detectors import YOLOUIDetector
 
 SIDECAR_URL = os.environ.get("CV_SIDECAR_URL", "http://localhost:8001")
 # Derive project root from this script's location: scripts/diagnostics/ → ../../ → project root
@@ -166,7 +165,7 @@ def run():
     # Summary report
     print()
     print("=" * 70)
-    print(f"  ANALYSIS COMPLETE")
+    print("  ANALYSIS COMPLETE")
     print(f"  Videos: {len(all_results)}/{len(VIDEOS)}")
     print(f"  Total frames: {total_frames}")
     print(f"  Total OCR regions: {total_ocr}")

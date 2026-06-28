@@ -13,18 +13,20 @@ Usage:
   python3 pipeline_replacements.py --output replace_results.json
 """
 
-import argparse, json, os, sys, time
-from collections import defaultdict
-from datetime import datetime, timezone
+import argparse
+import json
+import os
+import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ocr_engines import get_ocr_engine, available_backends
-from ui_detectors import get_ui_detector, available_detectors
-
+from ocr_engines import available_backends, get_ocr_engine
+from ui_detectors import available_detectors, get_ui_detector
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
@@ -96,7 +98,7 @@ def benchmark_detection(test_images, warmup=3, iterations=10):
         print(f"\n[{backend}] Loading...")
         detector = get_ui_detector(backend)
         if not detector.available:
-            print(f"  SKIP: not available")
+            print("  SKIP: not available")
             continue
 
         backend_results = {"backend": backend, "gpu": detector.uses_gpu, "frames": []}
@@ -185,7 +187,7 @@ def benchmark_ocr(test_images, warmup=3, iterations=10):
         print(f"\n[{backend}] Loading...")
         ocr = get_ocr_engine(backend)
         if not ocr.available:
-            print(f"  SKIP: not available")
+            print("  SKIP: not available")
             continue
 
         backend_results = {"backend": backend, "frames": []}
@@ -255,7 +257,7 @@ def benchmark_clip(test_images, warmup=3, iterations=50):
         print("[clip] OpenCLIP not available, skipping")
         return results
 
-    print(f"\n[CLIP ViT-B-32] Benchmarking...")
+    print("\n[CLIP ViT-B-32] Benchmarking...")
     all_times = []
     zero_shot_results = []
 
@@ -332,7 +334,7 @@ def benchmark_scene_description(test_images, warmup=1, iterations=3):
         from florence2_captioner import get_captioner
         cap = get_captioner()
         if cap.available:
-            print(f"\n[Florence-2-base] Captioning (limited iterations — slow)...")
+            print("\n[Florence-2-base] Captioning (limited iterations — slow)...")
             captions = []
             for img_entry in test_images["images"]:
                 img = cv2.imread(img_entry["path"])
@@ -416,7 +418,7 @@ def main():
 
     report = {
         "benchmark": "winebot_pipeline_replacements",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "config": {
             "warmup": args.warmup,
             "iterations": args.iterations,
@@ -469,7 +471,7 @@ def main():
         # Statistically significant differences
         if len(ranked) >= 2:
             baseline = ranked[0]
-            print(f"    Statistically significant differences (p<0.05):")
+            print("    Statistically significant differences (p<0.05):")
             for r in ranked[1:]:
                 if not ci_overlap(baseline.get("summary", {}), r.get("summary", {})):
                     diff_pct = ((r["summary"]["mean_ms"] - baseline["summary"]["mean_ms"])

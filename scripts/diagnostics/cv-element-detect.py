@@ -19,8 +19,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime
 
 import cv2
 import numpy as np
@@ -79,7 +78,7 @@ class UIElementDetector:
             print(f"WARNING: Could not load image from {path}", file=sys.stderr)
         return img
 
-    def detect_rectangular_regions(self, img: np.ndarray) -> List[Dict]:
+    def detect_rectangular_regions(self, img: np.ndarray) -> list[dict]:
         """Find rectangular UI regions using contour analysis on edge map."""
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 30, 120)
@@ -106,7 +105,7 @@ class UIElementDetector:
             })
         return regions
 
-    def detect_text_regions(self, img: np.ndarray) -> List[Dict]:
+    def detect_text_regions(self, img: np.ndarray) -> list[dict]:
         """Use Tesseract to find and read text in the image."""
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # Tesseract with bounding boxes
@@ -160,7 +159,7 @@ class UIElementDetector:
             r["type"] = self._classify_text_region(r)
         return text_regions
 
-    def detect_windows(self, img: np.ndarray) -> List[Dict]:
+    def detect_windows(self, img: np.ndarray) -> list[dict]:
         """Detect application windows by finding dark title bars with light text."""
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # Apply adaptive threshold to find title bar regions
@@ -199,13 +198,13 @@ class UIElementDetector:
         # Deduplicate nested windows
         return self._deduplicate_windows(windows)
 
-    def analyze(self, img, label: str = "") -> Dict:
+    def analyze(self, img, label: str = "") -> dict:
         """Full analysis: windows, text, elements. Returns structured result."""
         if img is None:
             return {"error": "capture_failed", "screen": "1280x720",
-                    "windows": [], "key_text": [], "timestamp": datetime.now(timezone.utc).isoformat()}
+                    "windows": [], "key_text": [], "timestamp": datetime.now(UTC).isoformat()}
         self.screen_height, self.screen_width = img.shape[:2]
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
 
         windows = self.detect_windows(img)
         text_regions = self.detect_text_regions(img)
@@ -237,7 +236,7 @@ class UIElementDetector:
     # ── Private helpers ──
 
     def _classify_region(self, x: int, y: int, w: int, h: int,
-                         area: int, shape: Tuple) -> str:
+                         area: int, shape: tuple) -> str:
         aspect = w / max(h, 1)
         sh, sw = shape[:2]
 
@@ -258,7 +257,7 @@ class UIElementDetector:
         return "unknown"
 
     def _position_name(self, x: int, y: int, w: int, h: int,
-                        shape: Tuple) -> str:
+                        shape: tuple) -> str:
         sh, sw = shape[:2]
         cx = x + w // 2
         cy = y + h // 2
@@ -271,7 +270,7 @@ class UIElementDetector:
         else: parts.append("center")
         return "_".join(parts)
 
-    def _classify_text_region(self, region: Dict) -> str:
+    def _classify_text_region(self, region: dict) -> str:
         text = region["text"].lower()
         y = region["bbox"][1]
         if y < 40:
@@ -285,7 +284,7 @@ class UIElementDetector:
             return "dialog_title"
         return "general_text"
 
-    def _deduplicate_windows(self, windows: List[Dict]) -> List[Dict]:
+    def _deduplicate_windows(self, windows: list[dict]) -> list[dict]:
         """Remove windows that are fully contained within larger windows."""
         windows.sort(key=lambda w: w["width"] * w["height"], reverse=True)
         result = []
@@ -321,7 +320,7 @@ def main():
         while True:
             img = detector.capture()
             result = detector.analyze(img, args.label)
-            result["timestamp"] = datetime.now(timezone.utc).isoformat()
+            result["timestamp"] = datetime.now(UTC).isoformat()
             print(json.dumps({
                 "windows": result["window_titles"],
                 "key_text": result["key_text"][:10],
@@ -339,7 +338,7 @@ def main():
         img = detector.capture()
 
     result = detector.analyze(img, args.label)
-    result["timestamp"] = datetime.now(timezone.utc).isoformat()
+    result["timestamp"] = datetime.now(UTC).isoformat()
 
     if args.jsonl:
         with open(args.jsonl, "a") as f:

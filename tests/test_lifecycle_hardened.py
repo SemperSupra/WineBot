@@ -1,11 +1,13 @@
-import os
 import asyncio
-import pytest
+import os
 from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
-from api.server import app
+
 from api.core.broker import InputBroker
 from api.core.models import ControlMode
+from api.server import app
 
 client = TestClient(app)
 
@@ -14,27 +16,25 @@ def test_sessions_resume_concurrent_calls_idempotent(tmp_path):
     session_dir = tmp_path / "session-1"
     session_dir.mkdir()
     (session_dir / "session.json").write_text("{}")
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-        with patch(
-            "api.routers.lifecycle.read_session_dir",
-            side_effect=[None, str(session_dir), str(session_dir)],
-        ):
-            with patch("api.routers.lifecycle.write_session_dir"):
-                with patch("api.routers.lifecycle.write_session_state"):
-                    with patch("api.routers.lifecycle.append_lifecycle_event"):
-                        with patch("api.routers.lifecycle.link_wine_user_dir"):
-                            with patch("api.routers.lifecycle.ensure_user_profile"):
-                                with patch("api.routers.lifecycle.broker.update_session"):
-                                    res1 = client.post(
-                                        "/sessions/resume",
-                                        json={"session_dir": str(session_dir)},
-                                        headers={"X-API-Key": "test-token"},
-                                    )
-                                    res2 = client.post(
-                                        "/sessions/resume",
-                                        json={"session_dir": str(session_dir)},
-                                        headers={"X-API-Key": "test-token"},
-                                    )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.lifecycle.read_session_dir",
+        side_effect=[None, str(session_dir), str(session_dir)],
+    ), patch("api.routers.lifecycle.write_session_dir"):
+        with patch("api.routers.lifecycle.write_session_state"):
+            with patch("api.routers.lifecycle.append_lifecycle_event"):
+                with patch("api.routers.lifecycle.link_wine_user_dir"):
+                    with patch("api.routers.lifecycle.ensure_user_profile"):
+                        with patch("api.routers.lifecycle.broker.update_session"):
+                            res1 = client.post(
+                                "/sessions/resume",
+                                json={"session_dir": str(session_dir)},
+                                headers={"X-API-Key": "test-token"},
+                            )
+                            res2 = client.post(
+                                "/sessions/resume",
+                                json={"session_dir": str(session_dir)},
+                                headers={"X-API-Key": "test-token"},
+                            )
     assert res1.status_code == 200
     assert res2.status_code == 200
     assert res1.json()["status"] == "resumed"
@@ -58,16 +58,14 @@ def test_sessions_suspend_oneshot_marks_completed(tmp_path):
     with patch.dict(
         os.environ,
         {"API_TOKEN": "test-token", "WINEBOT_SESSION_MODE": "oneshot"},
+    ), patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)), patch(
+        "api.routers.lifecycle.graceful_wine_shutdown",
+        return_value={"wineboot": {"ok": True}, "wineserver": {"ok": True}},
     ):
-        with patch("api.routers.lifecycle.read_session_dir", return_value=str(session_dir)):
-            with patch(
-                "api.routers.lifecycle.graceful_wine_shutdown",
-                return_value={"wineboot": {"ok": True}, "wineserver": {"ok": True}},
-            ):
-                response = client.post(
-                    "/sessions/suspend",
-                    headers={"X-API-Key": "test-token"},
-                )
+        response = client.post(
+            "/sessions/suspend",
+            headers={"X-API-Key": "test-token"},
+        )
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     assert response.json()["session_mode"] == "oneshot"
@@ -156,46 +154,40 @@ def test_lifecycle_shutdown_power_off(tmp_path):
     session_dir = tmp_path / "active-session"
     session_dir.mkdir()
 
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-        with patch(
-            "api.routers.lifecycle.read_session_dir", return_value=str(session_dir)
-        ):
-            with patch("api.routers.lifecycle.append_lifecycle_event"):
-                with patch(
-                    "api.routers.lifecycle.safe_command", return_value={"ok": True}
-                ):
-                    with patch("api.routers.lifecycle.schedule_shutdown"):
-                        client.post(
-                            "/lifecycle/shutdown?power_off=true",
-                            headers={"X-API-Key": "test-token"},
-                        )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.lifecycle.read_session_dir", return_value=str(session_dir)
+    ), patch("api.routers.lifecycle.append_lifecycle_event"), patch(
+        "api.routers.lifecycle.safe_command", return_value={"ok": True}
+    ), patch("api.routers.lifecycle.schedule_shutdown"):
+        client.post(
+            "/lifecycle/shutdown?power_off=true",
+            headers={"X-API-Key": "test-token"},
+        )
 
 
 def test_lifecycle_shutdown_idempotent_guard(tmp_path):
     session_dir = tmp_path / "active-session"
     session_dir.mkdir()
 
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-        with patch(
-            "api.routers.lifecycle.read_session_dir", return_value=str(session_dir)
-        ):
-            with patch("api.routers.lifecycle.append_lifecycle_event"):
-                with patch("api.routers.lifecycle.atomic_shutdown", return_value={"ok": True}):
-                    with patch("api.routers.lifecycle.schedule_shutdown"):
-                        import api.routers.lifecycle as lifecycle_router
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.lifecycle.read_session_dir", return_value=str(session_dir)
+    ), patch("api.routers.lifecycle.append_lifecycle_event"):
+        with patch("api.routers.lifecycle.atomic_shutdown", return_value={"ok": True}):
+            with patch("api.routers.lifecycle.schedule_shutdown"):
+                import api.routers.lifecycle as lifecycle_router
 
-                        lifecycle_router._shutdown_in_progress = False
-                        lifecycle_router._shutdown_mode = ""
-                        lifecycle_router._shutdown_started_at = 0.0
+                lifecycle_router._shutdown_in_progress = False
+                lifecycle_router._shutdown_mode = ""
+                lifecycle_router._shutdown_started_at = 0.0
 
-                        res1 = client.post(
-                            "/lifecycle/shutdown",
-                            headers={"X-API-Key": "test-token"},
-                        )
-                        res2 = client.post(
-                            "/lifecycle/shutdown",
-                            headers={"X-API-Key": "test-token"},
-                        )
+                res1 = client.post(
+                    "/lifecycle/shutdown",
+                    headers={"X-API-Key": "test-token"},
+                )
+                res2 = client.post(
+                    "/lifecycle/shutdown",
+                    headers={"X-API-Key": "test-token"},
+                )
 
     assert res1.status_code == 200
     assert res1.json()["status"] == "shutting_down"

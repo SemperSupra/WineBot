@@ -1,12 +1,11 @@
-import os
 import asyncio
+import os
 from unittest.mock import AsyncMock, patch
 
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
-from api.core.models import RecorderState
-from api.core.models import ControlPolicyMode
+from api.core.models import ControlPolicyMode, RecorderState
 from api.server import app
 
 client = TestClient(app)
@@ -193,17 +192,15 @@ def test_recording_perf_summary_contract(tmp_path):
 
 
 def test_windows_focus_endpoint():
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-        with patch(
-            "api.routers.automation.broker.check_access",
-            new=AsyncMock(return_value=True),
-        ):
-            with patch("api.routers.automation.safe_command") as mock_safe:
-                response = client.post(
-                    "/windows/focus",
-                    json={"window_id": "0x1234"},
-                    headers=_auth(),
-                )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.automation.broker.check_access",
+        new=AsyncMock(return_value=True),
+    ), patch("api.routers.automation.safe_command") as mock_safe:
+        response = client.post(
+            "/windows/focus",
+            json={"window_id": "0x1234"},
+            headers=_auth(),
+        )
     assert response.status_code == 200
     assert response.json()["status"] == "focused"
     mock_safe.assert_called_once_with(
@@ -212,31 +209,27 @@ def test_windows_focus_endpoint():
 
 
 def test_run_autoit_and_run_python_endpoints():
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
-        with patch(
-            "api.routers.automation.broker.check_access",
-            new=AsyncMock(return_value=True),
-        ):
-            with patch(
-                "api.routers.automation.broker.report_agent_activity",
-                new=AsyncMock(),
-            ):
-                with patch(
-                    "api.routers.automation._require_active_session",
-                    return_value="/tmp/winebot-session",
-                ):
-                    with patch("api.routers.automation.safe_command") as mock_safe:
-                        mock_safe.return_value = {"ok": True, "stdout": "ok"}
-                        autoit_res = client.post(
-                            "/run/autoit",
-                            json={"script": "MsgBox(0, 'a', 'b')"},
-                            headers=_auth(),
-                        )
-                        python_res = client.post(
-                            "/run/python",
-                            json={"script": "print('ok')"},
-                            headers=_auth(),
-                        )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.automation.broker.check_access",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "api.routers.automation.broker.report_agent_activity",
+        new=AsyncMock(),
+    ), patch(
+        "api.routers.automation._require_active_session",
+        return_value="/tmp/winebot-session",
+    ), patch("api.routers.automation.safe_command") as mock_safe:
+        mock_safe.return_value = {"ok": True, "stdout": "ok"}
+        autoit_res = client.post(
+            "/run/autoit",
+            json={"script": "MsgBox(0, 'a', 'b')"},
+            headers=_auth(),
+        )
+        python_res = client.post(
+            "/run/python",
+            json={"script": "print('ok')"},
+            headers=_auth(),
+        )
     assert autoit_res.status_code == 200
     assert autoit_res.json()["status"] == "ok"
     assert python_res.status_code == 200
@@ -244,55 +237,51 @@ def test_run_autoit_and_run_python_endpoints():
 
 
 def test_control_endpoints_contract():
-    with patch.dict(os.environ, {"API_TOKEN": "test-token"}):
+    with patch.dict(os.environ, {"API_TOKEN": "test-token"}), patch(
+        "api.routers.control.broker.grant_agent",
+        new=AsyncMock(),
+    ), patch(
+        "api.routers.control.broker.renew_agent",
+        new=AsyncMock(),
+    ), patch(
+        "api.routers.control.broker.set_user_intent",
+        new=AsyncMock(),
+    ), patch("api.routers.control.broker.get_state") as mock_state:
+        mock_state.return_value = {
+            "session_id": "s",
+            "interactive": True,
+            "control_mode": "AGENT",
+            "lease_expiry": None,
+            "user_intent": "WAIT",
+            "agent_status": "RUNNING",
+        }
         with patch(
-            "api.routers.control.broker.grant_agent",
-            new=AsyncMock(),
+            "api.routers.control.read_session_dir",
+            return_value="/tmp/abc",
         ):
-            with patch(
-                "api.routers.control.broker.renew_agent",
-                new=AsyncMock(),
-            ):
-                with patch(
-                    "api.routers.control.broker.set_user_intent",
-                    new=AsyncMock(),
-                ):
-                    with patch("api.routers.control.broker.get_state") as mock_state:
-                        mock_state.return_value = {
-                            "session_id": "s",
-                            "interactive": True,
-                            "control_mode": "AGENT",
-                            "lease_expiry": None,
-                            "user_intent": "WAIT",
-                            "agent_status": "RUNNING",
-                        }
-                        with patch(
-                            "api.routers.control.read_session_dir",
-                            return_value="/tmp/abc",
-                        ):
-                            challenge_res = client.post(
-                                "/sessions/abc/control/challenge", headers=_auth()
-                            )
-                            grant_res = client.post(
-                                "/sessions/abc/control/grant",
-                                json={
-                                    "lease_seconds": 30,
-                                    "user_ack": True,
-                                    "challenge_token": "tok",
-                                },
-                                headers=_auth(),
-                            )
-                            renew_res = client.post(
-                                "/sessions/abc/control/renew",
-                                json={"lease_seconds": 30},
-                                headers=_auth(),
-                            )
-                            intent_res = client.post(
-                                "/sessions/abc/user_intent",
-                                json={"intent": "WAIT"},
-                                headers=_auth(),
-                            )
-                            get_res = client.get("/sessions/abc/control", headers=_auth())
+            challenge_res = client.post(
+                "/sessions/abc/control/challenge", headers=_auth()
+            )
+            grant_res = client.post(
+                "/sessions/abc/control/grant",
+                json={
+                    "lease_seconds": 30,
+                    "user_ack": True,
+                    "challenge_token": "tok",
+                },
+                headers=_auth(),
+            )
+            renew_res = client.post(
+                "/sessions/abc/control/renew",
+                json={"lease_seconds": 30},
+                headers=_auth(),
+            )
+            intent_res = client.post(
+                "/sessions/abc/user_intent",
+                json={"intent": "WAIT"},
+                headers=_auth(),
+            )
+            get_res = client.get("/sessions/abc/control", headers=_auth())
     assert challenge_res.status_code == 200
     assert get_res.status_code == 200
     assert grant_res.status_code == 200
@@ -337,27 +326,25 @@ def test_trace_client_and_network_status_contract():
 def test_control_mode_endpoints_contract(tmp_path):
     session_dir = tmp_path / "session-1"
     session_dir.mkdir()
-    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}):
-        with patch(
-            "api.routers.control.resolve_session_dir", return_value=str(session_dir)
-        ):
-            with patch(
-                "api.routers.control.read_session_dir", return_value="/tmp/not-active"
-            ):
-                get_res = client.get("/control/mode", headers=_auth())
-                set_instance_res = client.post(
-                    "/control/mode",
-                    json={"mode": "hybrid"},
-                    headers=_auth(),
-                )
-                set_session_res = client.post(
-                    "/sessions/session-1/control/mode?allow_inactive=true",
-                    json={"mode": "human-only"},
-                    headers=_auth(),
-                )
-                get_session_res = client.get(
-                    "/sessions/session-1/control/mode", headers=_auth()
-                )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}), patch(
+        "api.routers.control.resolve_session_dir", return_value=str(session_dir)
+    ), patch(
+        "api.routers.control.read_session_dir", return_value="/tmp/not-active"
+    ):
+        get_res = client.get("/control/mode", headers=_auth())
+        set_instance_res = client.post(
+            "/control/mode",
+            json={"mode": "hybrid"},
+            headers=_auth(),
+        )
+        set_session_res = client.post(
+            "/sessions/session-1/control/mode?allow_inactive=true",
+            json={"mode": "human-only"},
+            headers=_auth(),
+        )
+        get_session_res = client.get(
+            "/sessions/session-1/control/mode", headers=_auth()
+        )
     assert get_res.status_code == 200
     assert set_instance_res.status_code == 200
     assert set_session_res.status_code == 200
@@ -367,17 +354,15 @@ def test_control_mode_endpoints_contract(tmp_path):
 def test_control_mode_set_active_check_happens_before_write(tmp_path):
     session_dir = tmp_path / "session-1"
     session_dir.mkdir()
-    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}):
-        with patch(
-            "api.routers.control.resolve_session_dir", return_value=str(session_dir)
-        ):
-            with patch("api.routers.control.read_session_dir", return_value="/tmp/not-active"):
-                with patch("api.routers.control.write_session_control_mode") as write_mode:
-                    response = client.post(
-                        "/sessions/session-1/control/mode",
-                        json={"mode": "human-only"},
-                        headers=_auth(),
-                    )
+    with patch.dict(os.environ, {"API_TOKEN": "test-token", "MODE": "interactive"}), patch(
+        "api.routers.control.resolve_session_dir", return_value=str(session_dir)
+    ), patch("api.routers.control.read_session_dir", return_value="/tmp/not-active"):
+        with patch("api.routers.control.write_session_control_mode") as write_mode:
+            response = client.post(
+                "/sessions/session-1/control/mode",
+                json={"mode": "human-only"},
+                headers=_auth(),
+            )
     assert response.status_code == 409
     write_mode.assert_not_called()
 
@@ -402,13 +387,12 @@ def test_control_mode_admission_blocks_headless_human_only():
     with patch.dict(
         os.environ,
         {"API_TOKEN": "test-token", "MODE": "headless", "WINEBOT_ALLOW_HEADLESS_HYBRID": "0"},
-    ):
-        with patch("api.routers.control.broker.get_state", return_value=_State()):
-            res = client.post(
-                "/control/mode",
-                json={"mode": "human-only"},
-                headers=_auth(),
-            )
+    ), patch("api.routers.control.broker.get_state", return_value=_State()):
+        res = client.post(
+            "/control/mode",
+            json={"mode": "human-only"},
+            headers=_auth(),
+        )
     assert res.status_code == 409
 
 

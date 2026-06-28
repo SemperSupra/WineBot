@@ -80,12 +80,13 @@ build() {
 
 # 6. Vuln (Trivy)
 vuln() {
-    log "Running vulnerability scan..."
+    log "Running vulnerability scan (CRITICAL+HIGH, same as CI pipeline)..."
+    local trivy_args="fs --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ."
     if command -v trivy >/dev/null 2>&1; then
-        trivy fs .
+        trivy $trivy_args
     else
         log "trivy not found on host, running via docker..."
-        docker run --rm -v "$REPO_ROOT:/work" -w /work aquasec/trivy fs .
+        docker run --rm -v "$REPO_ROOT:/work" -w /work aquasec/trivy $trivy_args
     fi
 }
 

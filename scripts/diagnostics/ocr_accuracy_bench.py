@@ -12,18 +12,19 @@ Protocol:
   4. Report 95% CI on F1 scores
 """
 
-import argparse, json, os, sys, time
-from collections import defaultdict
-from datetime import datetime, timezone
-from pathlib import Path
+import argparse
+import json
 import re
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
 
-import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ocr_engines import get_ocr_engine, available_backends
 from benchmark_dataset import GENERATORS
+from ocr_engines import available_backends, get_ocr_engine
 
 
 def compute_char_accuracy(detected_text: str, expected_text: str) -> dict:
@@ -220,7 +221,7 @@ def benchmark_ocr_accuracy(images, warmup=2, iterations=5):
         print(f"\n[{backend}] Testing accuracy...")
         ocr = get_ocr_engine(backend)
         if not ocr.available:
-            print(f"  SKIP: not available")
+            print("  SKIP: not available")
             continue
 
         all_char_f1s = []
@@ -295,7 +296,7 @@ def benchmark_ocr_accuracy(images, warmup=2, iterations=5):
               f"Speed: {agg_time['mean']:.0f}ms")
 
     # Ranking
-    print(f"\n  --- Accuracy Ranking (Char F1) ---")
+    print("\n  --- Accuracy Ranking (Char F1) ---")
     ranked = sorted(results, key=lambda r: r["char_f1"]["mean"], reverse=True)
     for i, r in enumerate(ranked):
         best = ranked[0]
@@ -330,7 +331,7 @@ def main():
 
     report = {
         "benchmark": "ocr_accuracy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "config": {"warmup": args.warmup, "iterations": args.iterations},
         "results": results,
     }

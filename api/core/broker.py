@@ -1,14 +1,15 @@
-import time
 import secrets
 import threading
+import time
+
 from fastapi import HTTPException
 
 from api.core.models import (
-    ControlMode,
-    UserIntent,
     AgentStatus,
-    ControlState,
+    ControlMode,
     ControlPolicyMode,
+    ControlState,
+    UserIntent,
 )
 from api.utils.files import get_instance_control_mode
 

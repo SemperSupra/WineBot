@@ -5,7 +5,12 @@ Each fold is fully isolated: data generation + training run as separate
 subprocess calls, avoiding any import conflicts between the GT generator
 and PyTorch's multiprocessing.
 """
-import argparse, csv, json, os, subprocess, sys, time
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
 
 import numpy as np
 
@@ -131,7 +136,7 @@ print(f"Generated {{total}} images")
     )
     if result.returncode != 0:
         print(f"  [ERROR] Generation failed:\n{result.stderr}", file=sys.stderr)
-        raise RuntimeError(f"Data generation failed for fold")
+        raise RuntimeError("Data generation failed for fold")
 
     # Parse total from output
     for line in result.stdout.strip().split("\n"):
@@ -170,7 +175,7 @@ def train_fold(fold_dir: str, epochs: int) -> dict:
 
     if result.returncode != 0:
         stderr_lines = result.stderr.strip().split("\n")[-10:]
-        print(f"    [ERROR] Training failed:", file=sys.stderr)
+        print("    [ERROR] Training failed:", file=sys.stderr)
         for l in stderr_lines:
             print(f"      {l}", file=sys.stderr)
         return {"best_mAP50": 0, "model_path": ""}
@@ -194,7 +199,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"  K-FOLD CROSS-VALIDATION (subprocess isolation)")
+    print("  K-FOLD CROSS-VALIDATION (subprocess isolation)")
     print(f"  Folds: {args.folds}")
     print(f"  Images/fold/scene: {args.images_per_fold}")
     print(f"  Epochs per fold: {args.epochs}")
@@ -219,7 +224,7 @@ def main():
 
         # Phase 1: Generate data
         t0 = time.time()
-        print(f"  [1/2] Generating data...")
+        print("  [1/2] Generating data...")
         sys.stdout.flush()
         total = generate_fold_data(fold_dir, train_scenes, val_scenes,
                                    args.images_per_fold, fold_seed=42 + fold)
@@ -250,11 +255,11 @@ def main():
 
     # Summary
     print(f"\n{'='*60}")
-    print(f"  CROSS-VALIDATION RESULTS")
+    print("  CROSS-VALIDATION RESULTS")
     print(f"{'='*60}")
     map50s = [r["best_mAP50"] for r in fold_results]
     print(f"  Mean mAP50: {np.mean(map50s):.4f} ± {np.std(map50s):.4f}")
-    print(f"  Per fold:")
+    print("  Per fold:")
     for r in fold_results:
         print(f"    Fold {r['fold']}: mAP50={r['best_mAP50']:.4f} "
               f"(val: {r['val_scenes']})")

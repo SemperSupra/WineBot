@@ -15,10 +15,10 @@ import shutil
 import socket
 import tarfile
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 # Try to import centralized version, fallback if running outside environment
 try:
@@ -50,7 +50,7 @@ class CopyState:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def redact_value(value: str, secrets: set[str]) -> str:

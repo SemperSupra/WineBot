@@ -7,9 +7,13 @@ metadata in a manifest file.
 Usage:
   docker exec winebot-cv python3 /tmp/generate_state_data.py
 """
-import importlib.util, json, os, sys, time, random
+import importlib.util
+import json
+import os
+import random
+import time
+
 import cv2
-import numpy as np
 
 # Import GT generator (hyphenated filename)
 spec = importlib.util.spec_from_file_location(

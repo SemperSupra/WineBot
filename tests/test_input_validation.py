@@ -1,8 +1,10 @@
-from fastapi.testclient import TestClient
-from api.server import app
-from unittest.mock import patch, MagicMock
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
+from fastapi.testclient import TestClient
+
+from api.server import app
 
 client = TestClient(app)
 
@@ -131,14 +133,16 @@ class TestXDotoolToAHKKeys:
         assert result == "a"
 
     def test_empty_string_raises(self):
-        from api.routers.input import _xdotool_to_ahk_keys
         import pytest
+
+        from api.routers.input import _xdotool_to_ahk_keys
         with pytest.raises(ValueError):
             _xdotool_to_ahk_keys("")
 
     def test_whitespace_only_raises(self):
-        from api.routers.input import _xdotool_to_ahk_keys
         import pytest
+
+        from api.routers.input import _xdotool_to_ahk_keys
         with pytest.raises(ValueError):
             _xdotool_to_ahk_keys("   ")
 

@@ -1,10 +1,10 @@
+import datetime
 import os
 import random
 import threading
 import time
-import datetime
 from collections import deque
-from typing import Dict, Any, Optional, Set
+from typing import Any
 
 from api.core.versioning import EVENT_SCHEMA_VERSION
 from api.utils.files import (
@@ -12,7 +12,6 @@ from api.utils.files import (
     performance_metrics_log_path,
     session_id_from_dir,
 )
-
 
 _rate_lock = threading.Lock()
 _event_timestamps: deque[float] = deque()  # epoch seconds
@@ -47,13 +46,13 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
     return max(minimum, value)
 
 
-def _csv_set(value: Optional[str]) -> Set[str]:
+def _csv_set(value: str | None) -> set[str]:
     if not value:
         return set()
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-def _allowlist_match(value: str, allowlist: Set[str]) -> bool:
+def _allowlist_match(value: str, allowlist: set[str]) -> bool:
     if not allowlist:
         return True
     return value in allowlist
@@ -99,7 +98,7 @@ def should_emit(feature: str, capability: str, feature_set: str) -> bool:
 
 
 def emit_operation_timing(
-    session_dir: Optional[str],
+    session_dir: str | None,
     *,
     feature: str,
     capability: str,
@@ -108,18 +107,18 @@ def emit_operation_timing(
     duration_ms: float,
     result: str = "ok",
     source: str = "api",
-    metric_name: Optional[str] = None,
-    tags: Optional[Dict[str, Any]] = None,
-    resource: Optional[Dict[str, Any]] = None,
+    metric_name: str | None = None,
+    tags: dict[str, Any] | None = None,
+    resource: dict[str, Any] | None = None,
 ) -> None:
     if not session_dir:
         return
     if not should_emit(feature, capability, feature_set):
         return
     metric = metric_name or f"{feature}.{capability}.{operation}.latency"
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema_version": EVENT_SCHEMA_VERSION,
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
         "event": "performance_metric",
         "metric": metric,

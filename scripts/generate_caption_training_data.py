@@ -15,11 +15,9 @@ Usage:
 """
 
 import argparse
-import hashlib
 import json
 import os
 import sys
-from pathlib import Path
 
 # Label names from data.yaml
 CLASS_NAMES = {

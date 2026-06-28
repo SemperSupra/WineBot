@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+import os
 import socket
 import struct
-import time
-import os
 import threading
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import time
+
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 def d3des_encrypt(challenge, password):

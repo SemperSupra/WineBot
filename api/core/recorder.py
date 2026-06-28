@@ -2,24 +2,25 @@ import asyncio
 import glob
 import os
 import time
-from typing import Protocol, runtime_checkable, Dict, Any
+from typing import Any, Protocol, runtime_checkable
+
 from api.core.models import RecorderState
-from api.utils.files import recorder_state, write_recorder_state, recorder_running
-from api.utils.process import run_async_command
 from api.utils.config import config
+from api.utils.files import recorder_running, recorder_state, write_recorder_state
+from api.utils.process import run_async_command
 
 
 @runtime_checkable
 class Recorder(Protocol):
     """Protocol defining the interface for any session recorder implementation."""
-    async def start(self) -> Dict[str, Any]: ...
-    async def stop(self) -> Dict[str, Any]: ...
-    async def status(self) -> Dict[str, Any]: ...
+    async def start(self) -> dict[str, Any]: ...
+    async def stop(self) -> dict[str, Any]: ...
+    async def status(self) -> dict[str, Any]: ...
     async def heartbeat(self) -> bool: ...
 
 
 recorder_lock = asyncio.Lock()
-_heartbeat_cache: Dict[str, Dict[str, Any]] = {}
+_heartbeat_cache: dict[str, dict[str, Any]] = {}
 
 
 def recording_status(session_dir: str | None, enabled: bool) -> dict:
@@ -29,7 +30,7 @@ def recording_status(session_dir: str | None, enabled: bool) -> dict:
         return {"state": RecorderState.IDLE.value, "running": False}
     state = recorder_state(session_dir)
     running = recorder_running(session_dir)
-    
+
     # Heartbeat check if supposedly recording
     heartbeat_ok = True
     if running and state == RecorderState.RECORDING.value:

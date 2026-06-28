@@ -1,8 +1,8 @@
+import asyncio
 import os
 import time
 import uuid
-import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -20,7 +20,7 @@ _OPERATION_MAX_ENTRIES = _env_int("WINEBOT_MAX_OPERATION_RECORDS", 500, minimum=
 _OPERATION_TTL_SECONDS = _env_int("WINEBOT_OPERATION_RECORD_TTL_SECONDS", 86400, minimum=60)
 
 _lock = asyncio.Lock()
-_ops: Dict[str, Dict[str, Any]] = {}
+_ops: dict[str, dict[str, Any]] = {}
 
 
 def _now_iso() -> str:
@@ -53,12 +53,12 @@ def _prune_locked(now_ms: int) -> None:
 
 async def create_operation(
     kind: str,
-    session_dir: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    session_dir: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     operation_id = f"op-{uuid.uuid4().hex[:12]}"
     now_ms = _now_epoch_ms()
-    item: Dict[str, Any] = {
+    item: dict[str, Any] = {
         "operation_id": operation_id,
         "kind": kind,
         "status": "running",
@@ -87,7 +87,7 @@ async def heartbeat_operation(
     phase: str,
     message: str,
     progress: int,
-    extra: Optional[Dict[str, Any]] = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     now_ms = _now_epoch_ms()
     progress = max(0, min(100, int(progress)))
@@ -101,7 +101,7 @@ async def heartbeat_operation(
         item["heartbeat_epoch_ms"] = now_ms
         item["progress"] = progress
         item["message"] = message
-        phase_entry: Dict[str, Any] = {
+        phase_entry: dict[str, Any] = {
             "phase": phase,
             "status": "running",
             "message": message,
@@ -117,7 +117,7 @@ async def heartbeat_operation(
 
 
 async def complete_operation(
-    operation_id: str, result: Optional[Dict[str, Any]] = None
+    operation_id: str, result: dict[str, Any] | None = None
 ) -> None:
     now_ms = _now_epoch_ms()
     async with _lock:
@@ -136,7 +136,7 @@ async def complete_operation(
 
 
 async def fail_operation(
-    operation_id: str, error: str, result: Optional[Dict[str, Any]] = None
+    operation_id: str, error: str, result: dict[str, Any] | None = None
 ) -> None:
     now_ms = _now_epoch_ms()
     async with _lock:
@@ -154,7 +154,7 @@ async def fail_operation(
             item["result"] = result
 
 
-async def get_operation(operation_id: str) -> Optional[Dict[str, Any]]:
+async def get_operation(operation_id: str) -> dict[str, Any] | None:
     async with _lock:
         item = _ops.get(operation_id)
         if not item:
@@ -162,7 +162,7 @@ async def get_operation(operation_id: str) -> Optional[Dict[str, Any]]:
         return dict(item)
 
 
-async def list_operations(limit: int = 50) -> List[Dict[str, Any]]:
+async def list_operations(limit: int = 50) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 500))
     async with _lock:
         items = sorted(

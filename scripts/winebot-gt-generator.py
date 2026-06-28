@@ -33,8 +33,6 @@ import os
 import random
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -134,7 +132,7 @@ TRAIN_FRAMEWORKS = [
 TEST_FRAMEWORKS = ["electron_dark", "classic_95"]
 
 
-def _get_split_scenes(split: str) -> List[str]:
+def _get_split_scenes(split: str) -> list[str]:
     if split == "train":
         return TRAIN_SCENES
     elif split == "val":
@@ -144,7 +142,7 @@ def _get_split_scenes(split: str) -> List[str]:
     return TRAIN_SCENES + VAL_SCENES + TEST_SCENES  # "all"
 
 
-def _get_split_frameworks(split: str) -> List[Dict]:
+def _get_split_frameworks(split: str) -> list[dict]:
     """Return the list of framework theme dicts for this split."""
     if split in ("val", "test"):
         # Val/test use held-out frameworks
@@ -163,7 +161,7 @@ def set_split(split: str):
     _CURRENT_SPLIT = split
 
 
-def sample_theme() -> Dict:
+def sample_theme() -> dict:
     """Randomly sample a UI framework theme with jitter.
 
     Uses the current split (set via set_split()) to determine which
@@ -232,7 +230,7 @@ WINE_CLASSES = [
 @dataclass
 class UIElement:
     cls_id: int
-    bbox: List[int]  # [x, y, w, h]
+    bbox: list[int]  # [x, y, w, h]
     label: str = ""
     ocr_text: str = ""
 
@@ -240,8 +238,8 @@ class UIElement:
 @dataclass
 class GeneratedPage:
     image: np.ndarray
-    elements: List[UIElement] = field(default_factory=list)
-    ground_truth_texts: List[Dict] = field(default_factory=list)
+    elements: list[UIElement] = field(default_factory=list)
+    ground_truth_texts: list[dict] = field(default_factory=list)
 
 
 # Font face randomization for cross-rendering robustness
@@ -299,7 +297,7 @@ def draw_modal_overlay(img, active_rect=None):
 
 # ── Page generators ────────────────────────────────────────────────────
 
-def draw_taskbar(img: np.ndarray) -> List[UIElement]:
+def draw_taskbar(img: np.ndarray) -> list[UIElement]:
     """Draw a tint2-style taskbar at bottom. Theme varies randomly."""
     h, w = img.shape[:2]
     y = h - TASKBAR_HEIGHT
@@ -329,8 +327,8 @@ def draw_taskbar(img: np.ndarray) -> List[UIElement]:
 
 
 def draw_window(img: np.ndarray, x: int, y: int, w: int, h: int,
-                title: str = "Untitled", theme: Dict = None,
-                has_menu: bool = True, menu_items: List[str] = None) -> List[UIElement]:
+                title: str = "Untitled", theme: dict = None,
+                has_menu: bool = True, menu_items: list[str] = None) -> list[UIElement]:
     """Draw an application window with framework-specific title bar and chrome.
 
     Args:
@@ -1580,7 +1578,7 @@ def make_file_manager() -> GeneratedPage:
     path_y = tb_y + 34
     cv2.rectangle(img, (wx, path_y), (wx + ww, path_y + 22), (255, 255, 255), -1)
     cv2.rectangle(img, (wx, path_y), (wx + ww, path_y + 22), (180, 180, 180), 1)
-    path_text = f"C:\\Users\\winebot\\Documents\\"
+    path_text = "C:\\Users\\winebot\\Documents\\"
     cv2.putText(img, path_text, (wx + 8, path_y + 16),
                 theme["font_face"], 0.4, (30, 30, 30), 1)
     elems.append(UIElement(4, [wx, path_y, ww, 22], "text_field", path_text))

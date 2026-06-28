@@ -1,0 +1,93 @@
+[tool.ruff]
+# ── WineBot Ruff Configuration ─────────────────────────────────────────────
+# Explicit ruleset — not using defaults. Enables rules that catch real issues
+# without overwhelming with pedantic formatting rules.
+# See: https://docs.astral.sh/ruff/rules/
+
+line-length = 100
+target-version = "py312"
+
+# File exclusions (generated, vendored, or extracted)
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    ".eggs",
+]
+
+[tool.ruff.lint]
+# Select rulesets by category:
+#   E/W — pycodestyle errors/warnings
+#   F   — pyflakes (logic bugs, undefined names)
+#   I   — isort (import ordering)
+#   N   — pep8-naming
+#   D   — pydocstyle (docstring conventions)
+#   UP  — pyupgrade (modern Python idioms)
+#   B   — bugbear (common bugs)
+#   SIM — simplify (redundant code)
+#   ARG — unused arguments
+#   PTH — pathlib (path handling)
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (undefined names, unused imports)
+    "I",    # isort (import ordering)
+    "UP",   # pyupgrade (modern Python features)
+    "B",    # bugbear (potential bugs)
+    "SIM",  # simplify (redundant code patterns)
+    "ARG",  # unused function arguments
+]
+
+# Rules to explicitly ignore
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "E731",    # lambda assignment (acceptable in some contexts)
+    "B905",    # zip() without strict=True (many existing uses)
+    "UP031",   # printf-string-formatting (many existing uses)
+    "UP042",   # replace-str-enum (false positives in our usage)
+    "SIM102",  # collapsible-if (readability preference)
+    "SIM114",  # if-with-same-arms (readability preference)
+    "SIM115",  # open-file-with-context-handler (legacy patterns)
+    "SIM116",  # if-else-block-instead-of-dict-lookup (readability)
+    "SIM212",  # if-expr-with-twisted-arms (readability preference)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use bare asserts and have more lenient naming
+"tests/**" = ["D", "N", "ARG"]
+"scripts/**" = ["D"]  # scripts don't need full docstrings
+
+[tool.ruff.format]
+# Use consistent formatting
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+
+[tool.mypy]
+# ── WineBot Mypy Configuration ──────────────────────────────────────────────
+python_version = 3.12
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_unimported = false
+disallow_untyped_defs = false
+ignore_missing_imports = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# Path-specific overrides
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = "scripts.*"
+disallow_untyped_defs = false
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

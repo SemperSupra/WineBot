@@ -17,7 +17,6 @@ import base64
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -25,9 +24,9 @@ import numpy as np
 # ── FastAPI (lazy, for CLI usage) ─────────────────────────────────────────
 
 try:
+    import uvicorn
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse
-    import uvicorn
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
@@ -36,7 +35,7 @@ except ImportError:
 def load_model():
     """Load Florence-2 with optional LoRA adapter."""
     import torch
-    from transformers import AutoProcessor, AutoModelForCausalLM
+    from transformers import AutoModelForCausalLM, AutoProcessor
 
     model_id = os.environ.get("CAPTIONER_MODEL", "microsoft/Florence-2-base")
     lora_path = os.environ.get("CAPTIONER_LORA", "")
@@ -160,7 +159,7 @@ def create_app():
         }
 
     @app.post("/caption")
-    async def caption(request_data: Dict):
+    async def caption(request_data: dict):
         """Generate a natural language description of a UI screenshot.
 
         Request body:

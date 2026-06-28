@@ -1,19 +1,19 @@
 import argparse
-import sys
-import os
-import json
-import time
-import signal
-import logging
-import fcntl
 import datetime
+import fcntl
+import json
+import logging
+import os
+import signal
 import subprocess
+import sys
+import time
 import uuid
 from collections import deque
-from typing import Optional, Any
+from typing import Any
 
-from .models import SessionManifest, Event
 from .ffmpeg import FFMpegRecorder
+from .models import Event, SessionManifest
 from .subtitles import SubtitleGenerator
 
 # Configure logging
@@ -30,7 +30,7 @@ FINALIZATION_FILE = "recorder.finalization.json"
 
 
 def get_iso_time():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def lock_file(f):
@@ -41,7 +41,7 @@ def unlock_file(f):
     fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def append_event(session_dir: str, event: Event, events_path: Optional[str] = None):
+def append_event(session_dir: str, event: Event, events_path: str | None = None):
     events_path = events_path or os.path.join(session_dir, "events.jsonl")
     with open(events_path, "a") as f:
         lock_file(f)
@@ -52,13 +52,13 @@ def append_event(session_dir: str, event: Event, events_path: Optional[str] = No
             unlock_file(f)
 
 
-def load_events(session_dir: str, events_path: Optional[str] = None):
+def load_events(session_dir: str, events_path: str | None = None):
     events = []
     events_path = events_path or os.path.join(session_dir, "events.jsonl")
     if not os.path.exists(events_path):
         return []
 
-    with open(events_path, "r") as f:
+    with open(events_path) as f:
         # No lock needed for reading usually, but to be safe vs partial writes?
         # Appends are atomic enough for jsonl usually.
         for line in f:
@@ -118,18 +118,18 @@ def redact_input_event(event: dict) -> dict:
     return redacted
 
 
-def read_manifest_start_epoch_ms(session_dir: str) -> Optional[int]:
+def read_manifest_start_epoch_ms(session_dir: str) -> int | None:
     segment_path = os.path.join(session_dir, SEGMENT_FILE)
     manifest_path = None
     try:
-        with open(segment_path, "r") as f:
+        with open(segment_path) as f:
             segment = int(f.read().strip())
         manifest_path = os.path.join(session_dir, f"segment_{segment:03d}.json")
     except Exception:
         manifest_path = None
     if manifest_path and os.path.exists(manifest_path):
         try:
-            with open(manifest_path, "r") as f:
+            with open(manifest_path) as f:
                 data = json.load(f)
             start_epoch = data.get("start_time_epoch")
             if start_epoch:
@@ -139,7 +139,7 @@ def read_manifest_start_epoch_ms(session_dir: str) -> Optional[int]:
     session_path = os.path.join(session_dir, "session.json")
     if os.path.exists(session_path):
         try:
-            with open(session_path, "r") as f:
+            with open(session_path) as f:
                 data = json.load(f)
             start_epoch = data.get("start_time_epoch")
             if start_epoch:
@@ -205,7 +205,7 @@ def load_input_trace_events(session_dir: str) -> list:
     session_path = os.path.join(session_dir, "session.json")
     if os.path.exists(session_path):
         try:
-            with open(session_path, "r") as f:
+            with open(session_path) as f:
                 data = json.load(f)
             start_epoch_ms = int(float(data.get("start_time_epoch", 0)) * 1000)
         except Exception:
@@ -217,7 +217,7 @@ def load_input_trace_events(session_dir: str) -> list:
     session_id = os.path.basename(session_dir)
     max_events = int(os.getenv("WINEBOT_RECORD_INPUT_MAX_EVENTS", "50000"))
     max_load_mb = int(os.getenv("WINEBOT_MAX_TRACE_LOAD_MB", "100"))
-    
+
     event_buffer: Any
     if max_events > 0:
         event_buffer = deque(maxlen=max_events)
@@ -230,11 +230,11 @@ def load_input_trace_events(session_dir: str) -> list:
         if not os.path.exists(path):
             continue
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 for line in f:
                     if not line.strip():
                         continue
-                    
+
                     # Memory Correctness: Stop loading if buffer is getting too large
                     total_loaded_approx_bytes += len(line)
                     if total_loaded_approx_bytes > (max_load_mb * 1024 * 1024):
@@ -305,9 +305,9 @@ def clear_finalization_state(session_dir: str) -> None:
             pass
 
 
-def read_pid(path: str) -> Optional[int]:
+def read_pid(path: str) -> int | None:
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return int(f.read().strip())
     except (FileNotFoundError, ValueError):
         return None
@@ -358,26 +358,26 @@ def signal_ffmpeg(session_dir: str, sig: int, action: str):
     write_state(session_dir, "paused" if action == "pause" else "recording")
 
 
-def read_current_events_path(session_dir: str) -> Optional[str]:
+def read_current_events_path(session_dir: str) -> str | None:
     path = os.path.join(session_dir, EVENTS_FILE)
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             value = f.read().strip()
         return value or None
     except Exception:
         return None
 
 
-def read_current_segment(session_dir: str) -> Optional[int]:
+def read_current_segment(session_dir: str) -> int | None:
     path = os.path.join(session_dir, SEGMENT_FILE)
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return int(f.read().strip())
     except Exception:
         return None
 
 
-def segment_paths(session_dir: str, segment: Optional[int]):
+def segment_paths(session_dir: str, segment: int | None):
     if segment is None:
         output_file = os.path.join(session_dir, "video.mkv")
         events_path = os.path.join(session_dir, "events.jsonl")
@@ -394,21 +394,21 @@ def segment_paths(session_dir: str, segment: Optional[int]):
     return output_file, events_path, vtt_path, ass_path, segment_manifest
 
 
-def load_manifest(session_dir: str) -> Optional[dict]:
+def load_manifest(session_dir: str) -> dict | None:
     seg = read_current_segment(session_dir)
     manifest_path = None
     if seg is not None:
         _, _, _, _, manifest_path = segment_paths(session_dir, seg)
     if manifest_path and os.path.exists(manifest_path):
         try:
-            with open(manifest_path, "r") as f:
+            with open(manifest_path) as f:
                 return json.load(f)
         except Exception:
             return None
     session_path = os.path.join(session_dir, "session.json")
     if os.path.exists(session_path):
         try:
-            with open(session_path, "r") as f:
+            with open(session_path) as f:
                 return json.load(f)
         except Exception:
             return None
@@ -428,7 +428,7 @@ def next_part_index(session_dir: str, segment: int) -> int:
     current = None
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 current = int(f.read().strip())
         except Exception:
             current = None
@@ -514,8 +514,8 @@ def finalize_recording(
     events_path: str,
     vtt_path: str,
     ass_path: str,
-    parts_file: Optional[str],
-    segment: Optional[int],
+    parts_file: str | None,
+    segment: int | None,
 ) -> None:
     write_finalization_state(
         session_dir,
@@ -645,7 +645,7 @@ def cmd_start(args):
         with open(session_manifest_path, "w") as f:
             f.write(manifest.to_json())
     else:
-        with open(session_manifest_path, "r") as f:
+        with open(session_manifest_path) as f:
             manifest = SessionManifest.from_json(f.read())
 
     segment = args.segment
@@ -853,7 +853,7 @@ def cmd_stop(args):
         logger.error(f"No PID file found at {pid_file}. Is recorder running?")
         sys.exit(1)
 
-    with open(pid_file, "r") as f:
+    with open(pid_file) as f:
         pid = int(f.read().strip())
 
     try:
@@ -889,11 +889,11 @@ def cmd_stop(args):
         sys.exit(1)
 
 
-def _discover_recovery_segment(session_dir: str) -> Optional[int]:
+def _discover_recovery_segment(session_dir: str) -> int | None:
     current = read_current_segment(session_dir)
     if current is not None:
         return current
-    max_segment: Optional[int] = None
+    max_segment: int | None = None
     for name in os.listdir(session_dir):
         if not name.startswith(("video_", "events_", "segment_", "parts_")):
             continue

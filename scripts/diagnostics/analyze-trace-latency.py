@@ -3,14 +3,13 @@
 import argparse
 import json
 import os
-from typing import List, Dict, Optional
 
 
-def read_jsonl(path: str) -> List[Dict]:
+def read_jsonl(path: str) -> list[dict]:
     if not os.path.exists(path):
         return []
     items = []
-    with open(path, "r") as f:
+    with open(path) as f:
         for line in f:
             try:
                 items.append(json.loads(line))
@@ -19,7 +18,7 @@ def read_jsonl(path: str) -> List[Dict]:
     return items
 
 
-def _stats(data: List[float]) -> str:
+def _stats(data: list[float]) -> str:
     if not data:
         return "N/A"
     return (
@@ -29,7 +28,7 @@ def _stats(data: List[float]) -> str:
     )
 
 
-def _percentile(data: List[float], pct: float) -> float:
+def _percentile(data: list[float], pct: float) -> float:
     if not data:
         return 0.0
     sorted_data = sorted(data)
@@ -53,9 +52,9 @@ def analyze_latency(session_dir: str):
     )
     print("-" * 40)
 
-    latencies_net_x11: List[float] = []
-    latencies_x11_win: List[float] = []
-    latencies_total: List[float] = []
+    latencies_net_x11: list[float] = []
+    latencies_x11_win: list[float] = []
+    latencies_total: list[float] = []
 
     x11_cursor = 0
     win_cursor = 0
@@ -69,7 +68,7 @@ def analyze_latency(session_dir: str):
             continue
 
         net_ts = net["timestamp_epoch_ms"]
-        match_x11: Optional[Dict] = None
+        match_x11: dict | None = None
 
         # 1. Match Network -> X11
         for i in range(x11_cursor, len(x11_events)):
@@ -153,8 +152,8 @@ def analyze_keyboard_latency(session_dir: str):
     win_log = os.path.join(session_dir, "logs", "input_events_windows.jsonl")
 
     # Index API key events by trace_id
-    api_requests: Dict[str, Dict] = {}
-    api_completes: Dict[str, Dict] = {}
+    api_requests: dict[str, dict] = {}
+    api_completes: dict[str, dict] = {}
     for event in read_jsonl(api_log):
         if event.get("event") != "agent_key":
             continue
@@ -167,8 +166,8 @@ def analyze_keyboard_latency(session_dir: str):
             api_completes[trace_id] = event
 
     # Index Windows-side key events by trace_id
-    win_key_downs: Dict[str, Dict] = {}
-    win_key_ups: Dict[str, Dict] = {}
+    win_key_downs: dict[str, dict] = {}
+    win_key_ups: dict[str, dict] = {}
     for event in read_jsonl(win_log):
         trace_id = event.get("trace_id")
         if not trace_id:
@@ -187,7 +186,7 @@ def analyze_keyboard_latency(session_dir: str):
     )
     print("-" * 50)
 
-    api_to_win_latencies: List[float] = []
+    api_to_win_latencies: list[float] = []
     matched = 0
     unmatched_api = 0
 
@@ -237,8 +236,8 @@ def analyze_keyboard_latency(session_dir: str):
     print(f"Matched: {matched}, Unmatched API: {unmatched_api}")
 
     # Per-backend breakdown
-    ahk_lats: List[float] = []
-    xdo_lats: List[float] = []
+    ahk_lats: list[float] = []
+    xdo_lats: list[float] = []
     for trace_id, req in api_requests.items():
         backend = req.get("via", "")
         win_down = win_key_downs.get(trace_id)
@@ -281,7 +280,7 @@ def main():
     if not session_dir:
         path = "/tmp/winebot_current_session"
         if os.path.exists(path):
-            with open(path, "r") as f:
+            with open(path) as f:
                 session_dir = f.read().strip()
 
     if not session_dir or not os.path.exists(session_dir):

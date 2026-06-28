@@ -20,7 +20,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 
 class DemoExpectChecker:
@@ -31,7 +30,7 @@ class DemoExpectChecker:
         self.analysis_dir = self.session_dir / "analysis"
         self.tolerance_s = tolerance_s
 
-    def load_expected_states(self) -> List[Dict]:
+    def load_expected_states(self) -> list[dict]:
         """Load expected state assertions from expected_states.jsonl."""
         path = self.analysis_dir / "expected_states.jsonl"
         if not path.exists():
@@ -47,7 +46,7 @@ class DemoExpectChecker:
                     continue
         return states
 
-    def load_cv_data(self) -> List[Dict]:
+    def load_cv_data(self) -> list[dict]:
         """Load CV watcher snapshots or window snapshots."""
         # Prefer watcher data
         watcher_path = self.analysis_dir / "cv" / "watcher.jsonl"
@@ -79,8 +78,8 @@ class DemoExpectChecker:
 
         return []
 
-    def _window_at_time(self, cv_data: List[Dict], t_ms: int,
-                        window_substr: str) -> Tuple[bool, Optional[Dict]]:
+    def _window_at_time(self, cv_data: list[dict], t_ms: int,
+                        window_substr: str) -> tuple[bool, dict | None]:
         """Check if a window matching substring was visible within tolerance."""
         t_min = t_ms - int(self.tolerance_s * 1000)
         t_max = t_ms + int(self.tolerance_s * 1000)
@@ -108,7 +107,7 @@ class DemoExpectChecker:
 
         return False, None
 
-    def check(self) -> Dict:
+    def check(self) -> dict:
         """Run all assertions and return results."""
         expected = self.load_expected_states()
         if not expected:
@@ -189,7 +188,7 @@ def main():
         print(f"INFO: {report['message']}")
         if report.get("expected_count", 0) > 0:
             print(f"  {report['expected_count']} expected states recorded")
-            print(f"  Run demo with CV watcher enabled to verify")
+            print("  Run demo with CV watcher enabled to verify")
         sys.exit(2)
 
     passed = report["passed"]
@@ -197,7 +196,7 @@ def main():
     total = report["total"]
 
     print("=" * 70)
-    print(f"  EXPECTED-STATE ASSERTIONS")
+    print("  EXPECTED-STATE ASSERTIONS")
     print(f"  Session: {args.session_dir}")
     print(f"  Results: {passed} passed, {failed} failed, "
           f"{report['checkpoints']} checkpoints ({total} total)")

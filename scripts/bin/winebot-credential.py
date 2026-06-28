@@ -27,7 +27,6 @@ import os
 import subprocess
 import sys
 
-
 SERVICE = "winebot"
 
 

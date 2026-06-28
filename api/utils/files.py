@@ -1,37 +1,38 @@
-import os
-import fcntl
-import json
-import time
 import asyncio
 import datetime
-import platform
+import fcntl
 import hashlib
-import uuid
-import tempfile
+import json
+import os
+import platform
 import re
+import tempfile
+import time
+import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Final
+from typing import Any, Final
+
 from api.core.constants import (
-    MODE_HEADLESS,
     CONTROL_MODE_AGENT_ONLY,
     CONTROL_MODE_HYBRID,
-    VALID_CONTROL_POLICY_MODES,
-    LIFECYCLE_MODE_PERSISTENT,
     LIFECYCLE_MODE_ONESHOT,
-    VALID_LIFECYCLE_MODES,
-    SESSION_STATE_COMPLETED,
+    LIFECYCLE_MODE_PERSISTENT,
+    MODE_HEADLESS,
     SESSION_STATE_ACTIVE,
+    SESSION_STATE_COMPLETED,
+    VALID_CONTROL_POLICY_MODES,
+    VALID_LIFECYCLE_MODES,
 )
-from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.core.session_context import set_current_session_dir
-from api.utils.process import pid_running
+from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.utils.config import config
+from api.utils.process import pid_running
 
 SESSION_FILE: Final[str] = "/tmp/winebot_current_session"
 INSTANCE_STATE_FILE: Final[str] = "/tmp/winebot_instance_state.json"
 INSTANCE_CONTROL_MODE_FILE: Final[str] = "/wineprefix/winebot.instance_control_mode"
 DEFAULT_SESSION_ROOT: Final[str] = "/artifacts/sessions"
-ALLOWED_PREFIXES: Final[List[str]] = [
+ALLOWED_PREFIXES: Final[list[str]] = [
     "/apps",
     "/wineprefix",
     "/tmp",
@@ -56,7 +57,7 @@ def _atomic_write_text(path: str, content: str) -> None:
             os.unlink(tmp_path)
 
 
-def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
+def _atomic_write_json(path: str, payload: dict[str, Any]) -> None:
     _atomic_write_text(path, json.dumps(payload))
 
 
@@ -77,7 +78,7 @@ def validate_path(path: str):
     return resolved
 
 
-def statvfs_info(path: str) -> Dict[str, Any]:
+def statvfs_info(path: str) -> dict[str, Any]:
     try:
         st = os.statvfs(path)
         return {
@@ -92,26 +93,26 @@ def statvfs_info(path: str) -> Dict[str, Any]:
         return {"path": path, "ok": False, "error": "not found"}
 
 
-def read_pid(path: str) -> Optional[int]:
+def read_pid(path: str) -> int | None:
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return int(f.read().strip())
     except (FileNotFoundError, ValueError):
         return None
 
 
-def read_session_dir() -> Optional[str]:
+def read_session_dir() -> str | None:
     if not os.path.exists(SESSION_FILE):
         return None
     try:
-        with open(SESSION_FILE, "r") as f:
+        with open(SESSION_FILE) as f:
             value = f.read().strip()
         return value or None
     except Exception:
         return None
 
 
-def session_id_from_dir(session_dir: Optional[str]) -> Optional[str]:
+def session_id_from_dir(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     return os.path.basename(session_dir)
@@ -126,17 +127,17 @@ def performance_metrics_log_path(session_dir: str) -> str:
 
 
 def append_lifecycle_event(
-    session_dir: Optional[str],
+    session_dir: str | None,
     kind: str,
     message: str,
     source: str = "api",
-    extra: Optional[Dict[str, Any]] = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     if not session_dir:
         return
     event = {
         "schema_version": EVENT_SCHEMA_VERSION,
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
         "session_id": session_id_from_dir(session_dir),
         "kind": kind,
@@ -157,44 +158,44 @@ def input_trace_log_path(session_dir: str) -> str:
     return os.path.join(session_dir, "logs", "input_events.jsonl")
 
 
-def input_trace_pid(session_dir: str) -> Optional[int]:
+def input_trace_pid(session_dir: str) -> int | None:
     return read_pid(os.path.join(session_dir, "input_trace.pid"))
 
 
-def input_trace_running(session_dir: Optional[str]) -> bool:
+def input_trace_running(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     pid = input_trace_pid(session_dir)
     return pid is not None and pid_running(pid)
 
 
-def input_trace_state(session_dir: Optional[str]) -> Optional[str]:
+def input_trace_state(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     state_file = os.path.join(session_dir, "input_trace.state")
     try:
-        with open(state_file, "r") as f:
+        with open(state_file) as f:
             return f.read().strip() or None
     except Exception:
         return None
 
 
-def input_trace_x11_core_pid(session_dir: str) -> Optional[int]:
+def input_trace_x11_core_pid(session_dir: str) -> int | None:
     return read_pid(os.path.join(session_dir, "input_trace_x11_core.pid"))
 
 
-def input_trace_x11_core_running(session_dir: Optional[str]) -> bool:
+def input_trace_x11_core_running(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     pid = input_trace_x11_core_pid(session_dir)
     return pid is not None and pid_running(pid)
 
 
-def input_trace_x11_core_state(session_dir: Optional[str]) -> Optional[str]:
+def input_trace_x11_core_state(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     try:
-        with open(os.path.join(session_dir, "input_trace_x11_core.state"), "r") as f:
+        with open(os.path.join(session_dir, "input_trace_x11_core.state")) as f:
             return f.read().strip() or None
     except Exception:
         return None
@@ -216,22 +217,22 @@ def write_input_trace_x11_core_state(session_dir: str, state: str) -> None:
         pass
 
 
-def input_trace_network_pid(session_dir: str) -> Optional[int]:
+def input_trace_network_pid(session_dir: str) -> int | None:
     return read_pid(os.path.join(session_dir, "input_trace_network.pid"))
 
 
-def input_trace_network_running(session_dir: Optional[str]) -> bool:
+def input_trace_network_running(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     pid = input_trace_network_pid(session_dir)
     return pid is not None and pid_running(pid)
 
 
-def input_trace_network_state(session_dir: Optional[str]) -> Optional[str]:
+def input_trace_network_state(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     try:
-        with open(os.path.join(session_dir, "input_trace_network.state"), "r") as f:
+        with open(os.path.join(session_dir, "input_trace_network.state")) as f:
             return f.read().strip() or None
     except Exception:
         return None
@@ -249,11 +250,11 @@ def write_input_trace_network_state(session_dir: str, state: str) -> None:
         pass
 
 
-def input_trace_client_enabled(session_dir: Optional[str]) -> bool:
+def input_trace_client_enabled(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     try:
-        with open(os.path.join(session_dir, "input_trace_client.state"), "r") as f:
+        with open(os.path.join(session_dir, "input_trace_client.state")) as f:
             return f.read().strip() == "enabled"
     except Exception:
         return False
@@ -271,32 +272,32 @@ def write_input_trace_client_state(session_dir: str, enabled: bool) -> None:
         pass
 
 
-def input_trace_windows_pid(session_dir: str) -> Optional[int]:
+def input_trace_windows_pid(session_dir: str) -> int | None:
     return read_pid(os.path.join(session_dir, "input_trace_windows.pid"))
 
 
-def input_trace_windows_running(session_dir: Optional[str]) -> bool:
+def input_trace_windows_running(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     pid = input_trace_windows_pid(session_dir)
     return pid is not None and pid_running(pid)
 
 
-def input_trace_windows_state(session_dir: Optional[str]) -> Optional[str]:
+def input_trace_windows_state(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     try:
-        with open(os.path.join(session_dir, "input_trace_windows.state"), "r") as f:
+        with open(os.path.join(session_dir, "input_trace_windows.state")) as f:
             return f.read().strip() or None
     except Exception:
         return None
 
 
-def input_trace_windows_backend(session_dir: Optional[str]) -> Optional[str]:
+def input_trace_windows_backend(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     try:
-        with open(os.path.join(session_dir, "input_trace_windows.backend"), "r") as f:
+        with open(os.path.join(session_dir, "input_trace_windows.backend")) as f:
             return f.read().strip() or None
     except Exception:
         return None
@@ -331,9 +332,9 @@ def to_wine_path(path: str) -> str:
 
 
 def resolve_session_dir(
-    session_id: Optional[str],
-    session_dir: Optional[str],
-    session_root: Optional[str],
+    session_id: str | None,
+    session_dir: str | None,
+    session_root: str | None,
 ) -> str:
     if session_dir:
         return validate_path(session_dir)
@@ -401,7 +402,7 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
         existing_path = os.path.join(session_dir, "session.json")
         if os.path.exists(existing_path):
             try:
-                with open(existing_path, "r", encoding="utf-8") as existing_file:
+                with open(existing_path, encoding="utf-8") as existing_file:
                     existing = json.load(existing_file)
                 raw_existing_timeline = existing.get("recording_timeline_id")
                 if raw_existing_timeline:
@@ -415,7 +416,7 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
             "session_id": session_id,
             "recording_timeline_id": recording_timeline_id,
             "start_time_epoch": time.time(),
-            "start_time_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "start_time_iso": datetime.datetime.now(datetime.UTC).isoformat(),
             "hostname": platform.node(),
             "display": os.getenv("DISPLAY", ":99"),
             "resolution": "1280x720",
@@ -431,12 +432,12 @@ def write_session_manifest(session_dir: str, session_id: str) -> None:
         pass
 
 
-def read_session_manifest(session_dir: str) -> Optional[Dict[str, Any]]:
+def read_session_manifest(session_dir: str) -> dict[str, Any] | None:
     manifest_path = os.path.join(session_dir, "session.json")
     if not os.path.exists(manifest_path):
         return None
     try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
+        with open(manifest_path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
@@ -445,7 +446,7 @@ def read_session_manifest(session_dir: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_recording_timeline_id(session_dir: str) -> Optional[str]:
+def get_recording_timeline_id(session_dir: str) -> str | None:
     manifest = read_session_manifest(session_dir)
     if not manifest:
         return None
@@ -469,7 +470,7 @@ def ensure_recording_timeline_id(session_dir: str) -> str:
     manifest.setdefault("start_time_epoch", time.time())
     manifest.setdefault(
         "start_time_iso",
-        datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        datetime.datetime.now(datetime.UTC).isoformat(),
     )
     manifest.setdefault("hostname", platform.node())
     manifest.setdefault("display", os.getenv("DISPLAY", ":99"))
@@ -487,7 +488,7 @@ def ensure_recording_timeline_id(session_dir: str) -> str:
 def write_recording_artifact_manifest(
     session_dir: str,
     generated_by_action: str = "refresh",
-) -> Optional[str]:
+) -> str | None:
     if not os.path.isdir(session_dir):
         return None
     timeline_id = ensure_recording_timeline_id(session_dir)
@@ -521,7 +522,7 @@ def write_recording_artifact_manifest(
     include_input_traces = bool(
         getattr(config, "WINEBOT_RECORDING_INCLUDE_INPUT_TRACES", True)
     )
-    artifacts: List[Dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
     for root, _dirs, files in os.walk(session_dir):
         for name in files:
             if name == "recording_artifacts_manifest.json":
@@ -534,7 +535,7 @@ def write_recording_artifact_manifest(
                 stat = os.stat(full_path)
             except FileNotFoundError:
                 continue
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "path": rel_path,
                 "category": _category_for(rel_path),
                 "size_bytes": int(stat.st_size),
@@ -586,10 +587,10 @@ def write_recording_artifact_manifest(
             int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0))
         ),
     }
-    manifest_payload: Dict[str, Any] = {
+    manifest_payload: dict[str, Any] = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "manifest_type": "recording_artifacts",
-        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "generated_at_epoch_ms": int(time.time() * 1000),
         "generated_by_action": generated_by_action,
         "session_id": session_manifest.get("session_id", os.path.basename(session_dir)),
@@ -611,7 +612,7 @@ _SEGMENT_INDEX_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
-def _segment_index_for_path(path: str) -> Optional[int]:
+def _segment_index_for_path(path: str) -> int | None:
     match = _SEGMENT_INDEX_RE.match(path)
     if not match:
         return None
@@ -621,8 +622,8 @@ def _segment_index_for_path(path: str) -> Optional[int]:
         return None
 
 
-def _recording_artifact_files(session_dir: str) -> List[str]:
-    files: List[str] = []
+def _recording_artifact_files(session_dir: str) -> list[str]:
+    files: list[str] = []
     for root, _dirs, names in os.walk(session_dir):
         for name in names:
             rel_path = os.path.relpath(os.path.join(root, name), session_dir)
@@ -636,15 +637,15 @@ def _recording_artifact_files(session_dir: str) -> List[str]:
     return files
 
 
-def enforce_recording_retention(session_dir: str) -> Dict[str, Any]:
+def enforce_recording_retention(session_dir: str) -> dict[str, Any]:
     if not os.path.isdir(session_dir):
         return {"deleted": [], "errors": [], "bytes_freed": 0}
     max_segments = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_SEGMENTS", 0)))
     max_age_days = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_AGE_DAYS", 0)))
     max_bytes = max(0, int(getattr(config, "WINEBOT_RECORDING_RETENTION_MAX_BYTES", 0)))
     candidates = _recording_artifact_files(session_dir)
-    deleted: List[str] = []
-    errors: List[Dict[str, str]] = []
+    deleted: list[str] = []
+    errors: list[dict[str, str]] = []
     bytes_freed = 0
 
     if max_segments > 0:
@@ -689,7 +690,7 @@ def enforce_recording_retention(session_dir: str) -> Dict[str, Any]:
                 errors.append({"path": rel_path, "error": str(exc)})
 
     if max_bytes > 0:
-        remaining: List[Dict[str, Any]] = []
+        remaining: list[dict[str, Any]] = []
         total = 0
         for rel_path in candidates:
             full = os.path.join(session_dir, rel_path)
@@ -753,7 +754,7 @@ def get_instance_control_mode() -> str:
     mode = ""
     try:
         if os.path.exists(INSTANCE_CONTROL_MODE_FILE):
-            with open(INSTANCE_CONTROL_MODE_FILE, "r") as f:
+            with open(INSTANCE_CONTROL_MODE_FILE) as f:
                 mode = f.read().strip().lower()
     except Exception:
         mode = ""
@@ -788,15 +789,15 @@ def get_session_control_mode_default() -> str:
     return mode
 
 
-def read_instance_state() -> Dict[str, Any]:
+def read_instance_state() -> dict[str, Any]:
     default_state = {
         "mode": get_instance_mode(),
         "state": "unknown",
         "control_mode": get_instance_control_mode(),
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
     }
     try:
-        with open(INSTANCE_STATE_FILE, "r") as f:
+        with open(INSTANCE_STATE_FILE) as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return default_state
@@ -811,7 +812,7 @@ def read_instance_state() -> Dict[str, Any]:
             "timestamp_utc": str(
                 data.get(
                     "timestamp_utc",
-                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    datetime.datetime.now(datetime.UTC).isoformat(),
                 )
             ),
             "reason": str(data.get("reason", "")),
@@ -820,13 +821,13 @@ def read_instance_state() -> Dict[str, Any]:
         return default_state
 
 
-def write_instance_state(state: str, reason: str = "") -> Dict[str, Any]:
+def write_instance_state(state: str, reason: str = "") -> dict[str, Any]:
     payload = {
         "mode": get_instance_mode(),
         "control_mode": get_instance_control_mode(),
         "state": state,
         "reason": reason,
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
     }
     _atomic_write_json(INSTANCE_STATE_FILE, payload)
@@ -850,7 +851,7 @@ def write_session_mode(session_dir: str, mode: str) -> None:
 
 def read_session_mode(session_dir: str) -> str:
     try:
-        with open(_session_mode_path(session_dir), "r") as f:
+        with open(_session_mode_path(session_dir)) as f:
             mode = f.read().strip().lower()
         if mode in VALID_LIFECYCLE_MODES:
             return mode
@@ -868,7 +869,7 @@ def write_session_control_mode(session_dir: str, mode: str) -> None:
 
 def read_session_control_mode(session_dir: str) -> str:
     try:
-        with open(_session_control_mode_path(session_dir), "r") as f:
+        with open(_session_control_mode_path(session_dir)) as f:
             mode = f.read().strip().lower()
         if mode in VALID_CONTROL_POLICY_MODES:
             return mode
@@ -877,7 +878,7 @@ def read_session_control_mode(session_dir: str) -> str:
     return get_session_control_mode_default()
 
 
-def ensure_session_dir(session_root: Optional[str] = None) -> Optional[str]:
+def ensure_session_dir(session_root: str | None = None) -> str | None:
     session_dir = read_session_dir()
     if not isinstance(session_dir, str) or not session_dir:
         session_dir = None
@@ -941,7 +942,7 @@ def next_segment_index(session_dir: str) -> int:
             pass
         if os.path.exists(index_path):
             try:
-                with open(index_path, "r") as f:
+                with open(index_path) as f:
                     current = int(f.read().strip())
             except Exception:
                 current = None
@@ -968,15 +969,15 @@ def next_segment_index(session_dir: str) -> int:
     return current
 
 
-def read_session_state(session_dir: str) -> Optional[str]:
+def read_session_state(session_dir: str) -> str | None:
     try:
-        with open(os.path.join(session_dir, "session.state"), "r") as f:
+        with open(os.path.join(session_dir, "session.state")) as f:
             return f.read().strip() or None
     except Exception:
         return None
 
 
-def append_trace_event(path: str, payload: Dict[str, Any]) -> None:
+def append_trace_event(path: str, payload: dict[str, Any]) -> None:
     try:
         # Prevent unbounded log growth per session
         if os.path.exists(path) and os.path.getsize(path) > (config.WINEBOT_MAX_LOG_SIZE_MB * 1024 * 1024):
@@ -1001,17 +1002,17 @@ def append_trace_event(path: str, payload: Dict[str, Any]) -> None:
 
 
 def append_performance_metric(
-    session_dir: Optional[str],
+    session_dir: str | None,
     metric: str,
     value_ms: float,
     source: str = "api",
-    extra: Optional[Dict[str, Any]] = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     if not session_dir:
         return
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema_version": EVENT_SCHEMA_VERSION,
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
         "timestamp_epoch_ms": int(time.time() * 1000),
         "event": "performance_metric",
         "metric": metric,
@@ -1024,50 +1025,50 @@ def append_performance_metric(
     append_trace_event(performance_metrics_log_path(session_dir), payload)
 
 
-def append_input_event(session_dir: Optional[str], event: Dict[str, Any]) -> None:
+def append_input_event(session_dir: str | None, event: dict[str, Any]) -> None:
     if not session_dir:
         return
     payload = dict(event)
     payload.setdefault("schema_version", EVENT_SCHEMA_VERSION)
     payload.setdefault(
-        "timestamp_utc", datetime.datetime.now(datetime.timezone.utc).isoformat()
+        "timestamp_utc", datetime.datetime.now(datetime.UTC).isoformat()
     )
     payload.setdefault("timestamp_epoch_ms", int(time.time() * 1000))
     payload.setdefault("session_id", session_id_from_dir(session_dir))
     append_trace_event(input_trace_log_path(session_dir), payload)
 
 
-def read_file_tail_lines(path: str, limit: int = 200, chunk_size: int = 4096) -> List[str]:
+def read_file_tail_lines(path: str, limit: int = 200, chunk_size: int = 4096) -> list[str]:
     """Efficiently read the last N lines of a file by seeking backwards."""
     if not os.path.exists(path):
         return []
-    
-    lines: List[str] = []
+
+    lines: list[str] = []
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
         file_size = f.tell()
         buffer = b""
         pointer = file_size
-        
+
         while len(lines) <= limit and pointer > 0:
             step = min(pointer, chunk_size)
             pointer -= step
             f.seek(pointer)
             chunk = f.read(step)
             buffer = chunk + buffer
-            
+
             # Count lines in current buffer
             current_lines = buffer.split(b"\n")
             if len(current_lines) > limit + 1:
                 # We found enough lines
                 lines = [line.decode("utf-8", errors="replace") for line in current_lines[-(limit+1):]]
                 break
-            
+
             if pointer == 0:
                 # Reached start of file
                 lines = [line.decode("utf-8", errors="replace") for line in current_lines]
                 break
-                
+
     return [line for line in lines if line.strip()][-limit:]
 
 
@@ -1089,7 +1090,7 @@ def read_file_tail(path: str, max_bytes: int = 4096) -> str:
         return ""
 
 
-def truncate_text(value: Optional[str], limit: int = 4000) -> str:
+def truncate_text(value: str | None, limit: int = 4000) -> str:
     if not value:
         return ""
     if len(value) <= limit:
@@ -1098,23 +1099,23 @@ def truncate_text(value: Optional[str], limit: int = 4000) -> str:
     return value[:limit] + suffix
 
 
-def recorder_pid(session_dir: str) -> Optional[int]:
+def recorder_pid(session_dir: str) -> int | None:
     return read_pid(os.path.join(session_dir, "recorder.pid"))
 
 
-def recorder_running(session_dir: Optional[str]) -> bool:
+def recorder_running(session_dir: str | None) -> bool:
     if not session_dir:
         return False
     pid = recorder_pid(session_dir)
     return pid is not None and pid_running(pid)
 
 
-def recorder_state(session_dir: Optional[str]) -> Optional[str]:
+def recorder_state(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     state_file = os.path.join(session_dir, "recorder.state")
     try:
-        with open(state_file, "r") as f:
+        with open(state_file) as f:
             return f.read().strip() or None
     except Exception:
         return None
@@ -1130,7 +1131,7 @@ def write_recorder_state(session_dir: str, state: str) -> None:
 
 async def follow_file(path: str, sleep_sec: float = 0.5):
     """Asynchronous generator that yields new lines appended to a file."""
-    with open(path, "r", errors="replace") as f:
+    with open(path, errors="replace") as f:
         # Go to the end of the file
         f.seek(0, os.SEEK_END)
         while True:
@@ -1142,7 +1143,7 @@ async def follow_file(path: str, sleep_sec: float = 0.5):
 
 
 def cleanup_old_sessions(
-    max_sessions: Optional[int] = None, ttl_days: Optional[int] = None
+    max_sessions: int | None = None, ttl_days: int | None = None
 ) -> int:
     """Delete old sessions based on count and/or age."""
     import shutil
@@ -1152,7 +1153,7 @@ def cleanup_old_sessions(
         return 0
 
     current_session = read_session_dir()
-    sessions: List[Dict[str, Any]] = []
+    sessions: list[dict[str, Any]] = []
     for name in os.listdir(root):
         if not name.startswith("session-"):
             continue

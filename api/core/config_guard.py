@@ -1,15 +1,16 @@
 import os
-from typing import List, TypedDict
+from typing import TypedDict
+
 from api.core.constants import (
-    MODE_HEADLESS,
-    MODE_INTERACTIVE,
-    VALID_RUNTIME_MODES,
-    VALID_LIFECYCLE_MODES,
-    VALID_CONTROL_POLICY_MODES,
-    CONTROL_MODE_HUMAN_ONLY,
     CONTROL_MODE_AGENT_ONLY,
+    CONTROL_MODE_HUMAN_ONLY,
     CONTROL_MODE_HYBRID,
     LIFECYCLE_MODE_PERSISTENT,
+    MODE_HEADLESS,
+    MODE_INTERACTIVE,
+    VALID_CONTROL_POLICY_MODES,
+    VALID_LIFECYCLE_MODES,
+    VALID_RUNTIME_MODES,
 )
 
 PERFORMANCE_PROFILE_LOW_LATENCY = "low-latency"
@@ -30,7 +31,7 @@ class UseCaseProfile(TypedDict):
     instance_control_mode: str
     session_control_mode: str
     default_performance_profile: str
-    allowed_performance_profiles: List[str]
+    allowed_performance_profiles: list[str]
 
 
 USE_CASE_PROFILE_CANONICAL: dict[str, UseCaseProfile] = {
@@ -187,8 +188,8 @@ def validate_runtime_configuration(
     allow_headless_hybrid: bool = False,
     use_case_profile: str = "",
     performance_profile: str = "",
-) -> List[str]:
-    errors: List[str] = []
+) -> list[str]:
+    errors: list[str] = []
 
     runtime_mode = _normalize(runtime_mode, "headless")
     instance_lifecycle_mode = _normalize(instance_lifecycle_mode, LIFECYCLE_MODE_PERSISTENT)
@@ -326,7 +327,7 @@ def validate_runtime_configuration(
 
 def validate_current_environment(
     session_control_mode: str = "",
-) -> List[str]:
+) -> list[str]:
     runtime_mode = os.getenv("MODE", MODE_HEADLESS)
     runtime_default_control = (
         CONTROL_MODE_AGENT_ONLY if runtime_mode.strip().lower() == MODE_HEADLESS else CONTROL_MODE_HYBRID

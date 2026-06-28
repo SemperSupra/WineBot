@@ -1,12 +1,12 @@
-from fastapi import FastAPI, Request, HTTPException, Security, Depends
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import APIKeyHeader
-from fastapi.responses import FileResponse, StreamingResponse
-from contextlib import asynccontextmanager
-import os
 import asyncio
 import hmac
-from typing import Optional
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 
 try:
     import uvloop
@@ -15,31 +15,30 @@ try:
 except ImportError:
     pass
 
-from api.routers import health, lifecycle, input, recording, control, automation
-from api.utils.files import (
-    read_session_dir,
-    read_session_control_mode,
-    append_lifecycle_event,
-    cleanup_old_sessions,
-    ensure_user_profile,
-    link_wine_user_dir,
-    write_instance_state,
-)
-from api.utils.process import reap_finished_tracked_processes
+from api.core.broker import broker
+from api.core.config_guard import validate_current_environment
 from api.core.discovery import discovery_manager
+from api.core.models import ControlPolicyMode
+from api.core.monitor import inactivity_monitor_task
+from api.core.session_context import reset_current_session_dir, set_current_session_dir
 from api.core.versioning import (
     API_VERSION,
     ARTIFACT_SCHEMA_VERSION,
     EVENT_SCHEMA_VERSION,
 )
+from api.routers import automation, control, health, input, lifecycle, recording
 from api.utils.config import config
+from api.utils.files import (
+    append_lifecycle_event,
+    cleanup_old_sessions,
+    ensure_user_profile,
+    link_wine_user_dir,
+    read_session_control_mode,
+    read_session_dir,
+    write_instance_state,
+)
 from api.utils.logging import logger
-from api.core.monitor import inactivity_monitor_task
-from api.core.broker import broker
-from api.core.models import ControlPolicyMode
-from api.core.config_guard import validate_current_environment
-from api.core.session_context import set_current_session_dir, reset_current_session_dir
-
+from api.utils.process import reap_finished_tracked_processes
 
 NOVNC_CORE_DIR = "/usr/share/novnc/core"
 NOVNC_VENDOR_DIR = "/usr/share/novnc/vendor"
@@ -50,7 +49,7 @@ _follow_stream_semaphore = asyncio.Semaphore(
 
 def _load_version():
     try:
-        with open("/VERSION", "r") as f:
+        with open("/VERSION") as f:
             return f.read().strip()
     except Exception:
         return "v0.9.0-dev"
@@ -199,12 +198,12 @@ async def add_security_and_version_headers(request: Request, call_next):
     response.headers["X-WineBot-Build-Version"] = VERSION
     response.headers["X-WineBot-Artifact-Schema-Version"] = ARTIFACT_SCHEMA_VERSION
     response.headers["X-WineBot-Event-Schema-Version"] = EVENT_SCHEMA_VERSION
-    
+
     # Security Hardening Headers
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    
+
     # Content Security Policy (Optimized for noVNC requirement of WebSockets)
     # Allow self, but also allow data: for icons/images and blob: for noVNC worker
     csp = (
@@ -217,7 +216,7 @@ async def add_security_and_version_headers(request: Request, call_next):
         "frame-ancestors 'none';"
     )
     response.headers["Content-Security-Policy"] = csp
-    
+
     return response
 
 
@@ -308,10 +307,10 @@ async def tail_logs(
     source: str = "api",
     lines: int = 50,
     follow: bool = False,
-    session_id: Optional[str] = None
+    session_id: str | None = None
 ):
     """Tail specific log sources (api, recorder, ahk, x11)."""
-    from api.utils.files import resolve_session_dir, read_session_dir
+    from api.utils.files import read_session_dir, resolve_session_dir
     if lines < 1:
         raise HTTPException(status_code=400, detail="lines must be >= 1")
     if lines > config.WINEBOT_MAX_LOG_TAIL_LINES:
@@ -319,12 +318,12 @@ async def tail_logs(
             status_code=400,
             detail=f"lines must be <= {config.WINEBOT_MAX_LOG_TAIL_LINES}",
         )
-    
+
     # Logic to map source to file path
     target_dir = resolve_session_dir(session_id, None, None) if session_id else read_session_dir()
     if not target_dir:
         raise HTTPException(status_code=404, detail="Session not found")
-        
+
     log_map = {
         "api": os.path.join(target_dir, "logs", "api.log"),
         "recorder": os.path.join(target_dir, "logs", "recorder.log"),
@@ -332,7 +331,7 @@ async def tail_logs(
         "x11": os.path.join(target_dir, "logs", "input_trace.log"),
         "lifecycle": os.path.join(target_dir, "logs", "lifecycle.jsonl")
     }
-    
+
     path = log_map.get(source)
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail=f"Log source '{source}' not found")
@@ -347,7 +346,7 @@ async def tail_logs(
             _follow_stream_semaphore.acquire(),
             timeout=max(0.001, float(config.WINEBOT_LOG_FOLLOW_ACQUIRE_TIMEOUT_SECONDS)),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(
             status_code=429,
             detail=(
@@ -365,7 +364,7 @@ async def tail_logs(
             while True:
                 try:
                     line = await asyncio.wait_for(stream.__anext__(), timeout=idle_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
                 except StopAsyncIteration:
                     break

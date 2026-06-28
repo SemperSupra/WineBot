@@ -6,7 +6,11 @@ Usage:
   # or directly if ultralytics is installed:
   python3 eval_yolo_v3.py
 """
-import json, os, sys, time, glob
+import glob
+import json
+import os
+import sys
+import time
 from collections import defaultdict
 
 import numpy as np
@@ -252,7 +256,7 @@ def main():
         print(f"  Avg inference: {result['avg_inference_time_ms']:.1f}ms")
         print(f"  Total GT: {result['total_gt']}  Pred: {result['total_pred']}  "
               f"TP: {result['total_tp']}")
-        print(f"\n  Per-class F1 (worst→best):")
+        print("\n  Per-class F1 (worst→best):")
         sorted_classes = sorted(result["per_class"].items(), key=lambda x: x[1]["f1"])
         for cls_name, stats in sorted_classes:
             bar = "█" * max(1, int(stats["f1"] * 40))
@@ -264,10 +268,10 @@ def main():
     # Comparison
     if len(results) >= 2:
         print(f"\n{'='*60}")
-        print(f"  MODEL COMPARISON: v2 vs v3")
+        print("  MODEL COMPARISON: v2 vs v3")
         print(f"{'='*60}")
         r2, r3 = results[0], results[1]
-        print(f"\n  Metric            v2        v3        Δ")
+        print("\n  Metric            v2        v3        Δ")
         print(f"  {'─'*50}")
         for metric in ["f1", "precision", "recall", "mean_per_class_f1", "min_per_class_f1"]:
             v2_val = r2[metric]
@@ -277,7 +281,7 @@ def main():
             print(f"  {metric:20s}  {v2_val:.4f}   {v3_val:.4f}   {arrow}{delta:+.4f}")
 
         # Per-class comparison
-        print(f"\n  Per-class F1 comparison (classes where F1 changed most):")
+        print("\n  Per-class F1 comparison (classes where F1 changed most):")
         deltas = []
         for cls_name in sorted(CLASS_NAMES.values()):
             v2_f1 = r2["per_class"].get(cls_name, {}).get("f1", 0)

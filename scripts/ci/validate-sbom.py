@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 class ValidationError(Exception):
@@ -14,7 +14,7 @@ def _require(value: Any, message: str) -> None:
         raise ValidationError(message)
 
 
-def validate_cyclonedx_15(payload: Dict[str, Any]) -> None:
+def validate_cyclonedx_15(payload: dict[str, Any]) -> None:
     _require(payload.get("bomFormat") == "CycloneDX", "bomFormat must be CycloneDX")
     _require(str(payload.get("specVersion", "")) == "1.5", "specVersion must be 1.5")
     _require(isinstance(payload.get("version"), int), "version must be an integer")

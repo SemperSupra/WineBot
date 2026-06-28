@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import argparse
-import time
-import sys
 import subprocess
+import sys
+import time
+
 import cv2
 import numpy as np
 

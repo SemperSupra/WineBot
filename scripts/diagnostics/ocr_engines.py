@@ -19,11 +19,9 @@ Each engine returns identical structured output:
 
 import os
 import sys
-from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
-
 
 # ── Base class ────────────────────────────────────────────────────────────────
 
@@ -33,7 +31,7 @@ class OCREngine:
     name: str = "base"
     available: bool = False
 
-    def detect_text(self, image: np.ndarray) -> List[Dict]:
+    def detect_text(self, image: np.ndarray) -> list[dict]:
         """Detect text regions in an image.
 
         Args:
@@ -61,7 +59,7 @@ class TesseractEngine(OCREngine):
         except ImportError:
             self.available = False
 
-    def detect_text(self, image: np.ndarray) -> List[Dict]:
+    def detect_text(self, image: np.ndarray) -> list[dict]:
         if not self.available:
             return []
 
@@ -124,7 +122,7 @@ class TesseractEngine(OCREngine):
         # Merge results from all PSM modes, deduplicate by text+bbox overlap
         return self._merge_ocr_results(all_data)
 
-    def _merge_ocr_results(self, all_data: list) -> List[Dict]:
+    def _merge_ocr_results(self, all_data: list) -> list[dict]:
         """Merge OCR results from multiple PSM modes, deduplicating overlaps."""
         regions = []
         seen_texts = set()
@@ -161,7 +159,7 @@ class TesseractEngine(OCREngine):
 
         return regions
 
-    def _classify_ui_role(self, region: Dict) -> str:
+    def _classify_ui_role(self, region: dict) -> str:
         """Classify OCR-detected text by its UI role on a Windows/Wine desktop."""
         text = region["text"].lower()
         y = region["bbox"][1]
@@ -238,7 +236,7 @@ class PaddleOCREngine(OCREngine):
                 self.available = False
         return self._engine
 
-    def detect_text(self, image: np.ndarray) -> List[Dict]:
+    def detect_text(self, image: np.ndarray) -> list[dict]:
         engine = self._get_engine()
         if engine is None:
             return []
@@ -327,7 +325,7 @@ class PaddleOCRONNXEngine(OCREngine):
         if self._onnx_available:
             self._load_models()
 
-    def _find_model(self, name: str) -> Optional[str]:
+    def _find_model(self, name: str) -> str | None:
         """Search for an ONNX model file in standard locations."""
         candidates = [
             os.path.join(os.environ.get("PADDLE_ONNX_DIR", ""), name),
@@ -390,7 +388,7 @@ class PaddleOCRONNXEngine(OCREngine):
 
             # Load character dictionary — try .txt file, then parse from inference.yml
             if dict_path and os.path.isfile(dict_path):
-                with open(dict_path, "r", encoding="utf-8") as f:
+                with open(dict_path, encoding="utf-8") as f:
                     content = f.read().strip()
                 # Check if it's YAML (contains "PostProcess") vs plain text
                 if "PostProcess" in content:
@@ -402,7 +400,7 @@ class PaddleOCRONNXEngine(OCREngine):
             elif self._find_model("inference.yml"):
                 import yaml
                 yml_path = self._find_model("inference.yml")
-                with open(yml_path, "r") as f:
+                with open(yml_path) as f:
                     cfg = yaml.safe_load(f.read())
                 self._char_dict = cfg.get("PostProcess", {}).get("character_dict", [])
             else:
@@ -421,7 +419,7 @@ class PaddleOCRONNXEngine(OCREngine):
             print(f"[paddle_onnx] Failed to load models: {e}", file=sys.stderr)
             self.available = False
 
-    def detect_text(self, image: np.ndarray) -> List[Dict]:
+    def detect_text(self, image: np.ndarray) -> list[dict]:
         if not self.available or self._session_det is None:
             return []
 
@@ -585,10 +583,10 @@ class PaddleOCRONNXEngine(OCREngine):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-_ocr_engine: Optional[OCREngine] = None
+_ocr_engine: OCREngine | None = None
 
 
-def get_ocr_engine(backend: Optional[str] = None) -> OCREngine:
+def get_ocr_engine(backend: str | None = None) -> OCREngine:
     """Get or create the configured OCR engine.
 
     Args:
@@ -625,7 +623,7 @@ def get_ocr_engine(backend: Optional[str] = None) -> OCREngine:
     return _ocr_engine
 
 
-def available_backends() -> Dict[str, bool]:
+def available_backends() -> dict[str, bool]:
     """Return dict of backend name -> available."""
     backends = {
         "tesseract": TesseractEngine().available,

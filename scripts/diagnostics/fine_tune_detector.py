@@ -25,18 +25,15 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import sys
 import time
-from pathlib import Path
 
 import yaml
 
 
 def verify_dataset(data_yaml: str):
     """Verify YOLO dataset format (reads train/val paths from data.yaml)."""
-    import yaml
     if not os.path.exists(data_yaml):
         print(f"ERROR: data.yaml not found: {data_yaml}", file=sys.stderr)
         sys.exit(1)
@@ -88,7 +85,7 @@ def fine_tune(model_path: str, data_yaml: str, output_path: str,
     print(f"Loading model: {model_path}")
     model = YOLO(model_path)
 
-    print(f"Training configuration:")
+    print("Training configuration:")
     print(f"  Data:      {data_yaml}")
     print(f"  Model:     {model_path}")
     print(f"  Epochs:    {epochs}")
@@ -212,7 +209,7 @@ def main():
 
     if args.eval_only:
         metrics = evaluate(args.model, args.data, args.imgsz)
-        print(f"Evaluation:")
+        print("Evaluation:")
         for k, v in metrics.items():
             print(f"  {k}: {v:.4f}")
         return

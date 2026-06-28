@@ -19,34 +19,33 @@ Also runnable in CLI mode:
 """
 
 import argparse
+import base64
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import threading
-import time
-import traceback
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import base64
 import urllib.request
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 # ── Swappable detection engines ───────────────────────────────────────────────
 from winebot_cv.detectors.engines import (
-    get_ui_detector, available_detectors, current_detector,
-    UIDetector, ContourDetector, YOLOUIDetector, OmniParserDetector,
+    available_detectors,
+    current_detector,
+    get_ui_detector,
 )
 from winebot_cv.ocr.engines import (
-    get_ocr_engine, available_backends, current_backend,
-    OCREngine, TesseractEngine, PaddleOCREngine,
+    available_backends,
+    current_backend,
+    get_ocr_engine,
 )
+
 # Ollama VLM backend (activated via env var VLM_PROVIDER=ollama)
 try:
     from vlm_ollama import get_ollama_vlm
@@ -64,9 +63,9 @@ except ImportError:
 # ── FastAPI (imported lazily in serve() to allow CLI-only usage) ─────────────
 
 try:
+    import uvicorn
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse
-    import uvicorn
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
@@ -94,6 +93,7 @@ def _load_state_classifier():
 
     try:
         import pickle
+
         from winebot_cv.embedding.clip import get_clip_embedder
 
         with open(model_path, "rb") as f:
@@ -139,7 +139,7 @@ _frame_counter = 0
 _state_history = []             # Track state transitions
 
 
-def _iou(bbox_a: List[int], bbox_b: List[int]) -> float:
+def _iou(bbox_a: list[int], bbox_b: list[int]) -> float:
     """IoU of two bounding boxes [x, y, w, h]."""
     ax, ay, aw, ah = bbox_a
     bx, by, bw, bh = bbox_b
@@ -150,7 +150,7 @@ def _iou(bbox_a: List[int], bbox_b: List[int]) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _match_elements(prev_elements: List[Dict], curr_elements: List[Dict],
+def _match_elements(prev_elements: list[dict], curr_elements: list[dict],
                      iou_thresh: float = 0.3) -> dict:
     """Match current elements to previous elements by IoU.
 
@@ -189,7 +189,7 @@ def _match_elements(prev_elements: List[Dict], curr_elements: List[Dict],
     return element_map
 
 
-def _apply_temporal(elements: List[Dict], ui_state: str) -> dict:
+def _apply_temporal(elements: list[dict], ui_state: str) -> dict:
     """Apply temporal consistency: track elements, detect transitions.
 
     Args:
@@ -232,8 +232,8 @@ def _apply_temporal(elements: List[Dict], ui_state: str) -> dict:
     }
 
 
-def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
-                  ocr_backend: Optional[str] = None) -> Dict:
+def analyze_image(img: np.ndarray, ui_detector: str | None = None,
+                  ocr_backend: str | None = None) -> dict:
     """Full analysis of a single image using configured engines. Returns structured JSON.
 
     Args:
@@ -302,13 +302,13 @@ def analyze_image(img: np.ndarray, ui_detector: Optional[str] = None,
         "key_text": [r["text"] for r in ocr_regions[:30] if r.get("confidence", 0) > 30],
         "click_targets": click_targets,
         "temporal": temporal,
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
     }
 
     return result
 
 
-def _find_click_targets(ocr_regions: List[Dict]) -> Dict[str, List[int]]:
+def _find_click_targets(ocr_regions: list[dict]) -> dict[str, list[int]]:
     button_map = {
         "save": "save_button", "cancel": "cancel_button", "open": "open_button",
         "ok": "ok_button", "yes": "yes_button", "no": "no_button",
@@ -330,7 +330,7 @@ def _find_click_targets(ocr_regions: List[Dict]) -> Dict[str, List[int]]:
 
 # ── Batch job tracking ───────────────────────────────────────────────────────
 
-_batch_jobs: Dict[str, Dict] = {}
+_batch_jobs: dict[str, dict] = {}
 
 
 def _run_batch_job(job_id: str, video_path: str, frame_interval: float):
@@ -346,7 +346,7 @@ def _run_batch_job(job_id: str, video_path: str, frame_interval: float):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         _batch_jobs[job_id]["status"] = "complete" if result.returncode == 0 else "failed"
         _batch_jobs[job_id]["exit_code"] = result.returncode
-        _batch_jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _batch_jobs[job_id]["completed_at"] = datetime.now(UTC).isoformat()
     except subprocess.TimeoutExpired:
         _batch_jobs[job_id]["status"] = "timeout"
     except Exception as e:
@@ -471,7 +471,7 @@ def create_app() -> FastAPI:
         return JSONResponse(content={"status": "reset", "frame": 0})
 
     @app.post("/analyze")
-    async def analyze(request_data: Dict):
+    async def analyze(request_data: dict):
         """Analyze a single image. Accepts JSON with image_path.
 
         Optional: "ocr_backend" and "ui_detector" keys to override defaults
@@ -492,7 +492,7 @@ def create_app() -> FastAPI:
         return JSONResponse(content=result)
 
     @app.post("/batch")
-    async def batch_start(request_data: Dict):
+    async def batch_start(request_data: dict):
         """Start a batch analysis job on an MKV video."""
         video_path = request_data.get("video_path", "")
         if not video_path or not os.path.exists(video_path):
@@ -504,7 +504,7 @@ def create_app() -> FastAPI:
         _batch_jobs[job_id] = {
             "job_id": job_id, "video": video_path,
             "frame_interval": frame_interval, "status": "pending",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         # Fire and forget (in production, use a task queue)
@@ -528,9 +528,8 @@ def create_app() -> FastAPI:
 
     def _watch_loop():
         """Background loop: capture screenshots via API, analyze, write jsonl."""
-        import urllib.request
-        import base64
         import time as _time
+        import urllib.request
 
         state = _watch_state
         out_dir = state["output_dir"]
@@ -541,14 +540,14 @@ def create_app() -> FastAPI:
         with open(log_path, "w", encoding="utf-8") as f:
             f.write(json.dumps({
                 "event": "watcher_start",
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "timestamp_utc": datetime.now(UTC).isoformat(),
                 "output_dir": out_dir,
             }) + "\n")
 
         last_frame = None
         while state["running"]:
             loop_start = _time.time()
-            ts = datetime.now(timezone.utc).isoformat()
+            ts = datetime.now(UTC).isoformat()
             ts_epoch = int(_time.time() * 1000)
 
             try:
@@ -628,14 +627,14 @@ def create_app() -> FastAPI:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "event": "watcher_stop",
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "timestamp_utc": datetime.now(UTC).isoformat(),
                 "total_frames": state["frame_index"],
             }) + "\n")
 
         state["running"] = False
 
     @app.post("/watch/start")
-    async def watch_start(request_data: Dict):
+    async def watch_start(request_data: dict):
         """Start live CV watcher. Captures screenshots via WineBot API.
 
         Required: api_url (e.g. http://winebot:8000), session_dir
@@ -657,7 +656,7 @@ def create_app() -> FastAPI:
 
         _watch_state.update({
             "running": True, "frame_index": 0,
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
             "output_dir": output_dir, "session_dir": session_dir,
             "api_url": api_url, "api_token": request_data.get("api_token", ""),
             "interval": interval,
@@ -695,7 +694,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/wait-for-window")
-    async def wait_for_window(request_data: Dict):
+    async def wait_for_window(request_data: dict):
         """Poll for a window by title substring using CV/OCR.
 
         Replaces xdotool-based cv_wait() for Wine 10.0 where X11 window
@@ -796,7 +795,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/ground")
-    async def vlm_ground(request_data: Dict):
+    async def vlm_ground(request_data: dict):
         """Ground a natural language query to a specific UI element.
 
         Tries Ollama VLM first (if VLM_PROVIDER=ollama is set and
@@ -891,7 +890,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/describe")
-    async def describe_frame(request_data: Dict):
+    async def describe_frame(request_data: dict):
         """Generate a natural language description of a UI screenshot.
 
         Tries Ollama VLM first (if VLM_PROVIDER=ollama is set),
@@ -1001,7 +1000,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/search")
-    async def search_frames(request_data: Dict):
+    async def search_frames(request_data: dict):
         """Semantic search over the frame archive using natural language.
 
         Uses CLIP embeddings to find frames matching a text description.
@@ -1025,8 +1024,8 @@ def create_app() -> FastAPI:
 
         # Lazy-load embedder + index
         try:
-            from winebot_cv.embedding.clip import get_clip_embedder
             from clip_index import FrameIndex
+            from winebot_cv.embedding.clip import get_clip_embedder
         except ImportError:
             raise HTTPException(
                 status_code=501,
@@ -1051,7 +1050,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/search/build")
-    async def build_search_index(request_data: Dict):
+    async def build_search_index(request_data: dict):
         """Build a CLIP embedding index from a directory of frames.
 
         Processes all PNG frames, embeds them with CLIP, and persists
@@ -1077,8 +1076,8 @@ def create_app() -> FastAPI:
                                 detail="frames_dir required and must exist")
 
         try:
-            from winebot_cv.embedding.clip import get_clip_embedder
             from clip_index import FrameIndex
+            from winebot_cv.embedding.clip import get_clip_embedder
         except ImportError:
             raise HTTPException(
                 status_code=501,
@@ -1162,7 +1161,7 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/benchmark")
-    async def benchmark(request_data: Dict):
+    async def benchmark(request_data: dict):
         """Run multi-engine benchmark with statistical rigor.
 
         Request body:
@@ -1255,7 +1254,7 @@ def serve(host: str = "0.0.0.0", port: int = 8001):
     all_ocr = available_backends()
     print(f"  Detectors available: {', '.join(k for k,v in all_detectors.items() if v)}")
     print(f"  OCR backends available: {', '.join(k for k,v in all_ocr.items() if v)}")
-    print(f"  Switch via: UI_DETECTOR=<name> OCR_BACKEND=<name>")
+    print("  Switch via: UI_DETECTOR=<name> OCR_BACKEND=<name>")
 
     # Show VLM status
     vlm_provider = os.environ.get("VLM_PROVIDER", "").lower()
@@ -1268,9 +1267,9 @@ def serve(host: str = "0.0.0.0", port: int = 8001):
             o = get_ollama_vlm()
             print(f"  VLM Status: {'connected' if (o and o.available) else 'unreachable'}")
         except ImportError:
-            print(f"  VLM Status: module unavailable")
+            print("  VLM Status: module unavailable")
     else:
-        print(f"  VLM Provider: local (set VLM_PROVIDER=ollama for remote)")
+        print("  VLM Provider: local (set VLM_PROVIDER=ollama for remote)")
 
     # Show model catalog summary
     if _model_registry:
@@ -1287,7 +1286,7 @@ def serve(host: str = "0.0.0.0", port: int = 8001):
         for e in reg.entries.values():
             s = e.pipeline_stage
             stages[s] = stages.get(s, 0) + 1
-        print(f"  Model stages: " + ", ".join(
+        print("  Model stages: " + ", ".join(
             f"stage {s}: {c}" for s, c in sorted(stages.items())))
 
     uvicorn.run(app, host=host, port=port, log_level="info")
