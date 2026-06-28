@@ -13,6 +13,7 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+packages/wheels/
 
 # Editor/OS noise
 .DS_Store

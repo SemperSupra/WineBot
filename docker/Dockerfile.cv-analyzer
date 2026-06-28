@@ -76,12 +76,17 @@ ENV FLAGS_use_onednn=0
 ENV FLAGS_use_mkldnn=0
 
 # ── Install desktop-ui-cv package (detectors, OCR, CLIP, registry) ───────────
-# Repo is private — pass GIT_TOKEN (PAT with repo scope) for pip to authenticate:
-#   docker build --build-arg GIT_TOKEN=ghp_xxx ...
+# Install from local wheel if available, otherwise from GitHub.
 ARG GIT_TOKEN=
 ARG DESKTOP_UI_CV_REF=v0.1.0
-RUN pip install --no-cache-dir \
-    "desktop-ui-cv @ git+https://${GIT_TOKEN}@github.com/SemperSupra/desktop-ui-cv@${DESKTOP_UI_CV_REF}"
+COPY packages/wheels/ /tmp/wheels/
+RUN if ls /tmp/wheels/desktop_ui_cv-*.whl 2>/dev/null; then \
+      pip install --no-cache-dir /tmp/wheels/desktop_ui_cv-*.whl; \
+    else \
+      pip install --no-cache-dir \
+        "desktop-ui-cv @ git+https://${GIT_TOKEN}@github.com/SemperSupra/desktop-ui-cv@${DESKTOP_UI_CV_REF}"; \
+    fi && \
+    python3 -c "from winebot_cv.ocr.engines import TesseractEngine; print('desktop-ui-cv OK')"
 
 # ── Copy sidecar server and CV tools ─────────────────────────────────────────
 COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
