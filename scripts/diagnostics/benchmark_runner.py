@@ -276,7 +276,7 @@ def run_benchmark(frames_dir: str,
             ocr_regions = 0
             interactive = 0
 
-            for run_i in range(iterations):
+            for _run_i in range(iterations):
                 t0 = time.time()
 
                 if engine_available:

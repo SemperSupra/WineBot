@@ -82,7 +82,7 @@ def main():
         scene_t0 = time.time()
         scene_count = 0
 
-        for i in range(count):
+        for _i in range(count):
             gen.DESKTOP_SIZE = random.choice(RESOLUTIONS)
             page = scene_fn()
             img = page.image

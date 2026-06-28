@@ -215,7 +215,7 @@ def analyze_keyboard_latency(session_dir: str):
 
         # Fallback: match by time proximity within 5s window
         matched_prox = False
-        for wid, wd in win_key_downs.items():
+        for _wid, wd in win_key_downs.items():
             w_ts = wd.get("timestamp_epoch_ms", 0)
             if w_ts and abs(w_ts - req_ts) < 5000:
                 delta = w_ts - req_ts

@@ -154,8 +154,8 @@ def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
     eval_labels = [SCENE_TYPES[i] for i in eval_classes if i < len(SCENE_TYPES)]
     print("\n  Top Confusions:")
     confusion_list = []
-    for i, ci in enumerate(eval_classes):
-        for j, cj in enumerate(eval_classes):
+    for i, _ci in enumerate(eval_classes):
+        for j, _cj in enumerate(eval_classes):
             if i != j and cm[i][j] > 0:
                 confusion_list.append((eval_labels[i], eval_labels[j], int(cm[i][j])))
     confusion_list.sort(key=lambda x: -x[2])

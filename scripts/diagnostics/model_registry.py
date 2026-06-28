@@ -637,7 +637,7 @@ class ModelRegistry:
             engine = result.get("engine", {})
             ui = engine.get("ui_detector", "")
             # Map backend names to registry names
-            for name, entry in self.entries.items():
+            for _name, entry in self.entries.items():
                 if ui in (entry.name, entry.name.replace("-", "_")):
                     summary = result.get("summary", {})
                     if entry.deployment:

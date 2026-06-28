@@ -1632,7 +1632,7 @@ def make_multi_window() -> GeneratedPage:
         (180, 120, 550, 420, "Settings", ["General", "Network"], "gtk_adwaita"),
         (320, 60, 500, 350, "About", None, "java_metal"),
     ]
-    for i, (x, y, w, h, title, menus, fw) in enumerate(windows[:random.randint(2, 3)]):
+    for _i, (x, y, w, h, title, menus, fw) in enumerate(windows[:random.randint(2, 3)]):
         theme = FRAMEWORK_THEMES[fw].copy()
         theme["title_height"] += random.randint(-2, 2)
         elems += draw_window(img, x, y, w, h, title, theme=theme,
@@ -1756,7 +1756,7 @@ def make_data_table() -> GeneratedPage:
     hdr_y = tb_y + 30
     cols, col_widths = ["Name", "Type", "Size", "Modified", "Status"], [160, 100, 80, 140, 100]
     hx = wx + 10
-    for ci, (col, cw) in enumerate(zip(cols, col_widths)):
+    for _ci, (col, cw) in enumerate(zip(cols, col_widths)):
         cv2.rectangle(img, (hx, hdr_y), (hx + cw, hdr_y + 24), (230, 230, 240), -1)
         cv2.putText(img, col, (hx + 6, hdr_y + 17), theme["font_face"], 0.4, (40, 40, 50), 1)
         hx += cw
@@ -2147,7 +2147,7 @@ def generate_dataset(output_dir: str, count: int, seed: int = 42,
             # Randomly add desktop icons in empty space
             if random.random() < 0.4:
                 icons = ["My Computer", "Recycle Bin", "Documents", "Network", "Setup"]
-                for k, icon in enumerate(random.sample(icons, random.randint(2, 4))):
+                for _k, icon in enumerate(random.sample(icons, random.randint(2, 4))):
                     ix, iy = random.randint(10, 400), random.randint(10, 600)
                     cv2.rectangle(img, (ix, iy), (ix + 18, iy + 18),
                                   random.choice([(0, 120, 200), (200, 160, 0), (100, 100, 100)]), -1)

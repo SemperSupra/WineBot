@@ -40,7 +40,7 @@ for scene_name, scene_fn in gen.GENERATORS:
     if scene_name not in train_scenes and scene_name not in val_scenes:
         continue
     target = "val" if scene_name in val_scenes else "train"
-    for i in range(images_per_scene):
+    for _i in range(images_per_scene):
         gen.DESKTOP_SIZE = rng.choice(resolutions)
         try:
             page = scene_fn()

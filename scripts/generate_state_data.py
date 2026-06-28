@@ -71,7 +71,7 @@ def main():
         scene_t0 = time.time()
         scene_count = 0
 
-        for i in range(IMAGES_PER_SCENE):
+        for _i in range(IMAGES_PER_SCENE):
             # Vary resolution for robustness
             gen.DESKTOP_SIZE = random.choice(RESOLUTIONS)
 

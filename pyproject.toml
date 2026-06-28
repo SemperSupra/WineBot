@@ -53,6 +53,7 @@ select = [
 ignore = [
     "E501",    # line too long (handled by formatter)
     "E731",    # lambda assignment (acceptable in some contexts)
+    "B904",    # raise-without-from-inside-except (needs careful per-case review)
     "B905",    # zip() without strict=True (many existing uses)
     "UP031",   # printf-string-formatting (many existing uses)
     "UP042",   # replace-str-enum (false positives in our usage)

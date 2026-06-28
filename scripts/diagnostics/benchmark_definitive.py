@@ -70,7 +70,7 @@ def compute_det_f1(detected_boxes, expected_boxes):
         return inter / max(union, 1)
     matches = 0
     matched = set()
-    for di, de in enumerate(detected_boxes):
+    for _di, de in enumerate(detected_boxes):
         for ei, ee in enumerate(expected_boxes):
             if ei in matched: continue
             if iou(de.get("bbox",[0,0,0,0]), ee.get("bbox",[0,0,0,0])) > 0.5:

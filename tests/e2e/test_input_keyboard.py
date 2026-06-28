@@ -62,7 +62,7 @@ class WineBotAPI:
 
 def wait_for_notepad_window(api: WineBotAPI, max_attempts: int = 20) -> dict:
     """Wait for a Notepad window to appear via the API."""
-    for i in range(max_attempts):
+    for _i in range(max_attempts):
         windows_payload = api.get_windows()
         windows = windows_payload.get("windows", [])
         notepad_win = next((w for w in windows if "Notepad" in w["title"]), None)

@@ -186,7 +186,7 @@ def score_against_ground_truth(dataset_path: str | None = None) -> dict:
     total_gt_elements = 0
     total_gt_ocr = 0
 
-    for i, gt_frame in enumerate(frames):
+    for _i, gt_frame in enumerate(frames):
         frame_path = gt_frame.get("frame_file", "")
         video = gt_frame.get("video", "")
         if video and frame_path:
