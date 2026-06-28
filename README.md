@@ -77,6 +77,11 @@ Headless:
 
 `docker compose -f compose/docker-compose.yml --profile headless up --build`
 
+> **Note:** Headless mode uses Xvfb for display — **2D rendering only**.
+> There is no hardware-accelerated OpenGL, Direct3D, or Vulkan support.
+> Applications requiring 3D/GL rendering will not work. See
+> [`docs/known-limitations.md`](docs/known-limitations.md#22-no-hardware-acceleration-in-headless-mode).
+
 Interactive (VNC + noVNC):
 
 `docker compose -f compose/docker-compose.yml --profile interactive up --build`

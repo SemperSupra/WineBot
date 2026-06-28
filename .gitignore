@@ -9,6 +9,11 @@
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+packages/wheels/
 
 # Editor/OS noise
 .DS_Store
@@ -32,6 +37,13 @@ Screenshot *.png
 # Training datasets (regenerated from winebot-gt-generator.py)
 /models/wine-dataset/
 /models/wine-dataset-gen/
+
+# Deploy credentials (never commit)
+/etc/winebot-credentials
+/etc/winebot-credentials.template
+
+# Cross-validation output (regenerated on demand)
+/models/cross-validation/
 
 # Competitive research artifacts (→ private repo: mark-e-deyoung/winebot-research)
 /STATUS.md

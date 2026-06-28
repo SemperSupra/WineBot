@@ -3,19 +3,20 @@
 # Run on TrueNAS: ssh truenas.fritz.box "sudo bash /tmp/deploy_kv_ground_container.sh"
 
 set -e
+source "$(dirname "$0")/logging_utils.sh"
 
 MODEL_DIR="/mnt/Storage/models/kv-ground/container"
 CONTAINER_NAME="winebot-kv-ground"
 
-echo "=== KV-Ground-8B Container Deployment ==="
-echo "Target: GPU 1 (A5000 #1), alongside captioner"
+log_start "KV-Ground-8B container deploy (GPU 1)"
+log_step "target" "GPU 1 (A5000 #1), alongside captioner"
 
 # Create model directory
 sudo mkdir -p "$MODEL_DIR"
 
 # Check if we need to download the full model or use existing
 if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
-    echo "Downloading KV-Ground-8B model..."
+    log_step "download" "Downloading KV-Ground-8B model..."
     # Use huggingface-cli or git LFS
     sudo apt-get install -y git-lfs 2>/dev/null || true
     sudo git lfs install --skip-repo 2>/dev/null || true
@@ -23,7 +24,7 @@ if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
     # Clone with depth 1 to save time
     cd /tmp
     if [ -d "KV-Ground-8B" ]; then
-        echo "Repo already cloned, updating..."
+        log_step "download" "Repo already cloned, updating..."
         cd KV-Ground-8B && sudo git pull
     else
         sudo GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 \
@@ -35,38 +36,29 @@ if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
     sudo cp -r /tmp/KV-Ground-8B/* "$MODEL_DIR/"
 fi
 
-echo "Model files:"
-ls -lh "$MODEL_DIR/" | head -10
+log_step "files" "Model directory contents:"
+ls -lh "$MODEL_DIR/" | head -10 | while read -r line; do log_step "ls" "$line"; done
 
 # Build and run container
-cat > /tmp/Dockerfile.kv-ground << 'DOCKERFILE'
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+REPO="https://github.com/SemperSupra/kv-ground-server.git"
+REF="${KV_GROUND_SERVER_REF:-v0.1.0}"
+BUILD_DIR=$(mktemp -d)
+git clone --depth 1 --branch "$REF" "$REPO" "$BUILD_DIR" 2>&1 | sed 's/^/    /'
 
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir transformers>=4.45 accelerate bitsandbytes sentencepiece pillow fastapi uvicorn
-
-WORKDIR /app
-COPY . /app/
-
-EXPOSE 8003
-
-CMD ["python3", "-c", "from transformers import AutoModel, AutoProcessor; import torch; m = AutoModel.from_pretrained('/app', torch_dtype=torch.float16, device_map='cuda:0'); print('Model loaded')"]
-DOCKERFILE
-
-# Build image on TrueNAS
-sudo docker build -t winebot-kv-ground:latest -f /tmp/Dockerfile.kv-ground "$MODEL_DIR/"
+log_step "build" "Building Docker image..."
+sudo docker build -t "kv-ground-server:${REF}" \
+    --build-arg KV_GROUND_MODEL_DIR="$MODEL_DIR" \
+    -f "$BUILD_DIR/docker/Dockerfile" "$BUILD_DIR"
 
 # Stop existing container if running
 sudo docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
 # Run on GPU 1
+log_step "run" "Starting container $CONTAINER_NAME on GPU 1..."
 sudo docker run -d --gpus '"device=1"' --name "$CONTAINER_NAME" \
     -p 8003:8003 \
     -v "$MODEL_DIR:/app" \
     winebot-kv-ground:latest
 
-echo ""
-echo "=== KV-Ground-8B Container Deployed ==="
-echo "Container: $CONTAINER_NAME (GPU 1)"
-echo "Port: 8003"
-echo "Check: sudo docker logs $CONTAINER_NAME"
+log_complete "KV-Ground-8B container deployed (GPU 1, port 8003)"
+log_step "check" "sudo docker logs $CONTAINER_NAME"

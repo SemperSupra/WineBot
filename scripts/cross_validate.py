@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, "/scripts")
+import cv2
 import numpy as np
 
 
@@ -112,7 +113,7 @@ def main():
             f.write("val: val/images\n")
             f.write("nc: 22\n")
             f.write("names:\n")
-            for i, name in gen.WINE_CLASSES.items():
+            for i, name in enumerate(gen.WINE_CLASSES):
                 f.write(f"  {i}: {name}\n")
 
         # Train
@@ -176,5 +177,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import cv2  # noqa: F401 — needed by generator
     main()
