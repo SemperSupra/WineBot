@@ -359,6 +359,15 @@ def _run_batch_job(job_id: str, video_path: str, frame_interval: float):
 def create_app() -> FastAPI:
     app = FastAPI(title="WineBot CV Sidecar", version="1.0")
 
+    # ── Robust error handler for binary request bodies ─────────────────────────
+    from starlette.requests import Request as StarRequest
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: StarRequest, exc: Exception):
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc)[:200], "detail": "Internal server error"},
+        )
+
     @app.get("/health")
     async def health():
         detectors = available_detectors()
