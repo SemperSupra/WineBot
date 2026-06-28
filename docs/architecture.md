@@ -139,8 +139,8 @@ The sidecar code is being extracted from the WineBot monorepo into independent r
 ```
 Phase 1-2: ✅ Package skeleton + engines moved to packages/desktop-ui-cv/
 Phase 3:   ✅ Sidecar server imports from the package
-Phase 4:   🔄 CI/CD pipeline for the package
-Phase 5:   📅 Extract to github.com/sempersupra/desktop-ui-cv (tag v0.1.0)
+Phase 4:   ✅ CI/CD pipeline for the package (moved to its own repo)
+Phase 5:   ✅ Extracted to github.com/sempersupra/desktop-ui-cv (tagged v0.1.0)
 Phase 6:   📅 Extract kv-ground-server to its own repo
 Phase 7:   📅 Extract captioning sidecar to its own repo
 ```

@@ -9,6 +9,10 @@
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
 
 # Editor/OS noise
 .DS_Store
