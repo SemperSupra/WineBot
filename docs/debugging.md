@@ -205,3 +205,73 @@ scripts/run-app.sh "/wineprefix/drive_c/Program Files/MyApp/MyApp.exe" \
   --view vnc \
   --vnc-password "winebot"
 ```
+
+---
+
+## Git Bash Path Translation (Windows Host)
+
+When running `docker` commands from **Git Bash** (MSYS2/MinGW) on Windows, Unix-style
+paths like `/scripts` or `/tmp` are automatically translated to Windows paths:
+`C:/Program Files/Git/scripts` or `C:/Users/Mark/AppData/Local/Temp/`.
+
+This causes cryptic failures:
+```
+python3: can't open file '/work/C:/Program Files/Git/scripts/file.py': No such file or directory
+```
+
+### Prevention
+
+Prefix all `docker` commands with `MSYS_NO_PATHCONV=1` to disable path translation:
+
+```bash
+# WRONG — path gets mangled
+docker exec mycontainer python3 /scripts/annotation_server.py
+
+# RIGHT — path preserved
+MSYS_NO_PATHCONV=1 docker exec mycontainer python3 /scripts/annotation_server.py
+```
+
+### Affected Commands
+
+| Command | Without MSYS_NO_PATHCONV | With MSYS_NO_PATHCONV |
+|:---|:---|:---|
+| `docker exec ... python3 /path/to/script.py` | ❌ `File not found` | ✅ Works |
+| `docker cp /tmp/file container:/path/` | ❌ Wrong source path | ✅ Works |
+| `docker run -v C:\path:/container` | ❌ Wrong mount path | ✅ Use `//c/path` |
+| `docker exec -d ...` | ❌ Detached mode fails silently | ✅ Use MSYS_NO_PATHCONV |
+| `sh -c 'cat /tmp/file'` | ❌ `/tmp` → Windows temp | ✅ Works |
+
+### Docker Volume Mounts
+
+For volume mounts, use double-slash prefix for Windows paths:
+
+```bash
+# WRONG — Git Bash translates C:\path to /c/path with wrong format
+docker run -v C:\Users\me\data:/data ...
+
+# RIGHT — double-slash prevents translation
+docker run -v //c/Users/me/projects/models:/models ...
+```
+
+### Annotation Server (Specific Case)
+
+The annotation server requires this fix when started from the host:
+
+```bash
+# From the repo root:
+MSYS_NO_PATHCONV=1 docker exec -d winebot-cv python3 /scripts/annotation_server.py \
+  --dir /artifacts/annotations/images --port 8080 --sidecar http://localhost:8001
+
+# Or use the helper script:
+MSYS_NO_PATHCONV=1 bash scripts/start-annotation.sh
+```
+
+### Diagnostic
+
+If a command fails with path-related errors, check whether Git Bash is translating:
+
+```bash
+# Check if translation is happening
+docker exec winebot-cv python3 -c "import sys; print(sys.argv)" /scripts/test.py
+# If output shows C:/Program Files/Git/, MSYS_NO_PATHCONV=1 is needed.
+```

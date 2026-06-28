@@ -22,7 +22,7 @@ Keyboard shortcuts:
   + / -       Zoom in/out
   Space       Auto-detect (if sidecar configured)
 """
-import argparse, base64, glob, io, json, os, sys, time
+import argparse, base64, glob, io, json, logging, os, socket, sys, time
 from pathlib import Path
 from typing import List, Optional
 
@@ -869,46 +869,91 @@ def main():
     parser.add_argument("--dir", "-d", default=".",
                         help="Directory containing images to annotate")
     parser.add_argument("--port", "-p", type=int, default=8080,
-                        help="Port to serve on")
+                        help="Port to serve on (tries next port if busy)")
     parser.add_argument("--host", default="0.0.0.0",
                         help="Host to bind to")
     parser.add_argument("--allow-delete", action="store_true",
                         help="Enable image deletion via UI (dangerous)")
     parser.add_argument("--sidecar", default=None,
                         help="CV sidecar URL for auto-detection (e.g. http://localhost:8001)")
+    parser.add_argument("--log-file", default=None,
+                        help="Path to log file (default: stderr)")
     args = parser.parse_args()
 
     IMAGE_DIR = os.path.abspath(args.dir)
     ALLOW_DELETE = args.allow_delete
     SIDECAR_URL = args.sidecar
 
+    # ── Logging setup ───────────────────────────────────────────────────────────
+    log_handler = logging.FileHandler(args.log_file) if args.log_file else logging.StreamHandler()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[log_handler],
+    )
+    log = logging.getLogger("annotation")
+
     if not os.path.isdir(IMAGE_DIR):
-        print(f"ERROR: Directory not found: {IMAGE_DIR}")
+        log.error("Directory not found: %s", IMAGE_DIR)
         sys.exit(1)
 
     images = _get_image_list()
-    print(f"\n{'='*60}")
-    print(f"  WineBot Annotation Tool")
-    print(f"{'='*60}")
-    print(f"  Image directory: {IMAGE_DIR}")
-    print(f"  Images found:    {len(images)}")
-    print(f"  Classes:         {len(WINE_CLASSES)} (0-{len(WINE_CLASSES)-1})")
-    print(f"  Sidecar:         {SIDECAR_URL or 'not configured'}")
-    print(f"  Delete enabled:  {ALLOW_DELETE}")
-    print(f"  Server:          http://{args.host}:{args.port}")
-    print(f"{'='*60}")
-    print(f"\n  Keyboard shortcuts:")
-    print(f"    ← →         Previous/Next image")
-    print(f"    0-9         Select class")
-    print(f"    d / q       Draw / Select mode")
-    print(f"    Delete       Remove selected box")
-    print(f"    Ctrl+S       Save annotations")
-    print(f"    + / -         Zoom in/out")
-    if SIDECAR_URL:
-        print(f"    Space        Auto-detect with sidecar")
-    print(f"\n  Open http://localhost:{args.port} in your browser.\n")
+    log.info("Starting WineBot Annotation Tool")
+    log.info("Image directory: %s (%d images)", IMAGE_DIR, len(images))
+    log.info("Classes: %d (%s..%s)", len(WINE_CLASSES), WINE_CLASSES[0], WINE_CLASSES[-1])
+    log.info("Sidecar: %s", SIDECAR_URL or "not configured")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    # ── Port discovery with conflict fallback ───────────────────────────────────
+    import socket
+    port = args.port
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((args.host, port))
+            sock.close()
+            if result == 0:
+                log.warning("Port %d is in use, trying %d", port, port + 1)
+                port += 1
+            else:
+                break
+        except OSError:
+            port += 1
+    else:
+        log.error("Could not find free port after %d attempts (tried %d..%d)",
+                   max_attempts, args.port, port)
+        sys.exit(1)
+
+    log.info("Binding to %s:%d", args.host, port)
+
+    # ── Print banner to stdout (for interactive sessions) ────────────────────────
+    banner = (
+        f"\n{'='*60}\n"
+        f"  WineBot Annotation Tool\n"
+        f"{'='*60}\n"
+        f"  Image directory: {IMAGE_DIR}\n"
+        f"  Images found:    {len(images)}\n"
+        f"  Classes:         {len(WINE_CLASSES)} (0-{len(WINE_CLASSES)-1})\n"
+        f"  Sidecar:         {SIDECAR_URL or 'not configured'}\n"
+        f"  Delete enabled:  {ALLOW_DELETE}\n"
+        f"  Server:          http://{args.host}:{port}\n"
+        f"{'='*60}\n"
+        f"\n  Keyboard shortcuts:\n"
+        f"    {'Space':13s} Auto-detect with sidecar\n" if SIDECAR_URL else ""
+        f"    {'← →':13s} Previous/Next image\n"
+        f"    {'0-9':13s} Select class\n"
+        f"    d / q       Draw / Select mode\n"
+        f"    Delete       Remove selected box\n"
+        f"    Ctrl+S       Save annotations\n"
+        f"    + / -         Zoom in/out\n"
+        f"\n  Open http://localhost:{port} in your browser.\n"
+    )
+    print(banner)
+    log.info("Serving on %s:%d", args.host, port)
+
+    uvicorn.run(app, host=args.host, port=port, log_level="info",
+                access_log=False)
 
 
 if __name__ == "__main__":
