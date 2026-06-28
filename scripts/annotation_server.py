@@ -31,7 +31,6 @@ import socket
 import sys
 
 import cv2
-import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -280,6 +279,7 @@ def auto_detect(filename: str):
     shutil.copy2(img_path, tmp_path)
 
     try:
+        import requests
         r = requests.post(
             f"{SIDECAR_URL}/analyze",
             json={"image_path": tmp_path, "ui_detector": "wine"},
@@ -287,7 +287,7 @@ def auto_detect(filename: str):
         )
         r.raise_for_status()
         result = r.json()
-    except requests.RequestException as e:
+    except Exception as e:
         raise HTTPException(status_code=502,
                             detail=f"Sidecar error: {e}")
 
