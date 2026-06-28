@@ -40,23 +40,15 @@ log_step "files" "Model directory contents:"
 ls -lh "$MODEL_DIR/" | head -10 | while read -r line; do log_step "ls" "$line"; done
 
 # Build and run container
-cat > /tmp/Dockerfile.kv-ground << 'DOCKERFILE'
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+REPO="https://github.com/SemperSupra/kv-ground-server.git"
+REF="${KV_GROUND_SERVER_REF:-v0.1.0}"
+BUILD_DIR=$(mktemp -d)
+git clone --depth 1 --branch "$REF" "$REPO" "$BUILD_DIR" 2>&1 | sed 's/^/    /'
 
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir transformers>=4.45 accelerate bitsandbytes sentencepiece pillow fastapi uvicorn
-
-WORKDIR /app
-COPY . /app/
-
-EXPOSE 8003
-
-CMD ["python3", "-c", "from transformers import AutoModel, AutoProcessor; import torch; m = AutoModel.from_pretrained('/app', torch_dtype=torch.float16, device_map='cuda:0'); print('Model loaded')"]
-DOCKERFILE
-
-# Build image on TrueNAS
 log_step "build" "Building Docker image..."
-sudo docker build -t winebot-kv-ground:latest -f /tmp/Dockerfile.kv-ground "$MODEL_DIR/"
+sudo docker build -t "kv-ground-server:${REF}" \
+    --build-arg KV_GROUND_MODEL_DIR="$MODEL_DIR" \
+    -f "$BUILD_DIR/docker/Dockerfile" "$BUILD_DIR"
 
 # Stop existing container if running
 sudo docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
