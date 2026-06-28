@@ -48,3 +48,4 @@ Screenshot *.png
 # Competitive research artifacts (→ private repo: mark-e-deyoung/winebot-research)
 /STATUS.md
 /docs/BUILD_LADDER.md
+models/annotations/

@@ -178,6 +178,7 @@ services:
       - test
     ports:
       - "8001:8001"
+      - "8080:8080"
     volumes:
       # Mount artifacts for offline batch analysis of session recordings
       - ../artifacts:/artifacts:ro
@@ -187,6 +188,8 @@ services:
       - ../models/yolo:/models:ro
       # Host tessdata cache (persists Tesseract language data)
       - ../models/tessdata:/usr/share/tesseract-ocr/5/tessdata:ro
+      # Host annotation cache (persists labels across container recreations)
+      - ../models/annotations:/artifacts/annotations
     environment:
       YOLO_MODEL_PATH: /models/yolov8n.pt
     healthcheck:
