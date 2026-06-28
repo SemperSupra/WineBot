@@ -101,10 +101,15 @@ ENV OCR_BACKEND=tesseract
 # At runtime with --gpus all, PyTorch/CUDA auto-detects the GPU.
 # Override with: -e UI_DETECTOR=yolo -e OCR_BACKEND=tesseract
 
-# ── Copy sidecar server, engines, and CV tools ───────────────────────────────
+# ── Install desktop-ui-cv package (detectors, OCR, CLIP, registry, dataset gen) ──
+# This is the canonical source for engine imports (winebot_cv.detectors, etc.).
+COPY packages/desktop-ui-cv/ /tmp/desktop-ui-cv/
+RUN pip install --no-cache-dir --break-system-packages /tmp/desktop-ui-cv \
+    && rm -rf /tmp/desktop-ui-cv
+
+# ── Copy sidecar server and CV analysis tools ────────────────────────────────
+# These are WineBot-specific CLI tools, not part of the desktop-ui-cv package.
 COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
-COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
-COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
 COPY scripts/diagnostics/cv-test-runner.py /scripts/cv-test-runner.py
 COPY scripts/diagnostics/cv-element-detect.py /scripts/cv-element-detect.py
 COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py
@@ -121,11 +126,15 @@ COPY scripts/diagnostics/benchmark_report.py /scripts/benchmark_report.py
 COPY scripts/diagnostics/workflow_evaluator.py /scripts/workflow_evaluator.py
 COPY scripts/diagnostics/workflow_test_harness.py /scripts/workflow_test_harness.py
 COPY scripts/diagnostics/bench_xres.py /scripts/bench_xres.py
-COPY scripts/diagnostics/clip_embedder.py /scripts/clip_embedder.py
 COPY scripts/diagnostics/clip_index.py /scripts/clip_index.py
 COPY scripts/diagnostics/florence2_captioner.py /scripts/florence2_captioner.py
 COPY scripts/diagnostics/vlm_ollama.py /scripts/vlm_ollama.py
 COPY scripts/diagnostics/provenance.py /scripts/provenance.py
+# Legacy engine files — still needed by cohort scripts (benchmarks, workflows).
+# New code should import from the winebot_cv package instead.
+COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
+COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
+COPY scripts/diagnostics/clip_embedder.py /scripts/clip_embedder.py
 COPY scripts/diagnostics/model_registry.py /scripts/model_registry.py
 
 # ── Pre-download CLIP model weights (survives rebuilds via shared cache) ──────

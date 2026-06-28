@@ -75,10 +75,13 @@ ENV OCR_BACKEND=tesseract
 ENV FLAGS_use_onednn=0
 ENV FLAGS_use_mkldnn=0
 
-# ── Copy sidecar server, engines, and CV tools ───────────────────────────────
+# ── Install desktop-ui-cv package (detectors, OCR, CLIP, registry) ───────────
+COPY packages/desktop-ui-cv/ /tmp/desktop-ui-cv/
+RUN pip install --no-cache-dir /tmp/desktop-ui-cv \
+    && rm -rf /tmp/desktop-ui-cv
+
+# ── Copy sidecar server and CV tools ─────────────────────────────────────────
 COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
-COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
-COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
 COPY scripts/diagnostics/cv-test-runner.py /scripts/cv-test-runner.py
 COPY scripts/diagnostics/cv-element-detect.py /scripts/cv-element-detect.py
 COPY scripts/diagnostics/cv-omni-analyze.py /scripts/cv-omni-analyze.py

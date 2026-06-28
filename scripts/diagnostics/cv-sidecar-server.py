@@ -39,11 +39,11 @@ import cv2
 import numpy as np
 
 # ── Swappable detection engines ───────────────────────────────────────────────
-from ui_detectors import (
+from winebot_cv.detectors.engines import (
     get_ui_detector, available_detectors, current_detector,
     UIDetector, ContourDetector, YOLOUIDetector, OmniParserDetector,
 )
-from ocr_engines import (
+from winebot_cv.ocr.engines import (
     get_ocr_engine, available_backends, current_backend,
     OCREngine, TesseractEngine, PaddleOCREngine,
 )
@@ -56,7 +56,7 @@ except ImportError:
 
 # Model registry (provenance for all pipeline models)
 try:
-    from model_registry import ModelRegistry
+    from winebot_cv.registry.model_registry import ModelRegistry
     _model_registry = ModelRegistry.from_scan("/models")
 except ImportError:
     _model_registry = None
@@ -94,7 +94,7 @@ def _load_state_classifier():
 
     try:
         import pickle
-        from clip_embedder import get_clip_embedder
+        from winebot_cv.embedding.clip import get_clip_embedder
 
         with open(model_path, "rb") as f:
             data = pickle.load(f)
@@ -1016,7 +1016,7 @@ def create_app() -> FastAPI:
 
         # Lazy-load embedder + index
         try:
-            from clip_embedder import get_clip_embedder
+            from winebot_cv.embedding.clip import get_clip_embedder
             from clip_index import FrameIndex
         except ImportError:
             raise HTTPException(
@@ -1068,7 +1068,7 @@ def create_app() -> FastAPI:
                                 detail="frames_dir required and must exist")
 
         try:
-            from clip_embedder import get_clip_embedder
+            from winebot_cv.embedding.clip import get_clip_embedder
             from clip_index import FrameIndex
         except ImportError:
             raise HTTPException(
