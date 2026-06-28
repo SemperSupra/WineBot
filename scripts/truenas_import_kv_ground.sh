@@ -1,5 +1,6 @@
 #!/bin/bash
 # Import KV-Ground-8B Q4_K_M GGUF into TrueNAS Ollama
+# Source repo: github.com/SemperSupra/kv-ground-server
 # Run: ssh truenas.fritz.box "sudo bash /mnt/Storage/models/kv-ground/import_kv_ground.sh"
 # Or copy to truenas first: scp scripts/truenas_import_kv_ground.sh truenas.fritz.box:/tmp/
 
