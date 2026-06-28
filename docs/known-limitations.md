@@ -342,6 +342,40 @@ For WinBot parity, games and 3D applications should run on WinBot where the
 native Windows GPU driver is available. For WineBot, use the GDI software
 renderer and test each application individually.
 
+#### Wine 10.0 DirectX & Multimedia Capabilities
+
+WineBot uses **Wine 10.0** (`wine-10.0~repack-6` from Debian Trixie). This is
+a recent stable release with strong DirectX coverage, but **all rendering goes
+through Xvfb's CPU-only software path** in WineBot's headless mode.
+
+| API | Wine 10.0 Support | Works Under Xvfb? |
+|:---|---|:---:|
+| **Direct3D 9** | WineD3D (OpenGL) | ⚠️ Slow — OpenGL to llvmpipe CPU |
+| **Direct3D 10/11** | WineD3D (OpenGL) | ⚠️ Slow — OpenGL to llvmpipe CPU |
+| **Direct3D 12** | VKD3D 1.14 (Vulkan) | No Vulkan ICD under Xvfb |
+| **Vulkan** | Driver enumeration | No /dev/dri, no ICD |
+| **DXVK** (3rd party) | D3D9/10/11 to Vulkan | Requires Vulkan ICD |
+| **Direct2D/DirectWrite** | Partial CPU impl | Software-only, usable |
+| **DirectShow** | Partial (GStreamer) | CPU decoding |
+| **DirectSound** | ALSA/PulseAudio | Audio (if host audio mapped) |
+| **DirectInput** | Key/mouse/joystick | Xvfb input forwarding |
+| **Media Foundation** | Partial | Incomplete, app-dependent |
+| **GStreamer video** | H.264, MPEG, VP8/9 | CPU decoding |
+
+**Practical impact on UI automation:**
+
+- **Win32/GDI apps** (Notepad, regedit, file dialogs) — unaffected, no DirectX
+- **.NET/WPF apps** — use Direct2D/DirectWrite, CPU fallback works fine
+- **Modern UWP apps** — use D3D 11, WineD3D + llvmpipe, functional but slow
+- **Direct3D 9/10/11 games** — WineD3D, low FPS (single digits for 3D)
+- **Direct3D 12 games** — VKD3D, wont launch (needs Vulkan)
+- **DXVK** — wont launch (needs Vulkan ICD)
+
+**Bottom line:** Wine 10.0's DirectX support is excellent for a compatibility
+layer. The hard constraint is Xvfb, not Wine. If GPU passthrough were available
+(Xorg + dummy driver), all DirectX versions including D3D12 would run at
+near-native speed.
+
 #### GPU Command Proxy ("Software GPU Passthrough")
 
 A common question is whether Mesa/llvmpipe could be modified to forward
