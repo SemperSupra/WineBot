@@ -85,7 +85,7 @@ def get_git_commit():
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"],
                               capture_output=True, text=True).stdout.strip()[:8]
-    except: return "unknown"
+    except Exception: return "unknown"
 
 
 def get_hardware_info():
@@ -93,7 +93,7 @@ def get_hardware_info():
         import torch
         if torch.cuda.is_available():
             return f"{torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory//1e9:.0f}GB)"
-    except: pass
+    except Exception: pass
     return "CPU"
 
 

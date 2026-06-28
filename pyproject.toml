@@ -7,7 +7,7 @@
 line-length = 100
 target-version = "py312"
 
-# File exclusions (generated, vendored, or extracted)
+# File exclusions (generated, vendored, or extracted, path-reference files)
 exclude = [
     ".git",
     "__pycache__",
@@ -15,6 +15,15 @@ exclude = [
     "dist",
     "*.egg-info",
     ".eggs",
+    # Path reference files (single-line module paths, not real Python)
+    "automation/diagnose_vnc_client.py",
+    "automation/find_and_click.py",
+    "automation/input_trace_core.py",
+    "automation/notepad_create_and_verify.py",
+    "automation/vnc_input_proxy.py",
+    "automation/wait_for_pixel_stability.py",
+    "scripts/analyze-trace-latency.py",
+    "scripts/verify-screenshot-metadata.py",
 ]
 
 [tool.ruff.lint]
@@ -58,6 +67,13 @@ ignore = [
 # Tests can use bare asserts and have more lenient naming
 "tests/**" = ["D", "N", "ARG"]
 "scripts/**" = ["D"]  # scripts don't need full docstrings
+# FastAPI route files: Body() in defaults is the standard FastAPI pattern
+"api/routers/*.py" = ["B008"]
+# Legacy diagnostics: large monolithic files with cross-referencing patterns
+"scripts/diagnostics/ui_detectors.py" = ["F821", "ARG002"]
+"scripts/diagnostics/cv-element-detect.py" = ["ARG002"]
+"scripts/diagnostics/cv-omni-analyze.py" = ["ARG002"]
+"scripts/diagnostics/workflow_evaluator.py" = ["ARG002"]
 
 [tool.ruff.format]
 # Use consistent formatting
