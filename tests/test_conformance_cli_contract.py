@@ -1,7 +1,6 @@
+import os
 import subprocess
 from pathlib import Path
-import os
-
 
 WB = Path(__file__).resolve().parent.parent / "scripts" / "wb"
 WINEBOTCTL = Path(__file__).resolve().parent.parent / "scripts" / "bin" / "winebotctl"

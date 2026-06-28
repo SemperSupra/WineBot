@@ -31,7 +31,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -47,8 +46,8 @@ def _lazy_import_ui():
     global _ui_imports
     if _ui_imports is None:
         try:
-            from ui_detectors import get_ui_detector
             from ocr_engines import get_ocr_engine
+            from ui_detectors import get_ui_detector
             _ui_imports = (get_ui_detector, get_ocr_engine)
         except ImportError:
             _ui_imports = (None, None)
@@ -62,7 +61,7 @@ GRID_COLS = 64   # ~20px per cell at 1280px wide
 GRID_ROWS = 36   # ~20px per cell at 720px tall
 
 
-def _element_fingerprint(elements: List[Dict], img_shape: Tuple[int, int]) -> Set[Tuple]:
+def _element_fingerprint(elements: list[dict], img_shape: tuple[int, int]) -> set[tuple]:
     """Produce a position-quantized fingerprint of a frame's UI elements.
 
     Each element becomes a (type, grid_row, grid_col) tuple. The grid
@@ -86,7 +85,7 @@ def _element_fingerprint(elements: List[Dict], img_shape: Tuple[int, int]) -> Se
     return fp
 
 
-def _fingerprint_iou(fp_a: Set[Tuple], fp_b: Set[Tuple]) -> float:
+def _fingerprint_iou(fp_a: set[tuple], fp_b: set[tuple]) -> float:
     """Jaccard similarity (intersection over union) of two fingerprints."""
     if not fp_a and not fp_b:
         return 1.0
@@ -110,12 +109,12 @@ class WorkflowStateMachine:
                                   (0.5 = elements must overlap by less than 50%).
         """
         self.threshold = transition_threshold
-        self.states: List[Dict] = []          # Unique states discovered
-        self.transitions: List[Dict] = []     # State A → State B edges
-        self.frame_states: List[int] = []     # frame_index → state_id mapping
-        self._state_fingerprints: List[Set] = []
+        self.states: list[dict] = []          # Unique states discovered
+        self.transitions: list[dict] = []     # State A → State B edges
+        self.frame_states: list[int] = []     # frame_index → state_id mapping
+        self._state_fingerprints: list[set] = []
 
-    def _find_or_create_state(self, fp: Set[Tuple], elements: List[Dict],
+    def _find_or_create_state(self, fp: set[tuple], elements: list[dict],
                                frame_idx: int, timestamp_ms: float) -> int:
         """Match fingerprint to existing state or create a new one."""
         best_iou = 0.0
@@ -156,8 +155,8 @@ class WorkflowStateMachine:
         self._state_fingerprints.append(fp)
         return state_id
 
-    def add_frame(self, elements: List[Dict], frame_idx: int,
-                  img_shape: Tuple[int, int], timestamp_ms: float = 0) -> int:
+    def add_frame(self, elements: list[dict], frame_idx: int,
+                  img_shape: tuple[int, int], timestamp_ms: float = 0) -> int:
         """Process one frame's detection results.
 
         Returns the state_id assigned to this frame.
@@ -187,7 +186,7 @@ class WorkflowStateMachine:
         self.frame_states.append(state_id)
         return state_id
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Serialize the state machine to a JSON-serializable dict."""
         return {
             "total_frames": len(self.frame_states),
@@ -203,7 +202,7 @@ class WorkflowStateMachine:
 
 
 def validate_workflow(sm: WorkflowStateMachine,
-                      expected_states: List[Dict]) -> Dict:
+                      expected_states: list[dict]) -> dict:
     """Compare observed state sequence against an expected workflow.
 
     Args:
@@ -302,8 +301,8 @@ def validate_workflow(sm: WorkflowStateMachine,
 
 
 def _check_sequential_order(sm: WorkflowStateMachine,
-                            matched: List[Dict],
-                            expected: List[Dict]) -> bool:
+                            matched: list[dict],
+                            expected: list[dict]) -> bool:
     """Verify that matched states appear in the expected order."""
     # Build expected order from state names
     expected_order = {e.get("name", ""): i for i, e in enumerate(expected)}
@@ -335,7 +334,7 @@ class FrameProcessor:
     """Runs CV detection on a sequence of frames and builds the state machine."""
 
     def __init__(self, ui_detector: str = "wine", ocr_backend: str = "tesseract",
-                 api_url: Optional[str] = None):
+                 api_url: str | None = None):
         self.ui_detector_name = ui_detector
         self.ocr_backend_name = ocr_backend
         self.api_url = api_url
@@ -363,15 +362,16 @@ class FrameProcessor:
               f"({'GPU' if self._detector.uses_gpu else 'CPU'})", file=sys.stderr)
         print(f"  OCR: {self._ocr.name}", file=sys.stderr)
 
-    def _detect_local(self, img: np.ndarray) -> List[Dict]:
+    def _detect_local(self, img: np.ndarray) -> list[dict]:
         self._ensure_engines()
         if self._detector is None:
             return []
         return self._detector.detect(img)
 
-    def _detect_api(self, img: np.ndarray) -> List[Dict]:
+    def _detect_api(self, img: np.ndarray) -> list[dict]:
         """Use CV sidecar API for detection."""
         import io
+
         import requests
 
         _, buf = cv2.imencode(".png", img)
@@ -389,7 +389,7 @@ class FrameProcessor:
             print(f"  [API] Detection error: {e}", file=sys.stderr)
             return []
 
-    def detect(self, img: np.ndarray) -> List[Dict]:
+    def detect(self, img: np.ndarray) -> list[dict]:
         if self.api_url:
             return self._detect_api(img)
         return self._detect_local(img)
@@ -453,7 +453,7 @@ def process_frames(frame_dir: str, processor: FrameProcessor,
     return sm
 
 
-def print_summary(sm: WorkflowStateMachine, validation: Optional[Dict] = None):
+def print_summary(sm: WorkflowStateMachine, validation: dict | None = None):
     """Print a human-readable summary of the state machine."""
     print()
     print("=" * 72)
@@ -495,7 +495,7 @@ def print_summary(sm: WorkflowStateMachine, validation: Optional[Dict] = None):
         print(f"  Completion:  {validation['completion_ratio']:.0%} "
               f"({len(validation['matched_states'])}/{len(validation['matched_states']) + len(validation['missed_states'])} states)")
         if validation['missed_states']:
-            print(f"  Missed states:")
+            print("  Missed states:")
             for m in validation['missed_states']:
                 print(f"    ✗ {m['expected_name']}: needed {m['required_types']}")
         if validation['extra_states']:

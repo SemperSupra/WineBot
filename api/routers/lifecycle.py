@@ -1,55 +1,55 @@
-from fastapi import APIRouter, HTTPException, Body
-from typing import Dict, Any, Optional
 import asyncio
 import json
 import os
 import signal
+import subprocess
 import threading
 import time
-import subprocess
-from api.utils.files import (
-    read_session_dir,
-    lifecycle_log_path,
-    append_lifecycle_event,
-    resolve_session_dir,
-    ensure_session_subdirs,
-    ensure_user_profile,
-    write_session_dir,
-    write_session_manifest,
-    link_wine_user_dir,
-    write_session_state,
-    recorder_running,
-    read_session_state,
-    read_session_mode,
-    read_session_control_mode,
-    write_session_control_mode,
-    validate_path,
-    write_instance_state,
-    read_instance_state,
-)
-from api.core.versioning import ARTIFACT_SCHEMA_VERSION
-from api.utils.config import config
-from api.utils.process import safe_command, find_processes
-from api.core.recorder import stop_recording
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException
+
 from api.core.broker import broker
-from api.core.models import SessionSuspendModel, SessionResumeModel
-from api.core.models import ControlPolicyMode
-from api.core.telemetry import emit_operation_timing
 from api.core.constants import (
     LIFECYCLE_MODE_ONESHOT,
     SESSION_STATE_ACTIVE,
     SESSION_STATE_COMPLETED,
     SESSION_STATE_SUSPENDED,
 )
+from api.core.models import ControlPolicyMode, SessionResumeModel, SessionSuspendModel
 from api.core.operations import (
-    create_operation,
-    heartbeat_operation,
     complete_operation,
+    create_operation,
     fail_operation,
     get_operation,
+    heartbeat_operation,
     list_operations,
 )
-
+from api.core.recorder import stop_recording
+from api.core.telemetry import emit_operation_timing
+from api.core.versioning import ARTIFACT_SCHEMA_VERSION
+from api.utils.config import config
+from api.utils.files import (
+    append_lifecycle_event,
+    ensure_session_subdirs,
+    ensure_user_profile,
+    lifecycle_log_path,
+    link_wine_user_dir,
+    read_instance_state,
+    read_session_control_mode,
+    read_session_dir,
+    read_session_mode,
+    read_session_state,
+    recorder_running,
+    resolve_session_dir,
+    validate_path,
+    write_instance_state,
+    write_session_control_mode,
+    write_session_dir,
+    write_session_manifest,
+    write_session_state,
+)
+from api.utils.process import find_processes, safe_command
 
 router = APIRouter(tags=["lifecycle"])
 session_transition_lock = asyncio.Lock()
@@ -59,9 +59,9 @@ _shutdown_mode = ""
 _shutdown_started_at = 0.0
 _TRANSITION_MARKER_FILE = "session.transition.json"
 _process_state_lock = threading.Lock()
-_process_pid_snapshot: Dict[str, set[int]] = {}
-_process_incident_until: Dict[str, float] = {}
-_process_incident_reason: Dict[str, str] = {}
+_process_pid_snapshot: dict[str, set[int]] = {}
+_process_incident_until: dict[str, float] = {}
+_process_incident_reason: dict[str, str] = {}
 _PROCESS_INCIDENT_WINDOW_SECONDS = float(
     os.getenv("WINEBOT_PROCESS_INCIDENT_WINDOW_SECONDS", "6")
 )
@@ -69,7 +69,7 @@ _PROCESS_INCIDENT_WINDOW_SECONDS = float(
 
 # --- Lifecycle Logic ---
 def _validate_session_transition(
-    current_state: Optional[str], target: str, session_mode: str
+    current_state: str | None, target: str, session_mode: str
 ) -> None:
     state = (current_state or SESSION_STATE_ACTIVE).strip().lower()
     if target == "suspend":
@@ -97,7 +97,7 @@ def _require_active_session_or_conflict(target_dir: str) -> None:
         )
 
 
-def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
+def graceful_wine_shutdown(session_dir: str | None) -> dict[str, Any]:
     results = {}
     append_lifecycle_event(
         session_dir, "wine_shutdown_requested", "Requesting Wine shutdown", source="api"
@@ -140,7 +140,7 @@ def graceful_wine_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     return results
 
 
-def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
+def graceful_component_shutdown(session_dir: str | None) -> dict[str, Any]:
     results = {}
     append_lifecycle_event(
         session_dir,
@@ -178,7 +178,7 @@ def graceful_component_shutdown(session_dir: Optional[str]) -> Dict[str, Any]:
     return results
 
 
-def _tracked_process_status(name: str, pattern: str, exact: bool = True) -> Dict[str, Any]:
+def _tracked_process_status(name: str, pattern: str, exact: bool = True) -> dict[str, Any]:
     """Track process PID transitions to surface recent instability after auto-restarts."""
     now = time.time()
     current_pids = set(find_processes(pattern, exact=exact))
@@ -206,7 +206,7 @@ def _tracked_process_status(name: str, pattern: str, exact: bool = True) -> Dict
 
 
 def _shutdown_process(
-    session_dir: Optional[str], delay: float, sig: int = signal.SIGTERM
+    session_dir: str | None, delay: float, sig: int = signal.SIGTERM
 ) -> None:
     time.sleep(delay)
     append_lifecycle_event(
@@ -229,7 +229,7 @@ def _shutdown_process(
         os._exit(0)
 
 
-def schedule_shutdown(session_dir: Optional[str], delay: float, sig: int) -> None:
+def schedule_shutdown(session_dir: str | None, delay: float, sig: int) -> None:
     append_lifecycle_event(
         session_dir,
         "shutdown_scheduled",
@@ -353,7 +353,7 @@ def lifecycle_events(limit: int = 100):
     path = lifecycle_log_path(session_dir)
     if not os.path.exists(path):
         return {"events": []}
-    
+
     from api.utils.files import read_file_tail_lines
     raw_lines = read_file_tail_lines(path, limit=limit)
     events = []
@@ -365,10 +365,10 @@ def lifecycle_events(limit: int = 100):
     return {"events": events}
 
 
-async def atomic_shutdown(session_dir: Optional[str], wine_shutdown: bool = True) -> Dict[str, Any]:
+async def atomic_shutdown(session_dir: str | None, wine_shutdown: bool = True) -> dict[str, Any]:
     """Coordinated shutdown ensuring data persistence."""
-    results: Dict[str, Any] = {}
-    
+    results: dict[str, Any] = {}
+
     # 1. Stop Recorder first (most critical for data)
     if session_dir and recorder_running(session_dir):
         append_lifecycle_event(session_dir, "shutdown_recorder_start", "Stopping recorder for cleanup")
@@ -400,10 +400,10 @@ async def atomic_shutdown(session_dir: Optional[str], wine_shutdown: bool = True
 
 
 def _restore_resume_state(
-    previous_session_dir: Optional[str],
+    previous_session_dir: str | None,
     target_dir: str,
-    previous_target_state: Optional[str],
-    previous_current_state: Optional[str],
+    previous_target_state: str | None,
+    previous_current_state: str | None,
 ) -> None:
     if previous_target_state:
         write_session_state(target_dir, previous_target_state)
@@ -419,8 +419,8 @@ def _transition_marker_path(session_dir: str) -> str:
     return os.path.join(session_dir, _TRANSITION_MARKER_FILE)
 
 
-def _write_transition_marker(session_dir: str, phase: str, extra: Optional[Dict[str, Any]] = None) -> None:
-    payload: Dict[str, Any] = {
+def _write_transition_marker(session_dir: str, phase: str, extra: dict[str, Any] | None = None) -> None:
+    payload: dict[str, Any] = {
         "phase": phase,
         "timestamp_epoch_ms": int(time.time() * 1000),
         "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -435,7 +435,7 @@ def _write_transition_marker(session_dir: str, phase: str, extra: Optional[Dict[
     os.replace(tmp_path, _transition_marker_path(session_dir))
 
 
-def _clear_transition_marker(session_dir: Optional[str]) -> None:
+def _clear_transition_marker(session_dir: str | None) -> None:
     if not session_dir:
         return
     path = _transition_marker_path(session_dir)
@@ -562,8 +562,8 @@ async def lifecycle_shutdown(
         progress=90,
     )
     schedule_shutdown(session_dir, delay, signal.SIGTERM)
-    
-    shutdown_payload: Dict[str, Any] = {
+
+    shutdown_payload: dict[str, Any] = {
         "status": "shutting_down",
         "delay_seconds": delay,
         "results": results
@@ -607,7 +607,7 @@ async def reset_workspace():
 
 
 @router.get("/sessions")
-def list_sessions(root: Optional[str] = None, limit: int = 100):
+def list_sessions(root: str | None = None, limit: int = 100):
     """List available sessions on disk."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be >= 1")
@@ -643,7 +643,7 @@ def list_sessions(root: Optional[str] = None, limit: int = 100):
         }
         if data["has_session_json"]:
             try:
-                with open(session_json, "r") as f:
+                with open(session_json) as f:
                     data["manifest"] = json.load(f)
             except Exception:
                 data["manifest"] = None
@@ -654,7 +654,7 @@ def list_sessions(root: Optional[str] = None, limit: int = 100):
 
 @router.post("/sessions/suspend")
 async def suspend_session(
-    data: Optional[SessionSuspendModel] = Body(default=None),
+    data: SessionSuspendModel | None = Body(default=None),
     allow_inactive: bool = False,
 ):
     """Suspend a session without terminating the container."""
@@ -698,7 +698,7 @@ async def suspend_session(
                     status_code=500,
                     detail=f"Failed to stop recording before suspend: {exc}",
                 )
-        wine_shutdown_result: Optional[Dict[str, Any]] = None
+        wine_shutdown_result: dict[str, Any] | None = None
         if data.shutdown_wine:
             wine_shutdown_result = graceful_wine_shutdown(session_dir)
             failing_steps = [
@@ -726,7 +726,7 @@ async def suspend_session(
             else "One-shot session completed",
             source="api",
         )
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "status": new_state,
             "session_dir": session_dir,
             "session_id": os.path.basename(session_dir),
@@ -750,7 +750,7 @@ async def suspend_session(
 
 
 @router.post("/sessions/resume")
-async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)):
+async def resume_session(data: SessionResumeModel | None = Body(default=None)):
     """Resume an existing session directory."""
     op_started = time.perf_counter()
     if data is None:
@@ -793,12 +793,12 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
         except HTTPException as exc:
             await fail_operation(operation_id, error=str(exc.detail))
             raise
-    
+
         # HARDENING: Verify artifact schema version compatibility
         session_json = os.path.join(target_dir, "session.json")
         if os.path.exists(session_json):
             try:
-                with open(session_json, "r") as f:
+                with open(session_json) as f:
                     manifest = json.load(f)
                     old_ver = manifest.get("schema_version", "1.0")
                     if float(old_ver) < float(ARTIFACT_SCHEMA_VERSION):
@@ -806,7 +806,7 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                         pass
                     elif float(old_ver) > float(ARTIFACT_SCHEMA_VERSION):
                         err = HTTPException(
-                            status_code=409, 
+                            status_code=409,
                             detail=f"Session version {old_ver} is newer than current build ({ARTIFACT_SCHEMA_VERSION})."
                         )
                         await fail_operation(operation_id, error=str(err.detail))
@@ -829,7 +829,7 @@ async def resume_session(data: Optional[SessionResumeModel] = Body(default=None)
                     atomic_shutdown(current_session, wine_shutdown=bool(data.restart_wine)),
                     timeout=config.WINEBOT_TIMEOUT_LIFECYCLE_SESSION_HANDOVER_SECONDS,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await fail_operation(
                     operation_id, error="handover shutdown timed out"
                 )

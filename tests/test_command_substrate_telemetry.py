@@ -1,12 +1,12 @@
-import json
 import asyncio
+import json
 
-from api.utils.process import safe_command, safe_async_command
 from api.core.session_context import bind_session_dir
+from api.utils.process import safe_async_command, safe_command
 
 
 def _read_events(path: str):
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         return [json.loads(line) for line in handle.read().splitlines() if line.strip()]
 
 

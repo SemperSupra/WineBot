@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Generate data for one fold. Args: fold fold_dir n_per_scene n_train scene1 scene2 ... (all scenes).
 First n_train scenes are training, rest are validation. No PyTorch imports."""
-import cv2, importlib.util, os, random, sys, time
+import importlib.util
+import os
+import random
+import sys
+import time
+
+import cv2
 
 sys.path.insert(0, os.path.dirname(__file__))
 from logging_utils import get_logger

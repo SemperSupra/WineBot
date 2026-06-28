@@ -12,9 +12,12 @@ Output:
   - Trained classifier at /models/state_classifier/
   - Accuracy report per scene type
 """
-import json, os, pickle, sys, time
+import json
+import os
+import pickle
+import sys
+import time
 from collections import Counter
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -101,7 +104,7 @@ def train_classifier(X_train: np.ndarray, y_train: np.ndarray):
 def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
              filenames: list, gt_lookup: dict) -> dict:
     """Evaluate classifier and return detailed results."""
-    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+    from sklearn.metrics import accuracy_score, confusion_matrix
 
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
@@ -128,7 +131,7 @@ def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
     }
 
     print(f"\n{'='*60}")
-    print(f"  State Classifier Results")
+    print("  State Classifier Results")
     print(f"  Accuracy: {acc*100:.1f}% ({len(y_test)} samples)")
     print(f"{'='*60}\n")
     print(f"  {'Scene Type':<25s} {'Accuracy':>10s} {'Samples':>8s}")
@@ -149,7 +152,7 @@ def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
     # Top confusions (use only the classes that appear in this eval)
     eval_classes = sorted(set(y_test) | set(y_pred))
     eval_labels = [SCENE_TYPES[i] for i in eval_classes if i < len(SCENE_TYPES)]
-    print(f"\n  Top Confusions:")
+    print("\n  Top Confusions:")
     confusion_list = []
     for i, ci in enumerate(eval_classes):
         for j, cj in enumerate(eval_classes):
@@ -232,7 +235,7 @@ def main():
             print(f"  Test embeddings: {X_test.shape}")
 
     # Train
-    print(f"\nTraining classifier...")
+    print("\nTraining classifier...")
     clf = train_classifier(X_train, y_train)
 
     # Evaluate

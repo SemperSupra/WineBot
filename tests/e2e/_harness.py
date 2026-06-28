@@ -1,8 +1,8 @@
 import time
-import requests
-from playwright.sync_api import Page, expect
 
+import requests
 from _auth import API_URL, auth_headers
+from playwright.sync_api import Page, expect
 
 
 def api_post(path: str, payload: dict | None = None, timeout: int = 15):

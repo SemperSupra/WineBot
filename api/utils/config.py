@@ -1,6 +1,5 @@
 import os
 import sys
-from typing import Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -17,7 +16,7 @@ class WineBotConfig(BaseModel):
     BUILD_INTENT: str = "rel"
 
     # Core
-    API_TOKEN: Optional[str] = None
+    API_TOKEN: str | None = None
     WINEBOT_LOG_LEVEL: str = Field(
         default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"
     )
@@ -38,8 +37,8 @@ class WineBotConfig(BaseModel):
 
     # Resources and policy controls
     WINEBOT_SESSION_ROOT: str = "/artifacts/sessions"
-    WINEBOT_MAX_SESSIONS: Optional[int] = None
-    WINEBOT_SESSION_TTL_DAYS: Optional[int] = None
+    WINEBOT_MAX_SESSIONS: int | None = None
+    WINEBOT_SESSION_TTL_DAYS: int | None = None
     WINEBOT_INSTANCE_MODE: str = LIFECYCLE_MODE_PERSISTENT
     WINEBOT_SESSION_MODE: str = LIFECYCLE_MODE_PERSISTENT
     WINEBOT_INSTANCE_CONTROL_MODE: str = CONTROL_MODE_HYBRID
@@ -66,8 +65,8 @@ class WineBotConfig(BaseModel):
 
     # Inactivity
     WINEBOT_INACTIVITY_PAUSE_SECONDS: int = 180
-    WINEBOT_INACTIVITY_PAUSE_SECONDS_HUMAN: Optional[int] = None
-    WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT: Optional[int] = None
+    WINEBOT_INACTIVITY_PAUSE_SECONDS_HUMAN: int | None = None
+    WINEBOT_INACTIVITY_PAUSE_SECONDS_AGENT: int | None = None
     WINEBOT_INACTIVITY_RESUME_ACTIVITY_SECONDS: int = 10
     WINEBOT_INACTIVITY_MIN_PAUSE_SECONDS: int = 15
     WINEBOT_INACTIVITY_RESUME_COOLDOWN_SECONDS: int = 10
@@ -76,9 +75,9 @@ class WineBotConfig(BaseModel):
     WINEBOT_PERF_METRICS_SAMPLE_SECONDS: int = 30
     WINEBOT_TELEMETRY: bool = True
     WINEBOT_TELEMETRY_LEVEL: str = "standard"
-    WINEBOT_TELEMETRY_FEATURES: Optional[str] = None
-    WINEBOT_TELEMETRY_CAPABILITIES: Optional[str] = None
-    WINEBOT_TELEMETRY_FEATURE_SETS: Optional[str] = None
+    WINEBOT_TELEMETRY_FEATURES: str | None = None
+    WINEBOT_TELEMETRY_CAPABILITIES: str | None = None
+    WINEBOT_TELEMETRY_FEATURE_SETS: str | None = None
     WINEBOT_TELEMETRY_SAMPLE_RATE: float = 1.0
     WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN: int = 600
 
@@ -122,7 +121,7 @@ def _parse_int(key: str, default: int) -> int:
         raise ValueError(f"{key} must be an integer") from exc
 
 
-def _parse_optional_int(key: str) -> Optional[int]:
+def _parse_optional_int(key: str) -> int | None:
     value = os.getenv(key)
     if value is None or not value.strip():
         return None

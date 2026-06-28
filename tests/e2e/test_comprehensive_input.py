@@ -1,10 +1,11 @@
-from playwright.sync_api import Page, expect
-import requests
-import time
-import json
 import glob
+import json
 import os
-from _auth import API_URL, auth_headers, ui_url, ensure_agent_control, ensure_openbox_running
+import time
+
+import requests
+from _auth import API_URL, auth_headers, ensure_agent_control, ensure_openbox_running, ui_url
+from playwright.sync_api import Page, expect
 
 
 class WineBotAPI:
@@ -188,7 +189,7 @@ def test_comprehensive_input(page: Page):
 
     for log_file in log_files:
         print(f"Reading log: {log_file}")
-        with open(log_file, "r") as f:
+        with open(log_file) as f:
             for line in f:
                 try:
                     event = json.loads(line)

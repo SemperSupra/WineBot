@@ -5,10 +5,9 @@
 
 import json
 import sys
-from typing import Dict, List, Set
 
 
-def analyze(log_path: str, start_frame: int = 0) -> Dict:
+def analyze(log_path: str, start_frame: int = 0) -> dict:
     """Parse watcher.jsonl and return issues found.
 
     Args:
@@ -16,7 +15,7 @@ def analyze(log_path: str, start_frame: int = 0) -> Dict:
         start_frame: 0 = auto-detect content start (first frame with >10Kpx change).
                      N > 0 = skip first N frames.
     """
-    snapshots: List[Dict] = []
+    snapshots: list[dict] = []
     with open(log_path) as f:
         for line in f:
             try:
@@ -115,7 +114,7 @@ def analyze(log_path: str, start_frame: int = 0) -> Dict:
 
     # Key events timeline
     events = []
-    last_windows: Set[str] = set()
+    last_windows: set[str] = set()
     for snap in snapshots:
         if snap.get("event") != "snapshot":
             continue
@@ -158,7 +157,7 @@ def main():
 
     s = report["summary"]
     print("=" * 70)
-    print(f"CV ANALYSIS REPORT")
+    print("CV ANALYSIS REPORT")
     print(f"  Frames: {s['total_frames']}")
     print(f"  Issues: {s['total_issues']} ({s['high_severity']} high, "
           f"{s['medium_severity']} medium, {s['low_severity']} low)")

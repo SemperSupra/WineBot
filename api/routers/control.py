@@ -1,21 +1,23 @@
-from fastapi import APIRouter, HTTPException
 import os
 import time
+
+from fastapi import APIRouter, HTTPException
+
 from api.core.broker import broker
+from api.core.config_guard import validate_runtime_configuration
 from api.core.models import (
+    ControlPolicyMode,
+    ControlPolicyModeModel,
     GrantControlModel,
     UserIntentModel,
-    ControlPolicyModeModel,
-    ControlPolicyMode,
 )
-from api.core.config_guard import validate_runtime_configuration
 from api.core.telemetry import emit_operation_timing
 from api.utils.files import (
+    read_session_control_mode,
     read_session_dir,
     resolve_session_dir,
-    read_session_control_mode,
-    write_session_control_mode,
     write_instance_control_mode,
+    write_session_control_mode,
 )
 
 router = APIRouter(prefix="/sessions", tags=["control"])

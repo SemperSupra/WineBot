@@ -4,18 +4,15 @@ Events with kind="chapter" are converted to FFmpeg's ffmetadata format
 and embedded into the MKV video container alongside subtitles.
 """
 
-import os
 import json
-from typing import List, Optional
-
-from .models import Event
+import os
 
 
 def generate_chapter_file(
     session_dir: str,
-    output_path: Optional[str] = None,
-    title: Optional[str] = None,
-) -> Optional[str]:
+    output_path: str | None = None,
+    title: str | None = None,
+) -> str | None:
     """Read annotation events and write an ffmetadata chapter file.
 
     Events with kind="chapter" become CHAPTER blocks. If no chapter events
@@ -58,7 +55,7 @@ def generate_chapter_file(
     return output_path
 
 
-def _read_events(session_dir: str) -> List[dict]:
+def _read_events(session_dir: str) -> list[dict]:
     """Read all events from the events JSONL file."""
     events_path = os.path.join(session_dir, "events.jsonl")
     if not os.path.exists(events_path):
@@ -69,8 +66,8 @@ def _read_events(session_dir: str) -> List[dict]:
         else:
             return []
 
-    items: List[dict] = []
-    with open(events_path, "r") as f:
+    items: list[dict] = []
+    with open(events_path) as f:
         for line in f:
             try:
                 items.append(json.loads(line))

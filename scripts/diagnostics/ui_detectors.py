@@ -25,13 +25,9 @@ Each detector returns identical structured output:
 
 import os
 import sys
-import subprocess
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-
 
 # ── Constants (tuned for Wine desktop at 1280x720) ────────────────────────────
 
@@ -90,7 +86,7 @@ class UIDetector:
         except Exception:
             pass
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         """Detect UI elements in a screenshot.
 
         Args:
@@ -102,7 +98,7 @@ class UIDetector:
         """
         raise NotImplementedError
 
-    def classify_ui_state(self, image: np.ndarray, elements: List[Dict]) -> str:
+    def classify_ui_state(self, image: np.ndarray, elements: list[dict]) -> str:
         """Classify overall UI state from detected elements."""
         types = {e["type"] for e in elements}
         if "dialog" in types:
@@ -147,7 +143,7 @@ class ContourDetector(UIDetector):
     def _is_interactive(self, elem_type: str) -> bool:
         return elem_type in ("button", "text_field", "menu_bar")
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         # Wine-specific preprocessing: CLAHE for softer Wine window borders
@@ -190,7 +186,7 @@ class ContourDetector(UIDetector):
 
         return elements
 
-    def _detect_taskbar(self, image: np.ndarray) -> List[Dict]:
+    def _detect_taskbar(self, image: np.ndarray) -> list[dict]:
         """Detect tint2 taskbar: dark ~30px bar at bottom of Wine desktop."""
         h, w = image.shape[:2]
         bottom_strip = image[h - 35:h, 0:w]
@@ -288,7 +284,7 @@ class YOLOUIDetector(UIDetector):
                               "icon", "clickable"}
         return cls_name.lower() in interactive_labels or elem_type in interactive_labels
 
-    def _classify_ui_type(self, cls_name: str, bbox: List[int], img_shape: Tuple) -> str:
+    def _classify_ui_type(self, cls_name: str, bbox: list[int], img_shape: tuple) -> str:
         """Map YOLO class to UI element type."""
         h, w = img_shape[:2]
         x, y, bw, bh = bbox
@@ -322,7 +318,7 @@ class YOLOUIDetector(UIDetector):
 
         return "interactable" if self._is_interactive(cls_name, "unknown") else "unknown"
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         model = self._load_model()
         if model is None:
             return []
@@ -426,7 +422,7 @@ class OmniParserDetector(UIDetector):
             return
 
         try:
-            from transformers import AutoProcessor, AutoModelForCausalLM
+            from transformers import AutoModelForCausalLM, AutoProcessor
 
             model_id = os.environ.get(
                 "FLORENCE_MODEL",
@@ -445,7 +441,7 @@ class OmniParserDetector(UIDetector):
             print(f"[omniparser] Florence-2 not available: {e}", file=sys.stderr)
             self._florence_available = False
 
-    def _caption_element(self, image: np.ndarray, bbox: List[int]) -> str:
+    def _caption_element(self, image: np.ndarray, bbox: list[int]) -> str:
         """Generate a functional caption for a UI element using Florence-2."""
         self._load_florence()
         if self._florence_model is None:
@@ -486,7 +482,7 @@ class OmniParserDetector(UIDetector):
         except Exception:
             return ""
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         """Full OmniParser pipeline: YOLO detection + Florence-2 captions."""
         model = self._load_yolo()
         if model is None:
@@ -615,7 +611,7 @@ class UIDETR1Detector(UIDetector):
         except ImportError:
             return False
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         model = self._load_model()
         if model is None:
             return []
@@ -654,7 +650,7 @@ class UIDETR1Detector(UIDetector):
 
         return elements
 
-    def _classify_ui_type(self, label: str, bbox: List[int], img_shape: tuple) -> str:
+    def _classify_ui_type(self, label: str, bbox: list[int], img_shape: tuple) -> str:
         """Classify UI element by geometry (UI-DETR-1 is class-agnostic)."""
         x, y, bw, bh = bbox
         h, w = img_shape[:2]
@@ -787,7 +783,7 @@ class ScreenParserDetector(UIDetector):
         self.available = False
         return None
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         model = self._load_model()
         if model is None:
             return []
@@ -981,7 +977,7 @@ class WineUIDetector(YOLOUIDetector):
         self.available = False
         return None
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         """Detect Wine-specific UI elements using fine-tuned YOLO."""
         model = self._load_model()
         if model is None:
@@ -1100,7 +1096,6 @@ class VLMGroundingDetector(UIDetector):
             )
             if os.path.isfile(gguf_path):
                 try:
-                    import llama_cpp
                     from llama_cpp import Llama
 
                     print(f"[vlm_ground] Loading GGUF from {gguf_path}...",
@@ -1112,7 +1107,7 @@ class VLMGroundingDetector(UIDetector):
                         verbose=False,
                     )
                     self._backend = "llama_cpp"
-                    print(f"[vlm_ground] GGUF model loaded (GPU layers: all)",
+                    print("[vlm_ground] GGUF model loaded (GPU layers: all)",
                           file=sys.stderr)
                     return
                 except Exception as e:
@@ -1121,8 +1116,8 @@ class VLMGroundingDetector(UIDetector):
         # Try transformers path
         if self._has_transformers:
             try:
-                from transformers import AutoProcessor, AutoModelForVision2Seq
                 from qwen_vl_utils import process_vision_info
+                from transformers import AutoModelForVision2Seq, AutoProcessor
 
                 model_dir = os.environ.get(
                     "VLM_MODEL_DIR",
@@ -1171,10 +1166,10 @@ class VLMGroundingDetector(UIDetector):
 
         self.available = False
         print("[vlm_ground] No VLM backend available. Download model to "
-              f"/models/vlm/ or install llama-cpp-python/transformers",
+              "/models/vlm/ or install llama-cpp-python/transformers",
               file=sys.stderr)
 
-    def ground(self, image: np.ndarray, query: str) -> Optional[Dict]:
+    def ground(self, image: np.ndarray, query: str) -> dict | None:
         """Ground a natural language query to a specific UI element.
 
         Args:
@@ -1197,7 +1192,7 @@ class VLMGroundingDetector(UIDetector):
             return self._ground_transformers(image, query)
         return None
 
-    def _ground_llama_cpp(self, image: np.ndarray, query: str) -> Optional[Dict]:
+    def _ground_llama_cpp(self, image: np.ndarray, query: str) -> dict | None:
         """Use llama-cpp-python with GGUF-quantized model."""
         import base64
 
@@ -1226,7 +1221,7 @@ class VLMGroundingDetector(UIDetector):
 
         return self._parse_grounding_response(text, query)
 
-    def _ground_transformers(self, image: np.ndarray, query: str) -> Optional[Dict]:
+    def _ground_transformers(self, image: np.ndarray, query: str) -> dict | None:
         """Use transformers with full BF16 model."""
         import torch
         from qwen_vl_utils import process_vision_info
@@ -1273,7 +1268,7 @@ class VLMGroundingDetector(UIDetector):
 
         return self._parse_grounding_response(response, query)
 
-    def _parse_grounding_response(self, text: str, query: str) -> Optional[Dict]:
+    def _parse_grounding_response(self, text: str, query: str) -> dict | None:
         """Parse model output for bounding box coordinates.
 
         Handles common output formats:
@@ -1282,7 +1277,6 @@ class VLMGroundingDetector(UIDetector):
           - JSON-like: {"bbox": [x1, y1, x2, y2]}
         """
         import re
-        import json
 
         # Try to extract coordinates
         # Pattern 1: [number, number, number, number]
@@ -1326,7 +1320,7 @@ class VLMGroundingDetector(UIDetector):
               file=sys.stderr)
         return {"label": query, "confidence": 0.3, "raw_response": text}
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray) -> list[dict]:
         """VLM grounding is query-driven — detect() returns empty.
 
         Use ground(image, query) for natural-language element finding.
@@ -1336,10 +1330,10 @@ class VLMGroundingDetector(UIDetector):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-_ui_detector: Optional[UIDetector] = None
+_ui_detector: UIDetector | None = None
 
 
-def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
+def get_ui_detector(backend: str | None = None) -> UIDetector:
     """Get or create the configured UI element detector.
 
     Args:
@@ -1356,44 +1350,44 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
     if backend == "omniparser":
         _ui_detector = OmniParserDetector()
         if not _ui_detector.available:
-            print(f"[ui] OmniParser requested but YOLO not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] OmniParser requested but YOLO not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "yolo":
         _ui_detector = YOLOUIDetector()
         if not _ui_detector.available:
-            print(f"[ui] YOLO requested but ultralytics not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] YOLO requested but ultralytics not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "uidetr1":
         _ui_detector = UIDETR1Detector()
         if not _ui_detector.available:
-            print(f"[ui] UI-DETR-1 requested but rfdetr not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] UI-DETR-1 requested but rfdetr not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "screenparser":
         _ui_detector = ScreenParserDetector()
         if not _ui_detector.available:
-            print(f"[ui] ScreenParser requested but not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] ScreenParser requested but not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "screenparser_wine":
         _ui_detector = ScreenParserWineDetector()
         if not _ui_detector.available:
-            print(f"[ui] ScreenParser Wine requested but not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] ScreenParser Wine requested but not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "wine":
         _ui_detector = WineUIDetector()
         if not _ui_detector.available:
-            print(f"[ui] Wine fine-tuned requested but not available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] Wine fine-tuned requested but not available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     elif backend == "vlm_ground":
         _ui_detector = VLMGroundingDetector()
         if not _ui_detector.available:
-            print(f"[ui] VLM grounding requested but no backend available, "
-                  f"falling back to contour", file=sys.stderr)
+            print("[ui] VLM grounding requested but no backend available, "
+                  "falling back to contour", file=sys.stderr)
             _ui_detector = ContourDetector()
     else:
         _ui_detector = ContourDetector()
@@ -1401,7 +1395,7 @@ def get_ui_detector(backend: Optional[str] = None) -> UIDetector:
     return _ui_detector
 
 
-def available_detectors() -> Dict[str, bool]:
+def available_detectors() -> dict[str, bool]:
     """Return dict of detector name -> available."""
     return {
         "contour": ContourDetector().available,

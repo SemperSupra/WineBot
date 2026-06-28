@@ -1,28 +1,28 @@
-from fastapi import APIRouter, HTTPException
-from typing import Optional
 import os
 import shutil
 import subprocess
-import uuid
 import time
-from api.utils.files import (
-    validate_path,
-    to_wine_path,
-    read_session_dir,
-)
-from api.utils.process import safe_command, manage_process, ProcessCapacityError
+import uuid
+
+from fastapi import APIRouter, HTTPException
+
+from api.core.broker import broker
 from api.core.models import (
-    AppRunModel,
-    InspectWindowModel,
-    FocusModel,
     AHKModel,
+    AppRunModel,
     AutoItModel,
+    FocusModel,
+    InspectWindowModel,
     PythonScriptModel,
 )
-from api.core.broker import broker
 from api.core.telemetry import emit_operation_timing
 from api.utils.config import config
-
+from api.utils.files import (
+    read_session_dir,
+    to_wine_path,
+    validate_path,
+)
+from api.utils.process import ProcessCapacityError, manage_process, safe_command
 
 router = APIRouter(tags=["automation"])
 
@@ -284,14 +284,14 @@ async def run_python(data: PythonScriptModel):
 
 
 @router.get("/screenshot")
-async def take_screenshot(output_dir: Optional[str] = None):
+async def take_screenshot(output_dir: str | None = None):
     """Capture a screenshot of the current X11 display."""
     session_dir = read_session_dir()
     target_dir = output_dir or (
         os.path.join(session_dir, "screenshots") if session_dir else "/tmp"
     )
     os.makedirs(target_dir, exist_ok=True)
-    
+
     # Correctness: Enforce screenshot cap per session
     if session_dir and target_dir.startswith(session_dir):
         max_shots = int(os.getenv("WINEBOT_MAX_SCREENSHOTS_PER_SESSION", "1000"))
@@ -299,7 +299,7 @@ async def take_screenshot(output_dir: Optional[str] = None):
             count = len([f for f in os.listdir(target_dir) if f.endswith(".png")])
             if count >= max_shots:
                 raise HTTPException(
-                    status_code=429, 
+                    status_code=429,
                     detail=f"Screenshot cap ({max_shots}) reached for this session."
                 )
         except OSError:

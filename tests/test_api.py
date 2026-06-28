@@ -1,8 +1,10 @@
-from fastapi.testclient import TestClient
-from api.server import app
-from unittest.mock import patch, AsyncMock
 import os
+from unittest.mock import AsyncMock, patch
+
 import pytest
+from fastapi.testclient import TestClient
+
+from api.server import app
 
 client = TestClient(app)
 
@@ -141,14 +143,13 @@ def test_run_app(mock_validate, mock_run, auth_headers):
         with patch(
             "api.routers.automation.broker.check_access",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routers.automation.broker.report_agent_activity",
+            new=AsyncMock(),
         ):
-            with patch(
-                "api.routers.automation.broker.report_agent_activity",
-                new=AsyncMock(),
-            ):
-                response = client.post(
-                    "/apps/run", json={"path": "/apps/test.exe"}, headers=auth_headers
-                )
+            response = client.post(
+                "/apps/run", json={"path": "/apps/test.exe"}, headers=auth_headers
+            )
         # Router returns 200 with status: finished
         assert response.status_code == 200
         assert response.json()["status"] == "finished"
@@ -163,14 +164,13 @@ def test_run_app_invalid_path(mock_validate, auth_headers):
         with patch(
             "api.routers.automation.broker.check_access",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routers.automation.broker.report_agent_activity",
+            new=AsyncMock(),
         ):
-            with patch(
-                "api.routers.automation.broker.report_agent_activity",
-                new=AsyncMock(),
-            ):
-                response = client.post(
-                    "/apps/run", json={"path": "/etc/passwd"}, headers=auth_headers
-                )
+            response = client.post(
+                "/apps/run", json={"path": "/etc/passwd"}, headers=auth_headers
+            )
 
         assert response.status_code == 400
 

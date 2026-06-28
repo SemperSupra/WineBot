@@ -21,13 +21,10 @@ Exit codes:
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List
-
 
 # Check if Tesseract is available
 try:
@@ -54,20 +51,20 @@ class BatchAnalyzer:
 
         self.frame_interval = frame_interval
         self.mode = mode
-        self.results: Dict[str, Dict] = {}
+        self.results: dict[str, dict] = {}
 
         # Locate cv-test-runner.py
         script_dir = Path(__file__).resolve().parent
         self.runner_script = script_dir / "cv-test-runner.py"
 
-    def find_videos(self) -> List[Path]:
+    def find_videos(self) -> list[Path]:
         """Find all .mkv files in input directory."""
         videos = sorted(self.input_dir.glob("*.mkv"))
         # Filter out _part files
         videos = [v for v in videos if "_part" not in v.stem]
         return videos
 
-    def _run_one(self, video: Path, out_dir: Path) -> Dict:
+    def _run_one(self, video: Path, out_dir: Path) -> dict:
         """Run cv-test-runner.py on a single video, return parsed summary."""
         cmd = [
             sys.executable, str(self.runner_script),
@@ -91,7 +88,7 @@ class BatchAnalyzer:
                 return json.load(f)
         return {"error": "no summary generated", "video": str(video)}
 
-    def run(self) -> Dict:
+    def run(self) -> dict:
         """Run CV analysis on all videos, return unified report."""
         videos = self.find_videos()
         if not videos:
@@ -102,7 +99,7 @@ class BatchAnalyzer:
             print(f"ERROR: Runner script not found: {self.runner_script}")
             return {"error": "runner_missing"}
 
-        print(f"CV Batch Analyzer")
+        print("CV Batch Analyzer")
         print(f"  Input:  {self.input_dir}")
         print(f"  Videos: {len(videos)}")
         print(f"  Mode:   {self.mode}")
@@ -145,7 +142,7 @@ class BatchAnalyzer:
 
         return report
 
-    def _build_report(self, elapsed_s: float) -> Dict:
+    def _build_report(self, elapsed_s: float) -> dict:
         total_frames = 0
         total_warnings = 0
         total_targets = 0
@@ -203,7 +200,7 @@ class BatchAnalyzer:
             "per_video": per_video,
         }
 
-    def _print_summary(self, report: Dict):
+    def _print_summary(self, report: dict):
         s = report["batch_summary"]
         print()
         print("=" * 70)

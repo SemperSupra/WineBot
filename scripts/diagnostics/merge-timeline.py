@@ -16,10 +16,8 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 
 class TimelineMerger:
@@ -34,14 +32,14 @@ class TimelineMerger:
         self.manifest = self._load_manifest()
         self.start_epoch = float(self.manifest.get("start_time_epoch", 0))
 
-    def _load_manifest(self) -> Dict:
+    def _load_manifest(self) -> dict:
         path = self.session_dir / "session.json"
         if path.exists():
             with open(path) as f:
                 return json.load(f)
         return {}
 
-    def _read_jsonl(self, path: Path) -> List[Dict]:
+    def _read_jsonl(self, path: Path) -> list[dict]:
         if not path.exists():
             return []
         events = []
@@ -56,7 +54,7 @@ class TimelineMerger:
                     continue
         return events
 
-    def _time_ms(self, event: Dict) -> Optional[float]:
+    def _time_ms(self, event: dict) -> float | None:
         """Extract relative time in ms from an event."""
         # Standard event format
         if "t_rel_ms" in event:
@@ -72,7 +70,7 @@ class TimelineMerger:
 
         return None
 
-    def _normalize_recording_event(self, event: Dict) -> Optional[Dict]:
+    def _normalize_recording_event(self, event: dict) -> dict | None:
         """Convert recording event to unified format."""
         if event.get("event") == "snapshot":
             return None  # cv-watcher events handled separately
@@ -91,7 +89,7 @@ class TimelineMerger:
             "extra": event.get("extra", {}),
         }
 
-    def _normalize_api_event(self, event: Dict) -> Optional[Dict]:
+    def _normalize_api_event(self, event: dict) -> dict | None:
         """Convert API/input event to unified format."""
         # API events have: event, phase, tool, timestamp_epoch_ms, trace_id
         # Trace events have: type, layer, timestamp_epoch_ms
@@ -128,7 +126,7 @@ class TimelineMerger:
                                    "t_wall_ms", "t_mono_ms", "event_id", "seq")},
         }
 
-    def _normalize_cv_event(self, snapshot: Dict) -> Optional[Dict]:
+    def _normalize_cv_event(self, snapshot: dict) -> dict | None:
         """Convert CV watcher snapshot to unified format."""
         if snapshot.get("event") != "snapshot":
             return None
@@ -148,7 +146,7 @@ class TimelineMerger:
             "index": snapshot.get("index", 0),
         }
 
-    def _normalize_trace_event(self, event: Dict) -> Optional[Dict]:
+    def _normalize_trace_event(self, event: dict) -> dict | None:
         """Convert input trace event to unified format."""
         ts_epoch = event.get("timestamp_epoch_ms", 0)
         if ts_epoch and self.start_epoch > 0:
@@ -181,7 +179,7 @@ class TimelineMerger:
 
     def merge(self) -> str:
         """Merge all sources and write timeline.jsonl."""
-        timeline: List[Dict] = []
+        timeline: list[dict] = []
 
         # 1. Recording events
         recording_events = self._read_jsonl(self.session_dir / "events_001.jsonl")

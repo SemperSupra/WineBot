@@ -14,13 +14,17 @@ JSON output format:
     {"ts": "2026-06-28T12:34:56Z", "level": "info", "logger": "my-script",
      "message": "...", "elapsed_s": 123.4, "details": {...}}
 """
-import json, os, sys, time, traceback
-from datetime import datetime, timezone
-from typing import Any, Optional
+import json
+import os
+import sys
+import time
+import traceback
+from datetime import UTC, datetime
+from typing import Any
 
 
 def _timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _write_json(entry: dict):
@@ -36,7 +40,7 @@ class StructuredLogger:
 
     def __init__(self, name: str):
         self.name = name
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
         self._step_times: dict[str, float] = {}
 
     def _log(self, level: str, message: str, **kwargs):

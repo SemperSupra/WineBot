@@ -1,21 +1,22 @@
 import time
-from playwright.sync_api import Page, expect
-from _auth import get_token, ui_url, ensure_agent_control, ensure_openbox_running
+
+from _auth import ensure_agent_control, ensure_openbox_running, get_token, ui_url
 from _harness import api_post, wait_badge_text, wait_poll_interval
+from playwright.sync_api import Page, expect
 
 
 def auth_page(page: Page):
     token = get_token()
     # Go directly to dashboard with token
     url = ui_url()
-    
+
     # Trace the constructed URL (redacting token)
     safe_url = url
     if token:
         safe_url = url.replace(token, "REDACTED")
     print(f"--> [DEBUG] get_token() returned length: {len(token) if token else 0}")
     print(f"--> [DEBUG] auth_page: Navigating to {safe_url}")
-    
+
     page.goto(url)
     # Wait for the explicit 'ready' marker added to index.html.
     # It is intentionally hidden (display:none), so we wait for attachment.

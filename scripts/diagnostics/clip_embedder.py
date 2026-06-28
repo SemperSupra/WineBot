@@ -22,7 +22,6 @@ Usage:
 
 import os
 import sys
-from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -74,7 +73,7 @@ class CLIPSceneEmbedder:
         txt_emb = self.embed_text(text)
         return float(np.dot(img_emb, txt_emb))
 
-    def classify(self, image: np.ndarray, labels: List[str]) -> Dict[str, float]:
+    def classify(self, image: np.ndarray, labels: list[str]) -> dict[str, float]:
         """Zero-shot classification: which label best describes this image?
 
         Args:
@@ -100,7 +99,7 @@ class CLIPSceneEmbedder:
 
         return {label: round(float(p), 4) for label, p in zip(labels, probs)}
 
-    def embed_batch(self, images: List[np.ndarray]) -> np.ndarray:
+    def embed_batch(self, images: list[np.ndarray]) -> np.ndarray:
         """Embed multiple images efficiently.
 
         Args:
@@ -156,8 +155,8 @@ class OpenCLIPEmbedder(CLIPSceneEmbedder):
         if self._model is not None:
             return
 
-        import torch
         import open_clip
+        import torch
 
         # Determine device
         if torch.cuda.is_available():
@@ -209,8 +208,8 @@ class OpenCLIPEmbedder(CLIPSceneEmbedder):
         if self._model is None:
             return np.zeros(self.dim, dtype=np.float32)
 
-        import torch
         import open_clip
+        import torch
 
         tokens = open_clip.tokenize([text])
         tokens = tokens.to(self._device)
@@ -221,7 +220,7 @@ class OpenCLIPEmbedder(CLIPSceneEmbedder):
 
         return features.cpu().numpy().flatten().astype(np.float32)
 
-    def embed_batch(self, images: List[np.ndarray]) -> np.ndarray:
+    def embed_batch(self, images: list[np.ndarray]) -> np.ndarray:
         """Batch image embedding (GPU-efficient)."""
         self._load_model()
         if self._model is None or not images:
@@ -287,8 +286,8 @@ class SigLIP2Embedder(CLIPSceneEmbedder):
         if self._model is not None:
             return
 
-        import torch
         import open_clip
+        import torch
 
         if torch.cuda.is_available():
             self._device = "cuda"
@@ -346,8 +345,8 @@ class SigLIP2Embedder(CLIPSceneEmbedder):
         if self._model is None:
             return np.zeros(self.dim, dtype=np.float32)
 
-        import torch
         import open_clip
+        import torch
 
         tokens = open_clip.tokenize([text])
         tokens = tokens.to(self._device)
@@ -358,7 +357,7 @@ class SigLIP2Embedder(CLIPSceneEmbedder):
 
         return features.cpu().numpy().flatten().astype(np.float32)
 
-    def embed_batch(self, images: List[np.ndarray]) -> np.ndarray:
+    def embed_batch(self, images: list[np.ndarray]) -> np.ndarray:
         self._load_model()
         if self._model is None or not images:
             return np.zeros((len(images), self.dim), dtype=np.float32)
@@ -497,10 +496,10 @@ class ONNXCLIPEmbedder(CLIPSceneEmbedder):
 
 # ── Factory ────────────────────────────────────────────────────────────────────
 
-_clip_embedder: Optional[CLIPSceneEmbedder] = None
+_clip_embedder: CLIPSceneEmbedder | None = None
 
 
-def get_clip_embedder(backend: Optional[str] = None) -> CLIPSceneEmbedder:
+def get_clip_embedder(backend: str | None = None) -> CLIPSceneEmbedder:
     """Get or create the configured CLIP scene embedder.
 
     Args:

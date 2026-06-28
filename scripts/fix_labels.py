@@ -9,7 +9,6 @@ This script reads all existing .txt files, clamps values to [0, 1],
 and rewrites them in place. Also prunes zero-area boxes.
 """
 import os
-import sys
 
 DATASET_DIRS = [
     "/models/wine-dataset-10k/train/labels",

@@ -1,6 +1,6 @@
 import json
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 try:
     from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
@@ -18,8 +18,8 @@ class SessionManifest:
     display: str
     resolution: str
     fps: int
-    recording_timeline_id: Optional[str] = None
-    git_sha: Optional[str] = None
+    recording_timeline_id: str | None = None
+    git_sha: str | None = None
     schema_version: str = ARTIFACT_SCHEMA_VERSION
 
     def to_json(self):
@@ -40,11 +40,11 @@ class Event:
     level: str  # INFO, WARN, ERROR, DEBUG
     kind: str  # lifecycle, annotation, process, error
     message: str
-    pos: Optional[Dict[str, int]] = None  # x, y, w, h
-    style: Optional[Dict[str, str]] = None
-    tags: List[str] = field(default_factory=list)
-    source: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    pos: dict[str, int] | None = None  # x, y, w, h
+    style: dict[str, str] | None = None
+    tags: list[str] = field(default_factory=list)
+    source: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
     schema_version: str = EVENT_SCHEMA_VERSION
 
     def to_json(self):

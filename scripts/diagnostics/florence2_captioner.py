@@ -21,7 +21,6 @@ Usage:
 
 import os
 import sys
-from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -57,8 +56,8 @@ class Florence2Captioner:
         """
         raise NotImplementedError
 
-    def caption_batch(self, images: List[np.ndarray],
-                       style: str = "detailed") -> List[str]:
+    def caption_batch(self, images: list[np.ndarray],
+                       style: str = "detailed") -> list[str]:
         """Generate captions for multiple frames."""
         return [self.caption(img, style) for img in images]
 
@@ -81,7 +80,7 @@ class Florence2TransformersCaptioner(Florence2Captioner):
     # Stable model identifier (Florence-2-base is the standard)
     MODEL_ID = "microsoft/Florence-2-base"
 
-    def __init__(self, lora_adapter: Optional[str] = None):
+    def __init__(self, lora_adapter: str | None = None):
         """
         Args:
             lora_adapter: Path to LoRA adapter weights
@@ -114,7 +113,7 @@ class Florence2TransformersCaptioner(Florence2Captioner):
             return
 
         import torch
-        from transformers import AutoProcessor, AutoModelForCausalLM
+        from transformers import AutoModelForCausalLM, AutoProcessor
 
         if torch.cuda.is_available():
             self._device = "cuda"
@@ -235,10 +234,10 @@ class Florence2TransformersCaptioner(Florence2Captioner):
 
 # ── Factory ────────────────────────────────────────────────────────────────────
 
-_florence2_captioner: Optional[Florence2Captioner] = None
+_florence2_captioner: Florence2Captioner | None = None
 
 
-def get_captioner(backend: Optional[str] = None) -> Florence2Captioner:
+def get_captioner(backend: str | None = None) -> Florence2Captioner:
     """Get or create the configured Florence-2 captioner.
 
     Args:

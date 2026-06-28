@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 from api.core.models import ControlMode
 from api.core.monitor import (
-    resolve_inactivity_pause_seconds,
     manual_pause_locked,
+    resolve_inactivity_pause_seconds,
     set_manual_pause_lock,
 )
 from api.utils.files import append_performance_metric, performance_metrics_log_path
@@ -51,7 +51,7 @@ def test_append_performance_metric_writes_jsonl(tmp_path):
     )
 
     path = performance_metrics_log_path(str(session_dir))
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         payload = json.loads(handle.read().strip())
     assert payload["event"] == "performance_metric"
     assert payload["metric"] == "recording.api_pause.latency"

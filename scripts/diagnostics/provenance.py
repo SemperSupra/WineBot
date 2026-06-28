@@ -21,9 +21,9 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass
@@ -45,7 +45,7 @@ class ModelProvenance:
     # Fingerprinting timestamp
     fingerprinted_at: str = ""         # ISO 8601
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @property
@@ -62,9 +62,9 @@ class RuntimeProvenance:
     git_branch: str = ""
     docker_image: str = ""
     python_version: str = ""
-    key_packages: Dict[str, str] = field(default_factory=dict)
+    key_packages: dict[str, str] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -72,13 +72,13 @@ class RuntimeProvenance:
 class PipelineProvenance:
     """Complete provenance for one inference result."""
     # What model was used
-    model: Optional[ModelProvenance] = None
+    model: ModelProvenance | None = None
 
     # What runtime
-    runtime: Optional[RuntimeProvenance] = None
+    runtime: RuntimeProvenance | None = None
 
     # Which backends were active
-    pipeline_backends: Dict[str, str] = field(default_factory=dict)
+    pipeline_backends: dict[str, str] = field(default_factory=dict)
     # e.g., {"ui_detector": "wine", "ocr_backend": "tesseract",
     #        "vlm_backend": "ollama", "captioner": "florence2"}
 
@@ -86,7 +86,7 @@ class PipelineProvenance:
     inference_ms: float = 0.0
     timestamp_utc: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = {
             "model": self.model.to_dict() if self.model else None,
             "runtime": self.runtime.to_dict() if self.runtime else None,
@@ -113,7 +113,7 @@ class PipelineProvenance:
 
 
 def fingerprint_ollama_model(host: str, model_name: str,
-                              timeout: int = 10) -> Optional[ModelProvenance]:
+                              timeout: int = 10) -> ModelProvenance | None:
     """Query an Ollama server for model identity and content hash.
 
     Uses POST /api/show to get the model's modelfile, parameters,
@@ -128,9 +128,9 @@ def fingerprint_ollama_model(host: str, model_name: str,
         ModelProvenance, or None if the server is unreachable or
         the model doesn't exist.
     """
-    import urllib.request
-    import urllib.error
     import re
+    import urllib.error
+    import urllib.request
 
     try:
         body = json.dumps({"name": model_name}).encode("utf-8")
@@ -158,7 +158,7 @@ def fingerprint_ollama_model(host: str, model_name: str,
             model_format=details.get("format", ""),
             quantization=details.get("quantization_level", "BF16"),
             ollama_host=host,
-            fingerprinted_at=datetime.now(timezone.utc).isoformat(),
+            fingerprinted_at=datetime.now(UTC).isoformat(),
         )
 
     except urllib.error.HTTPError as e:
@@ -175,7 +175,7 @@ def fingerprint_ollama_model(host: str, model_name: str,
         return None
 
 
-def get_git_commit(repo_path: Optional[str] = None) -> str:
+def get_git_commit(repo_path: str | None = None) -> str:
     """Get the current git commit hash.
 
     Tries: env var WINEBOT_GIT_COMMIT > git rev-parse > "unknown".

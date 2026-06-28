@@ -1,7 +1,8 @@
-import pytest
 import os
 import subprocess
+
 import httpx
+import pytest
 
 
 def test_environment_variables():

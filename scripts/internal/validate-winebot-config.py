@@ -4,7 +4,6 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -21,11 +20,11 @@ def _strip_shell_quotes(raw: str) -> str:
     return value
 
 
-def parse_env_file(path: str) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def parse_env_file(path: str) -> dict[str, str]:
+    out: dict[str, str] = {}
     if not path or not os.path.exists(path):
         return out
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -83,7 +82,7 @@ def main() -> int:
     use_case_profile = merged.get("WINEBOT_USE_CASE_PROFILE", "")
     performance_profile = merged.get("WINEBOT_PERFORMANCE_PROFILE", "")
 
-    errors: List[str] = validate_runtime_configuration(
+    errors: list[str] = validate_runtime_configuration(
         runtime_mode=runtime_mode,
         instance_lifecycle_mode=instance_lifecycle_mode,
         session_lifecycle_mode=session_lifecycle_mode,

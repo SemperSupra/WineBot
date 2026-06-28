@@ -1,16 +1,24 @@
-from fastapi import APIRouter, HTTPException, Body
-from typing import Optional, Dict, List
 import asyncio
+import json
 import os
 import subprocess
 import time
 import uuid
-import json
+
+from fastapi import APIRouter, Body, HTTPException
+
+from api.core import monitor as recording_monitor
 from api.core.models import (
-    RecordingStartModel,
     RecorderState,
     RecordingActionResponse,
+    RecordingStartModel,
     RecordingStartResponse,
+)
+from api.core.operations import (
+    complete_operation,
+    create_operation,
+    fail_operation,
+    heartbeat_operation,
 )
 from api.core.recorder import (
     recorder_lock,
@@ -19,33 +27,26 @@ from api.core.recorder import (
     write_recorder_state,
 )
 from api.core.telemetry import emit_operation_timing
-from api.core import monitor as recording_monitor
+from api.utils.config import config
 from api.utils.files import (
-    read_session_dir,
-    resolve_session_dir,
-    ensure_session_subdirs,
-    write_session_dir,
-    write_session_manifest,
-    ensure_recording_timeline_id,
-    write_recording_artifact_manifest,
     enforce_recording_retention,
-    write_session_mode,
-    write_session_control_mode,
-    write_session_state,
+    ensure_recording_timeline_id,
+    ensure_session_subdirs,
+    next_segment_index,
+    performance_metrics_log_path,
+    read_pid,
+    read_session_dir,
     read_session_mode,
     read_session_state,
-    next_segment_index,
-    read_pid,
-    performance_metrics_log_path,
+    resolve_session_dir,
+    write_recording_artifact_manifest,
+    write_session_control_mode,
+    write_session_dir,
+    write_session_manifest,
+    write_session_mode,
+    write_session_state,
 )
-from api.utils.process import manage_process, run_async_command, ProcessCapacityError
-from api.utils.config import config
-from api.core.operations import (
-    create_operation,
-    heartbeat_operation,
-    complete_operation,
-    fail_operation,
-)
+from api.utils.process import ProcessCapacityError, manage_process, run_async_command
 
 router = APIRouter(prefix="/recording", tags=["recording"])
 
@@ -59,7 +60,7 @@ def set_manual_pause_lock(session_dir: str, locked: bool) -> None:
         maybe_fn(session_dir, locked)
 
 
-def _int_env(name: str, default: int, minimum: int = 0, maximum: Optional[int] = None) -> int:
+def _int_env(name: str, default: int, minimum: int = 0, maximum: int | None = None) -> int:
     raw = os.getenv(name, "").strip()
     try:
         value = int(raw) if raw else default
@@ -75,14 +76,14 @@ def _action_response(
     *,
     action: str,
     status: str,
-    recording_timeline_id: Optional[str] = None,
-    session_dir: Optional[str] = None,
-    operation_id: Optional[str] = None,
+    recording_timeline_id: str | None = None,
+    session_dir: str | None = None,
+    operation_id: str | None = None,
     converged: bool = True,
-    warning: Optional[str] = None,
-) -> Dict[str, object]:
+    warning: str | None = None,
+) -> dict[str, object]:
     """Return a normalized action payload while preserving legacy status values."""
-    payload: Dict[str, object] = {
+    payload: dict[str, object] = {
         "action": action,
         "status": status,
         "result": "converged" if converged else "accepted",
@@ -108,7 +109,7 @@ def parse_resolution(screen: str) -> str:
     return screen
 
 
-def generate_session_id(label: Optional[str]) -> str:
+def generate_session_id(label: str | None) -> str:
     ts = int(time.time())
     date_prefix = time.strftime("%Y-%m-%d", time.gmtime(ts))
     rand = uuid.uuid4().hex[:6]
@@ -123,7 +124,7 @@ def generate_session_id(label: Optional[str]) -> str:
 
 
 @router.post("/start", response_model=RecordingStartResponse, response_model_exclude_none=True)
-async def start_recording(data: Optional[RecordingStartModel] = Body(default=None)):
+async def start_recording(data: RecordingStartModel | None = Body(default=None)):
     """Start a recording session."""
     op_started = time.perf_counter()
     if os.getenv("WINEBOT_RECORD", "0") != "1":
@@ -135,12 +136,12 @@ async def start_recording(data: Optional[RecordingStartModel] = Body(default=Non
     operation_id = await create_operation(
         "recording_start", session_dir=session_dir_hint, metadata={}
     )
-    recording_timeline_id: Optional[str] = None
+    recording_timeline_id: str | None = None
     async with recorder_lock:
         if data is None:
             data = RecordingStartModel()
         current_session = read_session_dir()
-        
+
         if current_session and recorder_running(current_session):
             recording_timeline_id = ensure_recording_timeline_id(current_session)
             if recorder_state(current_session) == RecorderState.PAUSED.value:
@@ -817,11 +818,11 @@ async def resume_recording():
 
 @router.get("/perf/summary")
 def recording_performance_summary(
-    session_id: Optional[str] = None,
-    session_dir: Optional[str] = None,
-    session_root: Optional[str] = None,
+    session_id: str | None = None,
+    session_dir: str | None = None,
+    session_root: str | None = None,
 ):
-    target_dir: Optional[str] = None
+    target_dir: str | None = None
     if session_id or session_dir:
         target_dir = resolve_session_dir(session_id, session_dir, session_root)
         if not os.path.isdir(target_dir):
@@ -856,11 +857,11 @@ def recording_performance_summary(
             "max_ms": round(vals[-1], 3),
         }
 
-    metrics: Dict[str, List[float]] = {}
+    metrics: dict[str, list[float]] = {}
     line_count = 0
     parse_errors = 0
     try:
-        with open(log_path, "r", encoding="utf-8") as handle:
+        with open(log_path, encoding="utf-8") as handle:
             for raw in handle:
                 line_count += 1
                 line = raw.strip()
@@ -902,8 +903,8 @@ def recording_health():
     Returns recorder status, PID, video stats, and uptime.
     Used by compose health checks and sidecar monitoring (winebot-cv).
     """
-    from api.utils.files import read_pid as _read_pid, recorder_running, recorder_state
-    from api.core.models import RecorderState
+    from api.utils.files import read_pid as _read_pid
+    from api.utils.files import recorder_running, recorder_state
 
     session_dir = read_session_dir()
     enabled = os.getenv("WINEBOT_RECORD", "0") == "1"

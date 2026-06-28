@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # EXECUTION: HOST — Playwright browser automation against WineBot API
-import sys
 import os
+import sys
+
 from playwright.sync_api import sync_playwright
+
 
 def main():
     api_url = os.environ.get("API_URL", "http://localhost:8000")

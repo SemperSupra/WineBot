@@ -10,7 +10,6 @@ import sys
 import time
 
 import cv2
-import numpy as np
 
 
 def build_index_for_split(split_name: str, frames_dir: str, index_dir: str,

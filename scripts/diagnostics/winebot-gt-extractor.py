@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 
 
 def extract_windows_from_watcher(watcher_path: str) -> dict:
@@ -24,7 +23,7 @@ def extract_windows_from_watcher(watcher_path: str) -> dict:
     if not os.path.exists(watcher_path):
         return frames
 
-    with open(watcher_path, "r") as f:
+    with open(watcher_path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -59,7 +58,7 @@ def extract_commands_from_interaction_log(log_path: str) -> list:
     if not os.path.exists(log_path):
         return commands
 
-    with open(log_path, "r") as f:
+    with open(log_path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -123,8 +122,8 @@ def commands_to_elements(commands: list, img_w: int = 1280, img_h: int = 720) ->
             path = cmd.get("path", "")
             if "notepad" in path.lower():
                 # Notepad window: title bar at top, menu, text area
-                elements.append(f"0 0.5 0.06 1.0 0.04")   # title_bar (approx full width)
-                elements.append(f"12 0.5 0.55 0.96 0.85")  # text_area
+                elements.append("0 0.5 0.06 1.0 0.04")   # title_bar (approx full width)
+                elements.append("12 0.5 0.55 0.96 0.85")  # text_area
 
         elif cmd_type == "input/key":
             text = cmd.get("text", "")

@@ -4,10 +4,11 @@ Verifies that keyboard input via the API reaches Windows applications,
 bypassing the X11 explorer.exe/desktop interception layer using AHK Send.
 """
 
-from playwright.sync_api import Page, expect
-import requests
 import time
-from _auth import API_URL, auth_headers, ui_url, ensure_agent_control, ensure_openbox_running
+
+import requests
+from _auth import API_URL, auth_headers, ensure_agent_control, ensure_openbox_running, ui_url
+from playwright.sync_api import Page, expect
 
 
 class WineBotAPI:

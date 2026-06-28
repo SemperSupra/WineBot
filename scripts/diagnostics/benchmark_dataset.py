@@ -12,16 +12,13 @@ Usage:
 import argparse
 import json
 import os
-import sys
-from pathlib import Path
-from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 
 # ── Ground-truth image definitions ──────────────────────────────────────────
 
-def _make_dialog_with_buttons(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_dialog_with_buttons(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Standard Windows-style dialog with title bar, buttons, and text."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 240  # Light gray background
@@ -128,7 +125,7 @@ def _make_dialog_with_buttons(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Di
     return img, ground_truth
 
 
-def _make_menu_bar(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_menu_bar(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Application window with standard menu bar (File, Edit, View, Help)."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 200  # Desktop background
@@ -202,7 +199,7 @@ def _make_menu_bar(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
     return img, ground_truth
 
 
-def _make_error_dialog(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_error_dialog(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Windows error/information dialog."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 200
@@ -260,7 +257,7 @@ def _make_error_dialog(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
     return img, ground_truth
 
 
-def _make_settings_window(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_settings_window(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Settings dialog with checkboxes, radio buttons, sliders."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 200
@@ -342,7 +339,7 @@ def _make_settings_window(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
     return img, ground_truth
 
 
-def _make_installer_window(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_installer_window(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Windows installer wizard with Next/Cancel buttons and progress."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 200
@@ -428,7 +425,7 @@ def _make_installer_window(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]
     return img, ground_truth
 
 
-def _make_dense_ui(size: Tuple = (1280, 720)) -> Tuple[np.ndarray, Dict]:
+def _make_dense_ui(size: tuple = (1280, 720)) -> tuple[np.ndarray, dict]:
     """Complex UI with many buttons, text fields, and labels."""
     w, h = size
     img = np.ones((h, w, 3), dtype=np.uint8) * 200

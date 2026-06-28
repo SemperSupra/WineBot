@@ -1,7 +1,8 @@
-from playwright.sync_api import Page, expect
 import time
 from typing import TypedDict, cast
+
 from _auth import ui_url
+from playwright.sync_api import Page, expect
 
 
 class CanvasBox(TypedDict):

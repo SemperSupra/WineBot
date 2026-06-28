@@ -1,5 +1,6 @@
-import httpx
 import asyncio
+
+import httpx
 
 
 async def check_api():

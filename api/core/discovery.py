@@ -1,14 +1,15 @@
-import socket
 import logging
-import time
+import socket
 import threading
-from typing import Optional, Dict, Any
+import time
+from typing import Any
+
 from zeroconf import (
     IPVersion,
-    ServiceInfo,
-    Zeroconf,
     ServiceBrowser,
+    ServiceInfo,
     ServiceStateChange,
+    Zeroconf,
 )
 
 from api.utils.config import config
@@ -22,9 +23,9 @@ class DiscoveryManager:
     """Manages mDNS/Zeroconf service registration and discovery."""
 
     def __init__(self):
-        self.zeroconf: Optional[Zeroconf] = None
-        self.service_info: Optional[ServiceInfo] = None
-        self.update_thread: Optional[threading.Thread] = None
+        self.zeroconf: Zeroconf | None = None
+        self.service_info: ServiceInfo | None = None
+        self.update_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self.allow_multiple = config.WINEBOT_DISCOVERY_ALLOW_MULTIPLE
 
@@ -39,14 +40,15 @@ class DiscoveryManager:
         except Exception:
             return "127.0.0.1"
 
-    def _get_txt_records(self) -> Dict[str, str]:
-        from api.utils.files import read_session_dir, session_id_from_dir
-        import hmac
+    def _get_txt_records(self) -> dict[str, str]:
         import hashlib
+        import hmac
+
+        from api.utils.files import read_session_dir, session_id_from_dir
 
         session_dir = read_session_dir()
         session_id = session_id_from_dir(session_dir) or "none"
-        
+
         # Include a hash of the API token if set, so clients can verify credentials
         token = config.API_TOKEN or ""
         token_hash = ""
@@ -141,7 +143,7 @@ class DiscoveryManager:
             self.zeroconf.close()
             self.zeroconf = None
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         """Returns the current discovery status."""
         return {
             "enabled": self.zeroconf is not None,

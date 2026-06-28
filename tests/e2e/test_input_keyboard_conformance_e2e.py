@@ -14,7 +14,6 @@ Note: Windows trace backend may be 'ahk' (trace_id in events) or 'hook'
 import time
 
 import requests
-
 from _auth import API_URL, auth_headers, ensure_agent_control, ensure_openbox_running
 
 

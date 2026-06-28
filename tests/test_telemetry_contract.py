@@ -6,7 +6,7 @@ from api.utils.files import performance_metrics_log_path
 
 
 def _read_one(path: str):
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         return json.loads(handle.read().strip())
 
 
@@ -73,6 +73,6 @@ def test_telemetry_rate_limit(monkeypatch, tmp_path):
         duration_ms=2.0,
     )
 
-    with open(performance_metrics_log_path(str(session_dir)), "r", encoding="utf-8") as handle:
+    with open(performance_metrics_log_path(str(session_dir)), encoding="utf-8") as handle:
         lines = [line for line in handle.read().splitlines() if line.strip()]
     assert len(lines) == 1

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Test the /analyze endpoint with a real frame."""
-import requests, cv2, io, json
+import io
+
+import cv2
+import requests
 
 img = cv2.imread('/tmp/real-val-frames/frame_001.png')
 _, buf = cv2.imencode('.png', img)

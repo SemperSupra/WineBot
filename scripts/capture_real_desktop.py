@@ -8,8 +8,8 @@ pipeline analysis.
 Usage:
   python3 capture_real_desktop.py
 """
-import os, time, subprocess, sys
-from pathlib import Path
+import os
+import subprocess
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "demo", "output", "real-desktop-frames")
 CONTAINER = "winebot-cv"

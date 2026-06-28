@@ -29,7 +29,6 @@ Usage:
 import argparse
 import json
 import os
-import sys
 import time
 
 import torch
@@ -75,7 +74,7 @@ def fine_tune(data_path: str, output_dir: str,
         resume: Resume from existing LoRA adapter.
     """
     print("=" * 60)
-    print(f"Florence-2 LoRA Fine-Tuning")
+    print("Florence-2 LoRA Fine-Tuning")
     print(f"  Base model: {base_model}")
     print(f"  Data: {data_path}")
     print(f"  Output: {output_dir}")
@@ -96,8 +95,7 @@ def fine_tune(data_path: str, output_dir: str,
 
     # Import model and processor
     print("Loading Florence-2 model...")
-    from transformers import AutoProcessor, AutoModelForCausalLM
-    from transformers import AutoConfig
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor
 
     # Force eager attention to avoid _supports_sdpa / flash_attn issues with
     # transformers 5.x (Florence-2's custom modeling code was written for 4.x)
@@ -120,7 +118,7 @@ def fine_tune(data_path: str, output_dir: str,
 
     # Apply LoRA
     print(f"Applying LoRA (rank={lora_rank}, alpha={lora_alpha})...")
-    from peft import LoraConfig, get_peft_model, TaskType, PeftModel
+    from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 
     if resume and os.path.exists(output_dir):
         print(f"  Resuming from {output_dir}")
@@ -140,8 +138,8 @@ def fine_tune(data_path: str, output_dir: str,
     model.print_trainable_parameters()
 
     # Prepare dataset
-    from torch.utils.data import Dataset, DataLoader
     from PIL import Image
+    from torch.utils.data import DataLoader, Dataset
 
     class CaptionDataset(Dataset):
         def __init__(self, records, processor):
@@ -211,7 +209,6 @@ def fine_tune(data_path: str, output_dir: str,
 
     # Training
     from transformers import get_scheduler
-    import torch.nn as nn
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     num_training_steps = epochs * len(train_loader)
@@ -279,7 +276,7 @@ def fine_tune(data_path: str, output_dir: str,
         model.save_pretrained(epoch_dir)
 
     print(f"\n{'=' * 60}")
-    print(f"Training complete!")
+    print("Training complete!")
     print(f"Best loss: {best_loss:.4f}")
     print(f"LoRA adapter saved: {output_dir}")
     print(f"Size: {sum(os.path.getsize(os.path.join(dp, f)) for dp, dn, fn in os.walk(output_dir) for f in fn) / 1024 / 1024:.1f} MB")

@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from api.core.config_guard import validate_runtime_configuration
 from api.core.models import (
     AgentStatus,
     ControlMode,
@@ -11,11 +12,9 @@ from api.core.models import (
     ControlState,
     UserIntent,
 )
-from api.core.config_guard import validate_runtime_configuration
 from api.routers.lifecycle import _validate_session_transition
 from api.server import app
 from api.utils.files import write_session_state
-
 
 client = TestClient(app)
 

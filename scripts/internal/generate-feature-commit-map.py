@@ -2,9 +2,9 @@
 import argparse
 import datetime as dt
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def git_log(limit: int, cwd: Path) -> List[str]:
+def git_log(limit: int, cwd: Path) -> list[str]:
     cmd = ["git", "log", f"--max-count={limit}", "--pretty=%h|%s"]
     out = subprocess.check_output(cmd, cwd=str(cwd), text=True)
     return [line.strip() for line in out.splitlines() if line.strip()]
@@ -85,9 +85,9 @@ def match_rule(subject: str) -> Rule | None:
     return None
 
 
-def render(rows_by_section: Dict[str, List[tuple[str, str, str]]], limit: int) -> str:
-    lines: List[str] = []
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+def render(rows_by_section: dict[str, list[tuple[str, str, str]]], limit: int) -> str:
+    lines: list[str] = []
+    now = dt.datetime.now(dt.UTC).isoformat()
     lines.append("# Auto-Generated Feature/Capability Commit Map (Draft)")
     lines.append("")
     lines.append("This file is generated from commit subjects using keyword classification.")
@@ -127,7 +127,7 @@ def main() -> int:
     root = repo_root()
     commits = git_log(args.limit, cwd=root)
 
-    rows_by_section: Dict[str, List[tuple[str, str, str]]] = {}
+    rows_by_section: dict[str, list[tuple[str, str, str]]] = {}
     for item in commits:
         if "|" not in item:
             continue

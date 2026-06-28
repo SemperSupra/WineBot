@@ -19,10 +19,8 @@ import glob
 import json
 import os
 import subprocess
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 SIDECAR_URL = os.environ.get("CV_SIDECAR_URL", "http://localhost:8001")
 # Derive project root from this script's location
@@ -61,7 +59,7 @@ def extract_eval_frames(video_path: str, out_dir: str, max_frames: int = 10) -> 
 
 # ── Annotation ───────────────────────────────────────────────────────────────
 
-def annotate_frame(frame_path: str) -> Dict:
+def annotate_frame(frame_path: str) -> dict:
     """Annotate a single frame using the sidecar with current engines."""
     # frame_path is a host path like C:/Users/.../demo/output/analysis/eval/...
     # The sidecar sees the same path via /demo-output/analysis/eval/...
@@ -79,20 +77,20 @@ def annotate_frame(frame_path: str) -> Dict:
         ], capture_output=True, text=True, timeout=15)
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
-            data["annotated_at"] = datetime.now(timezone.utc).isoformat()
+            data["annotated_at"] = datetime.now(UTC).isoformat()
             data["engines"] = {
                 "detector": data.get("detector", "unknown"),
                 "ocr": data.get("ocr_engine", "unknown"),
             }
             return data
-    except Exception as e:
+    except Exception:
         pass
     return {"error": "annotation_failed", "frame": frame_path}
 
 
 # ── Build Dataset ────────────────────────────────────────────────────────────
 
-def build_dataset() -> Dict:
+def build_dataset() -> dict:
     """Build evaluation dataset from all demo videos."""
     os.makedirs(EVAL_DIR, exist_ok=True)
 
@@ -102,7 +100,7 @@ def build_dataset() -> Dict:
         return {"error": "no_videos"}
 
     dataset = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "engines": {},
         "frames": [],
     }
@@ -155,7 +153,7 @@ def build_dataset() -> Dict:
 
 # ── Score Against Ground Truth ───────────────────────────────────────────────
 
-def score_against_ground_truth(dataset_path: Optional[str] = None) -> Dict:
+def score_against_ground_truth(dataset_path: str | None = None) -> dict:
     """Re-analyze all frames with current engines and compare to ground truth."""
     if dataset_path is None:
         dataset_path = os.path.join(EVAL_DIR, "ground_truth.json")
@@ -220,7 +218,7 @@ def score_against_ground_truth(dataset_path: Optional[str] = None) -> Dict:
     total_cur_ocr = sum(s["current"]["ocr"] for s in scores)
 
     report = {
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluated_at": datetime.now(UTC).isoformat(),
         "ground_truth_engines": {"detector": gt_engines},
         "current_engines": current_engines,
         "frames_evaluated": len(scores),
@@ -247,7 +245,7 @@ def score_against_ground_truth(dataset_path: Optional[str] = None) -> Dict:
 
 # ── Print Report ─────────────────────────────────────────────────────────────
 
-def print_report(report: Dict):
+def print_report(report: dict):
     print("=" * 60)
     print("  WINE SCREENSHOT EVALUATION REPORT")
     print("=" * 60)

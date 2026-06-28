@@ -1,10 +1,12 @@
-import pytest
 import os
-from fastapi.testclient import TestClient
 from unittest.mock import patch
-from api.server import app
+
+import pytest
+from fastapi.testclient import TestClient
+
 from api.core.broker import broker
-from api.core.models import ControlMode, UserIntent, AgentStatus
+from api.core.models import AgentStatus, ControlMode, UserIntent
+from api.server import app
 
 client = TestClient(app)
 

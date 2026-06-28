@@ -11,8 +11,11 @@ Usage:
 Output:
   Per-scene accuracy and confusion matrix
 """
-import os, sys, json
+import json
+import os
+import sys
 from collections import Counter
+
 import cv2
 import numpy as np
 
@@ -135,7 +138,7 @@ def main():
 
     # Results
     print(f"\n{'='*60}")
-    print(f"  CLIP Zero-Shot State Classification Results")
+    print("  CLIP Zero-Shot State Classification Results")
     print(f"  Overall Accuracy: {correct}/{total} = {correct/total*100:.1f}%")
     print(f"{'='*60}\n")
 
@@ -150,14 +153,14 @@ def main():
 
     print()
     if confusion:
-        print(f"  Top Confusions:")
+        print("  Top Confusions:")
         print(f"  {'Actual':<20s} → {'Predicted':<20s} {'Count':>6s}")
         print(f"  {'-'*20}   {'-'*20} {'-'*6}")
         for (actual, predicted), count in sorted(
                 confusion.items(), key=lambda x: -x[1])[:10]:
             print(f"  {actual:<20s} → {predicted:<20s} {count:>6d}")
 
-    print(f"\n  Aggregate probabilities across all scenes:")
+    print("\n  Aggregate probabilities across all scenes:")
     # Average probability of correct class
     avg_correct_prob = []
     for i, fname in enumerate(frame_files):

@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Generate cross-resolution benchmark test images and run evaluation."""
-import cv2, os, json, sys, time, numpy as np
+import json
+import os
+import sys
+import time
+
+import cv2
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 from benchmark_dataset import GENERATORS

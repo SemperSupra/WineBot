@@ -1,7 +1,7 @@
-import subprocess
-import os
 import logging
-from typing import Dict, Any, Optional
+import os
+import subprocess
+from typing import Any
 
 from api.utils.config import config
 
@@ -14,9 +14,9 @@ class FFMpegRecorder:
         self.resolution = resolution
         self.fps = fps
         self.output_file = output_file
-        self.process: Optional[subprocess.Popen] = None
+        self.process: subprocess.Popen | None = None
 
-    def start(self, metadata: Optional[Dict[Any, Any]] = None):
+    def start(self, metadata: dict[Any, Any] | None = None):
         cmd = [
             "ffmpeg",
             "-y",
@@ -77,8 +77,8 @@ class FFMpegRecorder:
         self.process = None
 
     def mux_subtitles(
-        self, ass_file: str, vtt_file: str, metadata: Optional[Dict[Any, Any]] = None,
-        chapters_file: Optional[str] = None,
+        self, ass_file: str, vtt_file: str, metadata: dict[Any, Any] | None = None,
+        chapters_file: str | None = None,
     ):
         """Embeds external subtitle and chapter files into the MKV container."""
         if not os.path.exists(self.output_file):

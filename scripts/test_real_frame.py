@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Test detection on a real demo frame."""
-import requests, json, cv2
+
+import cv2
+import requests
 
 # Test with analyze endpoint (reads from disk)
 r = requests.post('http://localhost:8001/analyze',

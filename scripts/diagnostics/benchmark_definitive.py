@@ -13,16 +13,20 @@ Usage:
   python3 benchmark_definitive.py --output results.json
 """
 
-import argparse, json, os, sys, time
-from datetime import datetime, timezone
+import argparse
+import json
+import os
+import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ocr_engines import get_ocr_engine, available_backends
-from ui_detectors import get_ui_detector, available_detectors
+from ocr_engines import available_backends, get_ocr_engine
+from ui_detectors import available_detectors, get_ui_detector
 
 
 def compute_stats(times: list, confidence: float = 0.95) -> dict:
@@ -224,8 +228,8 @@ def run(matrix: list, output: str, warmup: int = 3, iterations: int = 10,
         rankings = {}
 
     report = {
-        "benchmark_id": f"bench-definitive-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "benchmark_id": f"bench-definitive-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}",
+        "timestamp_utc": datetime.now(UTC).isoformat(),
         "git_commit": get_git_commit(),
         "hardware": get_hardware_info(),
         "protocol": {
@@ -281,7 +285,7 @@ def main():
     else:
         matrix = DEFAULT_MATRIX
 
-    print(f"WineBot Definitive Benchmark")
+    print("WineBot Definitive Benchmark")
     print(f"  Engines: {len(matrix)} combos")
     print(f"  Warmup:  {args.warmup} frames/engine")
     print(f"  Iters:   {args.iterations}/frame/engine")
@@ -292,7 +296,7 @@ def main():
 
     report = run(matrix, args.output, args.warmup, args.iterations, args.confidence)
 
-    print(f"\nRankings:")
+    print("\nRankings:")
     for k,v in report.get("rankings", {}).items():
         print(f"  {k}: {v['ui_detector']}+{v['ocr_backend']}")
 

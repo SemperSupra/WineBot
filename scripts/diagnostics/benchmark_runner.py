@@ -16,21 +16,19 @@ import json
 import os
 import sys
 import time
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 # Inject scripts dir for engine imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ocr_engines import get_ocr_engine, available_backends
-from ui_detectors import get_ui_detector, available_detectors
+from ocr_engines import available_backends, get_ocr_engine
+from ui_detectors import available_detectors, get_ui_detector
 
 
-def compute_stats(times: List[float], confidence: float = 0.95) -> Dict:
+def compute_stats(times: list[float], confidence: float = 0.95) -> dict:
     """Compute statistical summary of timing data.
 
     Returns mean, stddev, min, max, median, p95, p99, and bootstrap CI.
@@ -79,7 +77,7 @@ def compute_stats(times: List[float], confidence: float = 0.95) -> Dict:
     }
 
 
-def compute_ocr_accuracy(detected_texts: List[str], expected_texts: List[str]) -> Dict:
+def compute_ocr_accuracy(detected_texts: list[str], expected_texts: list[str]) -> dict:
     """Compute OCR accuracy metrics against ground truth."""
     if not expected_texts:
         return {"precision": 0, "recall": 0, "f1": 0, "note": "no_ground_truth"}
@@ -110,8 +108,8 @@ def compute_ocr_accuracy(detected_texts: List[str], expected_texts: List[str]) -
     }
 
 
-def compute_detection_metrics(detected_elements: List[Dict],
-                               expected_elements: List[Dict]) -> Dict:
+def compute_detection_metrics(detected_elements: list[dict],
+                               expected_elements: list[dict]) -> dict:
     """Compute UI element detection accuracy using IoU matching."""
     if not expected_elements:
         return {"precision": 0, "recall": 0, "f1": 0, "note": "no_ground_truth"}
@@ -163,21 +161,21 @@ def compute_detection_metrics(detected_elements: List[Dict],
     }
 
 
-def load_manifest(frames_dir: str) -> Optional[Dict]:
+def load_manifest(frames_dir: str) -> dict | None:
     """Load ground truth manifest if present."""
     manifest_path = os.path.join(frames_dir, "manifest.json")
     if os.path.exists(manifest_path):
-        with open(manifest_path, "r", encoding="utf-8") as f:
+        with open(manifest_path, encoding="utf-8") as f:
             return json.load(f)
     return None
 
 
 def run_benchmark(frames_dir: str,
-                  engines: List[Dict[str, str]],
+                  engines: list[dict[str, str]],
                   warmup_frames: int = 3,
                   iterations: int = 10,
                   confidence: float = 0.95,
-                  max_frames: Optional[int] = None) -> Dict:
+                  max_frames: int | None = None) -> dict:
     """Run full benchmark matrix.
 
     Args:
@@ -220,7 +218,7 @@ def run_benchmark(frames_dir: str,
     print(f"  Total runs: {len(engines) * total_warmup + len(engines) * total_bench * iterations}")
     print()
 
-    benchmark_id = f"bench-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    benchmark_id = f"bench-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
     results = []
 
     for engine_idx, engine_def in enumerate(engines):
@@ -398,7 +396,7 @@ def run_benchmark(frames_dir: str,
 
     return {
         "benchmark_id": benchmark_id,
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
         "config": {
             "frames_dir": frames_dir,
             "total_frames": len(all_frames),

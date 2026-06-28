@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Debug KV-Ground-8B processor output."""
-from transformers import AutoProcessor
 from PIL import Image
-import torch
+from transformers import AutoProcessor
 
 MODEL_ID = "vocaela/KV-Ground-8B-BaseGuiOwl1.5-0315"
 p = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)

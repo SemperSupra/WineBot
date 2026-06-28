@@ -1,5 +1,6 @@
-import unittest
 import json
+import unittest
+
 from automation.recorder.models import Event, SessionManifest
 from automation.recorder.subtitles import SubtitleGenerator
 

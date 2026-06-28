@@ -1,12 +1,12 @@
-import socket
-import threading
-import time
-import json
 import datetime
+import json
 import os
 import signal
+import socket
 import sys
-from typing import Dict, Tuple, Any
+import threading
+import time
+from typing import Any
 
 try:
     from api.core.versioning import EVENT_SCHEMA_VERSION
@@ -57,7 +57,7 @@ class VNCInputProxy:
                 threading.Thread(
                     target=self.handle_client, args=(client_sock, addr), daemon=True
                 ).start()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except Exception as e:
                 if not self.stop_requested:
@@ -96,7 +96,7 @@ class VNCInputProxy:
                 source.settimeout(1.0)
                 try:
                     data = source.recv(4096)
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 if not data:
                     break
@@ -111,7 +111,7 @@ class VNCInputProxy:
         finally:
             stop_flag["stop"] = True
 
-    def parse_client_data(self, data: bytes, client_addr: Tuple[str, int]):
+    def parse_client_data(self, data: bytes, client_addr: tuple[str, int]):
         self.buffer += data
         try:
             while len(self.buffer) > 0:
@@ -179,7 +179,7 @@ class VNCInputProxy:
         except Exception as e:
             dlog(f"Parser error: {e}")
 
-    def emit_event(self, kind: str, data: Dict[str, Any], client_addr: Tuple[str, int]):
+    def emit_event(self, kind: str, data: dict[str, Any], client_addr: tuple[str, int]):
         if kind == "pointer" and self.sample_motion_ms > 0:
             now = time.time() * 1000
             if now - self.last_motion_ts < self.sample_motion_ms:
@@ -189,7 +189,7 @@ class VNCInputProxy:
         payload = {
             "schema_version": EVENT_SCHEMA_VERSION,
             "timestamp_epoch_ms": int(time.time() * 1000),
-            "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
             "session_id": os.path.basename(self.session_dir),
             "source": "network",
             "layer": "network",

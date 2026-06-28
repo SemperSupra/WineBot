@@ -20,7 +20,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -43,9 +42,9 @@ class FrameIndex:
         self.index_dir = Path(index_dir)
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
-        self._embeddings: Optional[np.ndarray] = None  # (N, 512)
-        self._metadata: List[Dict] = []                 # one per frame
-        self._paths: List[str] = []                     # frame file paths
+        self._embeddings: np.ndarray | None = None  # (N, 512)
+        self._metadata: list[dict] = []                 # one per frame
+        self._paths: list[str] = []                     # frame file paths
         self._n: int = 0
         self._dirty: bool = False
 
@@ -63,7 +62,7 @@ class FrameIndex:
 
     # ── Add ─────────────────────────────────────────────────────────────────
 
-    def add(self, path: str, embedding: np.ndarray, metadata: Optional[Dict] = None):
+    def add(self, path: str, embedding: np.ndarray, metadata: dict | None = None):
         """Add a frame embedding to the index.
 
         Args:
@@ -90,8 +89,8 @@ class FrameIndex:
         self._n += 1
         self._dirty = True
 
-    def add_batch(self, paths: List[str], embeddings: np.ndarray,
-                   metadatas: Optional[List[Dict]] = None):
+    def add_batch(self, paths: list[str], embeddings: np.ndarray,
+                   metadatas: list[dict] | None = None):
         """Add multiple frames efficiently.
 
         Args:
@@ -121,7 +120,7 @@ class FrameIndex:
     # ── Search ──────────────────────────────────────────────────────────────
 
     def search(self, query: str, k: int = 10,
-               clip_embedder=None) -> List[Dict]:
+               clip_embedder=None) -> list[dict]:
         """Search frames by text query or embedding.
 
         Args:
@@ -169,12 +168,12 @@ class FrameIndex:
 
         return results[:k]
 
-    def search_by_embedding(self, embedding: np.ndarray, k: int = 10) -> List[Dict]:
+    def search_by_embedding(self, embedding: np.ndarray, k: int = 10) -> list[dict]:
         """Search by embedding vector instead of text."""
         return self.search(embedding, k=k)
 
     def _search_numpy(self, query_emb: np.ndarray,
-                       k: int) -> List[Tuple[int, float]]:
+                       k: int) -> list[tuple[int, float]]:
         """Brute-force cosine similarity search."""
         sims = np.dot(self._embeddings, query_emb)  # (N,)
         top_k = min(k, self._n)
@@ -183,7 +182,7 @@ class FrameIndex:
         return [(int(i), float(sims[i])) for i in top_indices]
 
     def _search_faiss(self, query_emb: np.ndarray,
-                       k: int) -> List[Tuple[int, float]]:
+                       k: int) -> list[tuple[int, float]]:
         """FAISS-accelerated search."""
         import faiss
 
@@ -198,23 +197,23 @@ class FrameIndex:
 
     # ── Filtering ──────────────────────────────────────────────────────────
 
-    def filter_by_scene(self, scene_type: str) -> List[int]:
+    def filter_by_scene(self, scene_type: str) -> list[int]:
         """Return indices of frames with a given scene type."""
         return [i for i, m in enumerate(self._metadata)
                 if m.get("scene_type") == scene_type
                 or m.get("generator") == scene_type]
 
-    def filter_by_workflow(self, workflow_name: str) -> List[int]:
+    def filter_by_workflow(self, workflow_name: str) -> list[int]:
         """Return indices of frames from a given workflow."""
         return [i for i, m in enumerate(self._metadata)
                 if m.get("workflow") == workflow_name]
 
-    def filter_by_timerange(self, start_ms: float, end_ms: float) -> List[int]:
+    def filter_by_timerange(self, start_ms: float, end_ms: float) -> list[int]:
         """Return indices of frames within a time range."""
         return [i for i, m in enumerate(self._metadata)
                 if start_ms <= m.get("timestamp_ms", 0) <= end_ms]
 
-    def find_by_path(self, frame_path: str) -> Optional[Dict]:
+    def find_by_path(self, frame_path: str) -> dict | None:
         """Look up a frame by its path and return its embedding + metadata.
 
         Args:
@@ -295,9 +294,9 @@ class FrameIndex:
 
     # ── Stats ──────────────────────────────────────────────────────────────
 
-    def stats(self) -> Dict:
+    def stats(self) -> dict:
         """Return index statistics."""
-        scene_counts: Dict[str, int] = {}
+        scene_counts: dict[str, int] = {}
         for m in self._metadata:
             scene = m.get("scene_type", m.get("generator", "unknown"))
             scene_counts[scene] = scene_counts.get(scene, 0) + 1

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Test Florence-2 LoRA adapter on a few GT test images."""
-import os, torch
-from PIL import Image
-from transformers import AutoProcessor, AutoModelForCausalLM
+import os
+
+import torch
 from peft import PeftModel
+from PIL import Image
+from transformers import AutoModelForCausalLM, AutoProcessor
 
 device = "cuda"
 base = "microsoft/Florence-2-base"

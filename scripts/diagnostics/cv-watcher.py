@@ -14,8 +14,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime
 
 
 class CVWatcher:
@@ -23,9 +22,9 @@ class CVWatcher:
         self.output_dir = output_dir
         self.api_url = api_url
         self.frame_index = 0
-        self.last_frame: Optional[str] = None
-        self.history: List[Dict] = []
-        self._token: Optional[str] = None
+        self.last_frame: str | None = None
+        self.history: list[dict] = []
+        self._token: str | None = None
 
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(os.path.join(output_dir, "frames"), exist_ok=True)
@@ -44,7 +43,7 @@ class CVWatcher:
                 json.dumps(
                     {
                         "event": "watcher_start",
-                        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                        "timestamp_utc": datetime.now(UTC).isoformat(),
                         "api_url": api_url,
                     }
                 )
@@ -60,7 +59,7 @@ class CVWatcher:
         except Exception:
             return False
 
-    def _token_from_container(self) -> Optional[str]:
+    def _token_from_container(self) -> str | None:
         """Read API token from container filesystem."""
         for path in ("/tmp/winebot_api_token", "/winebot-shared/winebot_api_token"):
             if os.path.exists(path):
@@ -77,7 +76,7 @@ class CVWatcher:
             self._token = self._token_from_container() or ""
         return self._token
 
-    def _curl(self, method: str, path: str, data: Optional[str] = None) -> dict:
+    def _curl(self, method: str, path: str, data: str | None = None) -> dict:
         """Minimal API call via subprocess curl."""
         cmd = ["curl", "-s"]
         if self.token:
@@ -135,7 +134,7 @@ class CVWatcher:
 
         return ""
 
-    def _window_inventory(self) -> List[Dict]:
+    def _window_inventory(self) -> list[dict]:
         """List all visible windows with their titles and classes."""
         try:
             result = subprocess.run(
@@ -190,7 +189,7 @@ class CVWatcher:
 
         return windows
 
-    def _compute_diff(self, a: str, b: str) -> Dict:
+    def _compute_diff(self, a: str, b: str) -> dict:
         """Compare two frames using ImageMagick compare."""
         diff_pixels = 0
         try:
@@ -226,12 +225,12 @@ class CVWatcher:
 
         return {"pixels_changed": diff_pixels, "diff_image": diff_path}
 
-    def snapshot(self, label: str = "", step: str = "") -> Dict:
+    def snapshot(self, label: str = "", step: str = "") -> dict:
         """Take a snapshot: capture frame, inventory windows, diff vs last.
 
         Returns a summary dict suitable for logging.
         """
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         timestamp_ms = int(time.time() * 1000)
 
         # Capture

@@ -29,12 +29,9 @@ import hashlib
 import json
 import os
 import sys
-import time
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
 
 # ── Data Model ─────────────────────────────────────────────────────────────────
 
@@ -59,10 +56,10 @@ class TrainingProvenance:
     dataset_generator: str = ""       # e.g., "winebot-gt-generator.py"
     dataset_version: str = ""         # Git commit of generator at training time
     dataset_split: str = "train"      # "train", "all", etc.
-    train_scenes: List[str] = field(default_factory=list)
-    val_scenes: List[str] = field(default_factory=list)
-    train_frameworks: List[str] = field(default_factory=list)
-    test_frameworks: List[str] = field(default_factory=list)
+    train_scenes: list[str] = field(default_factory=list)
+    val_scenes: list[str] = field(default_factory=list)
+    train_frameworks: list[str] = field(default_factory=list)
+    test_frameworks: list[str] = field(default_factory=list)
     image_count: int = 0
     element_count: int = 0
     seed: int = 42
@@ -107,20 +104,20 @@ class ModelEntry:
     description: str = ""
 
     # Upstream
-    upstream: Optional[UpstreamSource] = None
+    upstream: UpstreamSource | None = None
 
     # Training (only for fine-tuned models)
-    training: Optional[TrainingProvenance] = None
+    training: TrainingProvenance | None = None
 
     # Deployment
-    deployment: Optional[ModelDeployment] = None
+    deployment: ModelDeployment | None = None
 
     # Lifecycle
     status: str = "active"            # active | deprecated | superseded | development
     superseded_by: str = ""           # Name of the model that replaces this one
-    supersedes: List[str] = field(default_factory=list)
+    supersedes: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "name": self.name,
             "role": self.role,
@@ -157,7 +154,7 @@ class ModelRegistry:
     """
 
     def __init__(self):
-        self.entries: Dict[str, ModelEntry] = {}
+        self.entries: dict[str, ModelEntry] = {}
         self._git_commit = self._get_git_commit()
 
     # ── Built-in Catalogue ──────────────────────────────────────────────────
@@ -624,7 +621,7 @@ class ModelRegistry:
                     entry.deployment.content_sha256 = sha
                     entry.deployment.file_size_bytes = os.path.getsize(path)
                     entry.deployment.last_validated_at = (
-                        datetime.now(timezone.utc).isoformat()
+                        datetime.now(UTC).isoformat()
                     )
                     scanned += 1
         print(f"[registry] Fingerprinted {scanned} model files", file=sys.stderr)
@@ -675,11 +672,11 @@ class ModelRegistry:
 
     # ── Queries ─────────────────────────────────────────────────────────────
 
-    def get_by_stage(self, stage: int) -> List[ModelEntry]:
+    def get_by_stage(self, stage: int) -> list[ModelEntry]:
         """Return all models for a pipeline stage."""
         return [e for e in self.entries.values() if e.pipeline_stage == stage]
 
-    def get_active(self) -> List[ModelEntry]:
+    def get_active(self) -> list[ModelEntry]:
         """Return currently active models (not deprecated/superseded)."""
         return [e for e in self.entries.values() if e.status == "active"]
 
@@ -726,13 +723,13 @@ class ModelRegistry:
             lines.append(f"- **{name}:** {'; '.join(line_parts)}")
 
         lines.append(f"\nWineBot commit: {self._git_commit}")
-        lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"Generated: {datetime.now(UTC).isoformat()}")
         lines.append(
             "All models fingerprinted by SHA256 content hash for bit-exact reproducibility."
         )
         return "\n".join(lines)
 
-    def audit_trail(self) -> List[Dict]:
+    def audit_trail(self) -> list[dict]:
         """Full supply chain audit: upstream → modification → deployment for every model."""
         trail = []
         for entry in self.entries.values():
@@ -759,10 +756,10 @@ class ModelRegistry:
 
     # ── Output ──────────────────────────────────────────────────────────────
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "winebot_git_commit": self._git_commit,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "total_models": len(self.entries),
             "active_models": len(self.get_active()),
             "entries": {name: e.to_dict() for name, e in self.entries.items()},

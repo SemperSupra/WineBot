@@ -18,13 +18,13 @@ def read_file_with_wait(path, timeout=1.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
             if content:
                 return content
         time.sleep(0.05)
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return f.read().strip()
     return ""
 

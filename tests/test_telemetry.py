@@ -39,7 +39,7 @@ def test_telemetry_feature_filter_allows(monkeypatch, tmp_path):
         metric_name="input.api_click.latency",
     )
     path = performance_metrics_log_path(str(session_dir))
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         payload = json.loads(handle.read().strip())
     assert payload["feature"] == "input"
     assert payload["capability"] == "mouse_click"

@@ -22,17 +22,20 @@ Keyboard shortcuts:
   + / -       Zoom in/out
   Space       Auto-detect (if sidecar configured)
 """
-import argparse, base64, glob, io, json, logging, os, socket, sys, time
-from pathlib import Path
-from typing import List, Optional
+import argparse
+import base64
+import glob
+import logging
+import os
+import socket
+import sys
 
 import cv2
-import numpy as np
+import requests
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-import uvicorn
-import requests
 
 # ── WineGT 22-class taxonomy (must match winebot-gt-generator.py) ────────────
 
@@ -83,7 +86,7 @@ class AnnotationItem(BaseModel):
 
 class SaveAnnotationsRequest(BaseModel):
     filename: str
-    annotations: List[AnnotationItem]
+    annotations: list[AnnotationItem]
 
 
 # ── FastAPI App ──────────────────────────────────────────────────────────────
@@ -93,13 +96,13 @@ app = FastAPI(title="WineBot Annotation Tool")
 # Runtime config
 IMAGE_DIR: str = ""
 ALLOW_DELETE: bool = False
-SIDECAR_URL: Optional[str] = None
+SIDECAR_URL: str | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _get_image_list() -> List[str]:
+def _get_image_list() -> list[str]:
     """Get sorted list of image files in IMAGE_DIR."""
     exts = ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff")
     files = []
@@ -113,7 +116,7 @@ def _label_path(img_path: str) -> str:
     return os.path.splitext(img_path)[0] + ".txt"
 
 
-def _load_yolo_labels(label_path: str, img_w: int, img_h: int) -> List[dict]:
+def _load_yolo_labels(label_path: str, img_w: int, img_h: int) -> list[dict]:
     """Load YOLO-format labels. Returns list of {class_id, class_name, x, y, w, h} in pixels."""
     elements = []
     if not os.path.isfile(label_path):
@@ -145,7 +148,7 @@ def _load_yolo_labels(label_path: str, img_w: int, img_h: int) -> List[dict]:
     return elements
 
 
-def _save_yolo_labels(label_path: str, elements: List[dict], img_w: int, img_h: int):
+def _save_yolo_labels(label_path: str, elements: list[dict], img_w: int, img_h: int):
     """Save annotations in YOLO format (class_id cx cy w h normalized)."""
     with open(label_path, "w") as f:
         for elem in elements:
@@ -904,7 +907,6 @@ def main():
     log.info("Sidecar: %s", SIDECAR_URL or "not configured")
 
     # ── Port discovery with conflict fallback ───────────────────────────────────
-    import socket
     port = args.port
     max_attempts = 10
     for attempt in range(max_attempts):

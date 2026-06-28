@@ -1,6 +1,7 @@
-from playwright.sync_api import Page, expect
 import time
+
 from _auth import ui_url
+from playwright.sync_api import Page, expect
 
 
 def test_mouse_input_trace(page: Page):

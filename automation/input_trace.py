@@ -7,9 +7,9 @@ import re
 import signal
 import subprocess
 import sys
-import time
 import threading
-from typing import Any, Dict, Optional
+import time
+from typing import Any
 
 TRACE_PID_FILE = "input_trace.pid"
 TRACE_STATE_FILE = "input_trace.state"
@@ -27,27 +27,27 @@ FLAGS_RE = re.compile(r"^\s*flags:\s*(.*)")
 MODIFIERS_RE = re.compile(r"^\s*modifiers:.*effective:\s*(\d+)")
 
 
-def now_ts() -> Dict[str, Any]:
+def now_ts() -> dict[str, Any]:
     epoch_ms = int(time.time() * 1000)
     return {
         "timestamp_epoch_ms": epoch_ms,
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(),
     }
 
 
-def read_session_dir() -> Optional[str]:
+def read_session_dir() -> str | None:
     path = "/tmp/winebot_current_session"
     if not os.path.exists(path):
         return None
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             value = f.read().strip()
         return value or None
     except Exception:
         return None
 
 
-def session_id_from_dir(session_dir: Optional[str]) -> Optional[str]:
+def session_id_from_dir(session_dir: str | None) -> str | None:
     if not session_dir:
         return None
     return os.path.basename(session_dir)
@@ -85,9 +85,9 @@ def write_pid(session_dir: str, pid: int) -> None:
         pass
 
 
-def read_pid(session_dir: str) -> Optional[int]:
+def read_pid(session_dir: str) -> int | None:
     try:
-        with open(trace_pid_path(session_dir), "r") as f:
+        with open(trace_pid_path(session_dir)) as f:
             return int(f.read().strip())
     except Exception:
         return None
@@ -104,11 +104,11 @@ def pid_running(pid: int) -> bool:
 
 
 def input_event_from_xi2(
-    current: Dict[str, Any],
-    session_id: Optional[str],
+    current: dict[str, Any],
+    session_id: str | None,
     include_raw: bool,
     seq: int,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     xi2_name = current.get("xi2_name")
     if not xi2_name:
         return None
@@ -131,7 +131,7 @@ def input_event_from_xi2(
     else:
         return None
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "session_id": session_id,
         "event_id": f"{session_id}-{seq}",
         "seq": seq,
@@ -188,11 +188,11 @@ def input_event_from_xi2(
 
 def parse_xi2_stream(
     stream,
-    session_id: Optional[str],
+    session_id: str | None,
     include_raw: bool,
     motion_sample_ms: int,
 ):
-    current: Optional[Dict[str, Any]] = None
+    current: dict[str, Any] | None = None
     seq = 0
     last_motion_ms = 0
 
@@ -291,7 +291,7 @@ def run_trace(session_dir: str, include_raw: bool, motion_sample_ms: int) -> int
     with open(stderr_path, "a") as err:
         # Some X servers reject a root-level XI2 listener with BadAccess when
         # another consumer is active. Fall back to device-scoped stream mode.
-        proc: Optional[subprocess.Popen[str]] = None
+        proc: subprocess.Popen[str] | None = None
         commands = [
             ["xinput", "test-xi2", "--root"],
             ["xinput", "test-xi2"],
@@ -440,7 +440,7 @@ def main():
         running = pid_running(pid) if pid else False
         state = None
         try:
-            with open(trace_state_path(session_dir), "r") as f:
+            with open(trace_state_path(session_dir)) as f:
                 state = f.read().strip() or None
         except Exception:
             pass

@@ -1,5 +1,6 @@
-from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange
 import time
+
+from zeroconf import ServiceBrowser, ServiceStateChange, Zeroconf
 
 
 def on_service_state_change(zeroconf, service_type, name, state_change):
