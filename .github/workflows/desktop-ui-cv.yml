@@ -1,0 +1,110 @@
+name: desktop-ui-cv
+
+on:
+  pull_request:
+    paths:
+      - 'packages/desktop-ui-cv/**'
+      - '.github/workflows/desktop-ui-cv.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/desktop-ui-cv/**'
+      - '.github/workflows/desktop-ui-cv.yml'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: desktop-ui-cv-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build wheel
+        run: python -m build --wheel packages/desktop-ui-cv
+
+      - name: Verify wheel artifact
+        run: |
+          ls -lh packages/desktop-ui-cv/dist/*.whl
+          pip install packages/desktop-ui-cv/dist/*.whl
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-ui-cv-wheel
+          path: packages/desktop-ui-cv/dist/*.whl
+          retention-days: 14
+
+  test:
+    name: Unit tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng \
+            libgl1 libglib2.0-0
+
+      - name: Install wheel
+        run: |
+          pip install packages/desktop-ui-cv/dist/*.whl
+
+      - name: Run import tests
+        run: |
+          pip install pytest requests
+          python -m pytest packages/desktop-ui-cv/tests/test_import.py -v
+
+  integration:
+    name: Integration (install + server smoke)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng \
+            libgl1 libglib2.0-0
+
+      - name: Install wheel + extras
+        run: |
+          pip install packages/desktop-ui-cv/dist/*.whl[server]
+          pip install pytest requests opencv-python-headless
+
+      - name: Run server smoke test
+        run: |
+          python -m pytest packages/desktop-ui-cv/tests/test_server.py -v -s --timeout 60
