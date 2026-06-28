@@ -112,7 +112,7 @@ This separation keeps the core image small, GPU-agnostic, and focused on Wine au
 | Sidecar | Repo | Port | GPU | Status |
 |:---|:---|:---|:---|:---|
 | **CV/OCR** | [`github.com/sempersupra/desktop-ui-cv`](https://github.com/sempersupra/desktop-ui-cv) (private) | 8001 | Optional (GPU image available) | ✅ Active — phases 1-3 complete |
-| **Captioning** | `github.com/sempersupra/ui-captioning` (planned) | 8002 | Required | 📅 Planned |
+| **Captioning** | [`github.com/sempersupra/ui-captioning`](https://github.com/sempersupra/ui-captioning) (private) | 8002 | Required | ✅ v0.1.0 tagged |
 | **KV-Ground-8B** | `github.com/sempersupra/kv-ground-server` (planned) | 8003/8004 | Required | 🚧 TrueNAS deployment active, repo extraction planned |
 
 ### CV/OCR Sidecar (`winebot-cv`)
@@ -142,7 +142,7 @@ Phase 3:   ✅ Sidecar server imports from the package
 Phase 4:   ✅ CI/CD pipeline for the package (moved to its own repo)
 Phase 5:   ✅ Extracted to github.com/sempersupra/desktop-ui-cv (tagged v0.1.0)
 Phase 6:   ✅ Extracted kv-ground-server to github.com/sempersupra/kv-ground-server (tagged v0.1.0)
-Phase 7:   📅 Extract captioning sidecar to its own repo
+Phase 7:   ✅ Extracted ui-captioning to github.com/sempersupra/ui-captioning (tagged v0.1.0)
 ```
 
 ### Naming Convention
