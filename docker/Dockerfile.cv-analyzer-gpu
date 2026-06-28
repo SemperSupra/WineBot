@@ -103,9 +103,9 @@ ENV OCR_BACKEND=tesseract
 
 # ── Install desktop-ui-cv package (detectors, OCR, CLIP, registry, dataset gen) ──
 # This is the canonical source for engine imports (winebot_cv.detectors, etc.).
-COPY packages/desktop-ui-cv/ /tmp/desktop-ui-cv/
-RUN pip install --no-cache-dir --break-system-packages /tmp/desktop-ui-cv \
-    && rm -rf /tmp/desktop-ui-cv
+ARG DESKTOP_UI_CV_REF=v0.1.0
+RUN pip install --no-cache-dir --break-system-packages \
+    "desktop-ui-cv @ git+https://github.com/SemperSupra/desktop-ui-cv@${DESKTOP_UI_CV_REF}"
 
 # ── Copy sidecar server and CV analysis tools ────────────────────────────────
 # These are WineBot-specific CLI tools, not part of the desktop-ui-cv package.
