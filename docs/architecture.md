@@ -25,9 +25,13 @@ Choosing the correct base image is critical for supporting modern versions of Wi
     *   Running inside `WINEPREFIX` (`/wineprefix`)
 
 2.  **Display Layer (X11)**
-    *   `Xvfb`: Virtual framebuffer (Display `:99`).
+    *   `Xvfb`: Virtual framebuffer (Display `:99`). **2D rendering only** — no GPU, no
+        hardware-accelerated OpenGL, no Vulkan support. All rendering is done in software
+        via the CPU. Applications requiring 3D/GL/Direct3D will fail or fall back to
+        unusably slow software rendering. This is an architectural constraint of Xvfb,
+        not a configuration gap. See `docs/known-limitations.md#22-no-hardware-acceleration-in-headless-mode`.
     *   `openbox`: Window manager for geometry management.
-    *   `x11vnc` / `noVNC`: Optional interactive viewing.
+    *   `x11vnc` / [`noVNC`](https://novnc.com) / [`websockify`](https://github.com/novnc/websockify): Optional interactive viewing.
 
 3.  **Control Layer (Linux/Container)**
     *   **API Server (`api/server.py`):** FastAPI service on port 8000. Orchestrates automation.
@@ -69,7 +73,7 @@ External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`
 
 1.  **Entrypoint:** Sets up `winebot` user (UID mapping).
 
-2.  **Infrastructure:** Starts `Xvfb`, `openbox`, and `tint2`.
+2.  **Infrastructure:** Starts `Xvfb`, [`openbox`](http://openbox.org), and [`tint2`](https://gitlab.com/o9000/tint2).
 
 3.  **Wine Initialization:**
 

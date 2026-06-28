@@ -3,13 +3,14 @@
 # Uses huggingface_hub (not git LFS) + bitsandbytes 4-bit quantization
 # ~5GB VRAM, fits alongside Ollama on A5000 (24GB)
 set -e
+source "$(dirname "$0")/logging_utils.sh"
 
 CONTAINER_NAME="winebot-kv-ground"
 MODEL_ID="vocaela/KV-Ground-8B-BaseGuiOwl1.5-0315"
 PORT=8004
 
-echo "=== KV-Ground-8B 4-bit Container Deployment ==="
-echo "Target: GPU 0 (A5000 #0), alongside Ollama"
+log_start "KV-Ground-8B 4-bit deploy (GPU 0)"
+log_step "target" "GPU 0 (A5000 #0), alongside Ollama"
 
 # Stop existing container
 sudo docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
@@ -143,17 +144,16 @@ if __name__ == "__main__":
 SERVER
 
 # Build
+log_step "build" "Building 4-bit Docker image..."
 sudo docker build -t winebot-kv-ground:4bit -f /tmp/Dockerfile.kv-ground-4bit /tmp/
 
 # Run on GPU 0
+log_step "run" "Starting $CONTAINER_NAME on GPU 0..."
 sudo docker run -d --gpus '"device=0"' --name "$CONTAINER_NAME" \
     -p $PORT:$PORT \
     -v /mnt/Storage:/mnt/Storage \
     winebot-kv-ground:4bit
 
-echo ""
-echo "=== KV-Ground-8B 4-bit Deployed ==="
-echo "Container: $CONTAINER_NAME (GPU 0)"
-echo "Port: $PORT"
-echo "Check: sudo docker logs -f $CONTAINER_NAME"
-echo "Test: curl http://truenas.fritz.box:$PORT/health"
+log_complete "KV-Ground-8B 4-bit deployed (GPU 0, port $PORT)"
+log_step "check" "sudo docker logs -f $CONTAINER_NAME"
+log_step "test" "curl http://truenas.fritz.box:$PORT/health"

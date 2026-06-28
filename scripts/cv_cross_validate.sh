@@ -1,6 +1,7 @@
 #!/bin/bash
 # Cross-validation — data gen + training in isolated phases.
 set -e
+source "$(dirname "$0")/logging_utils.sh"
 
 FOLDS=5
 IMAGES_PER_SCENE=200
@@ -13,18 +14,13 @@ SCENES=("save_dialog" "settings" "error_dialog" "notepad" "control_panel"
         "system_tray" "form_fill" "login" "toast" "data_table" "drag_drop"
         "loading")
 
-echo "============================================================"
-echo "  K-FOLD CROSS-VALIDATION"
-echo "  Folds: $FOLDS   Scenes: ${#SCENES[@]}"
-echo "  Images/scene: $IMAGES_PER_SCENE   Epochs: $EPOCHS"
-echo "============================================================"
+log_start "K-fold cross-validation: $FOLDS folds, ${#SCENES[@]} scenes, $IMAGES_PER_SCENE img/scene, $EPOCHS epochs"
 
 mkdir -p "$OUTPUT"
 N_VAL=$(( ${#SCENES[@]} / FOLDS ))
 
 # ── Phase 1: Generate data for all folds ──────────────────────────
-echo ""
-echo "━━━ Phase 1: Generating data ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log_step "phase1" "Generating data for all folds..."
 
 for fold in $(seq 0 $((FOLDS - 1))); do
     VAL_START=$(( fold * N_VAL ))
@@ -81,16 +77,15 @@ YAMLEOF
         "${#TRAIN_SCENES[@]}" "${TRAIN_SCENES[@]}" "${VAL_SCENES[@]}" \
         2>&1 | sed 's/^/    /'
 
-    echo "  Fold $((fold + 1)) data done"
+    log_step "fold_done" "Fold $((fold + 1)) data generated"
 done
 
 # ── Phase 2: Train each fold ──────────────────────────────────────
-echo ""
-echo "━━━ Phase 2: Training ─━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log_step "phase2" "Training each fold..."
 
 for fold in $(seq 0 $((FOLDS - 1))); do
     FOLD_DIR="$OUTPUT/fold-$fold"
-    echo "  Fold $((fold + 1)): training $EPOCHS epochs..."
+    log_step "train" "Fold $((fold + 1)): training $EPOCHS epochs..."
     T0=$(date +%s)
 
     # Training in a subprocess — only imports YOLO, clean from generator.
@@ -99,14 +94,11 @@ for fold in $(seq 0 $((FOLDS - 1))); do
     TRAIN_TIME=$(( $(date +%s) - T0 ))
     R=$(cat "$FOLD_DIR/result.json" 2>/dev/null || echo '{"best_mAP50":0}')
     MAP50=$(echo "$R" | python3 -c "import sys,json; print(json.load(sys.stdin).get('best_mAP50', 0))")
-    echo "  Fold $((fold + 1)): mAP50=$MAP50 (${TRAIN_TIME}s)"
+    log_step "fold_result" "Fold $((fold + 1)): mAP50=$MAP50 (${TRAIN_TIME}s)"
 done
 
 # ── Summary ────────────────────────────────────────────────────────
-echo ""
-echo "============================================================"
-echo "  CROSS-VALIDATION RESULTS"
-echo "============================================================"
+log_complete "Cross-validation training complete"
 python3 << SUMMARYEOF
 import json, os
 import numpy as np

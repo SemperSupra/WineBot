@@ -415,16 +415,22 @@ if [ -n "$view_mode" ]; then
     novnc_url="http://${novnc_host}:8000/ui"
   fi
   if [ "$novnc_password_set" != "1" ]; then
-    if [ -n "${NOVNC_PASSWORD:-}" ]; then
+    # INFRA_VNC_PASSWORD takes priority, then NOVNC_PASSWORD/VNC_PASSWORD
+    if [ -n "${INFRA_VNC_PASSWORD:-}" ]; then
+      novnc_password="${INFRA_VNC_PASSWORD}"
+    elif [ -n "${NOVNC_PASSWORD:-}" ]; then
       novnc_password="${NOVNC_PASSWORD}"
     elif [ -n "${VNC_PASSWORD:-}" ]; then
       novnc_password="${VNC_PASSWORD}"
     else
-      novnc_password="winebot"
+      novnc_password="winebot"  # documented default
     fi
   fi
   if [ "$vnc_password_set" != "1" ]; then
-    if [ -n "${VNC_PASSWORD:-}" ]; then
+    # INFRA_VNC_PASSWORD takes priority, then VNC_PASSWORD
+    if [ -n "${INFRA_VNC_PASSWORD:-}" ]; then
+      vnc_password="${INFRA_VNC_PASSWORD}"
+    elif [ -n "${VNC_PASSWORD:-}" ]; then
       vnc_password="${VNC_PASSWORD}"
     elif [ -n "${NOVNC_PASSWORD:-}" ]; then
       vnc_password="${NOVNC_PASSWORD}"

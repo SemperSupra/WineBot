@@ -2,7 +2,7 @@
 
 This document catalogs fundamental limitations of the tools and subsystems
 used by WineBot. These are not bugs — they are constraints of the underlying
-platforms (Wine, X11, AHK, xdotool) that agents and users should understand.
+platforms ([Wine](https://www.winehq.org), X11, AHK, [xdotool](https://github.com/jordansissel/xdotool)) that agents and users should understand.
 
 Each section describes the limitation, its impact, and the workaround or
 adaptation already in place.
@@ -30,7 +30,7 @@ Wine's `explorer.exe /desktop` creates a virtual desktop window that intercepts
 all X11 keyboard events from VNC and xdotool:
 
 ```
-VNC Client -> x11vnc(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
+VNC Client -> [x11vnc](https://github.com/LibVNC/x11vnc)(:5900) -> Xvfb(:99) -> explorer.exe /desktop -> app.exe
                                                    ^
                                           KEYBOARD EVENTS STOP HERE
 ```
@@ -153,7 +153,7 @@ with `GET /health/windows` before targeting.
 
 ### 7. WinSpy Exists But Cannot Inject
 
-WinSpy can inspect dialog control class names and positions but cannot inject text
+[WinSpy](https://github.com/stefj/winspy) can inspect dialog control class names and positions but cannot inject text
 into Wine's internal control hierarchy. Use it only for inspection during debugging.
 
 ---
@@ -267,8 +267,8 @@ For pixel-identical OCR/CV template matching with real Windows:
 
 ### 21. No Desktop Window Manager (DWM)
 
-Wine has no DWM compositor. WineBot provides Openbox for window management
-(decoration, focus, keyboard bindings) and tint2 for the taskbar panel.
+Wine has no DWM compositor. WineBot provides [Openbox](http://openbox.org) for window management
+(decoration, focus, keyboard bindings) and [tint2](https://gitlab.com/o9000/tint2) for the taskbar panel.
 Window decorations are controlled via Openbox `rc.xml` and Motif hints.
 
 ### 22. No Hardware Acceleration in Headless Mode
@@ -306,17 +306,24 @@ regardless because Xvfb provides no GLX (GL extension) support whatsoever.
 
 #### Xvfb Technical Constraints
 
-- No `GLX` extension — `glxinfo` returns nothing
-- No `/dev/dri` device — no GPU passthrough
-- LLVMpipe not installed — no software OpenGL
-- `virgl` not configured — no virtualized GPU
-- Wine's `opengl32` built-in maps to Xvfb's software surface only
+- **No GPU access** — Xvfb has no link to any GPU. No `/dev/dri`, no DRM, no hardware
+  rasterization. This is architectural, not configurable.
+- **GLX is software-only** — Xvfb *can* report a GLX extension (`+extension GLX`) but
+  it maps to Mesa's CPU-based software rasterizer (llvmpipe). There is no hardware
+  OpenGL. `glxinfo` will report the software renderer if Mesa libraries are installed.
+- **No Vulkan ICD** — Xvfb does not register a Vulkan Installable Client Driver.
+  Translation layers like [DXVK](https://github.com/doitsujin/dxvk) (DirectX → Vulkan) and [VKD3D](https://github.com/HansKristian-Work/vkd3d-proton) will find no Vulkan device.
+- **Wine's `opengl32`** built-in maps to whatever GLX/Xvfb provides — a software
+  surface with no GPU backing.
+- **Software OpenGL is possible via LLVMpipe** — installing `mesa-utils` and
+  `libgl1-mesa-dri` provides software OpenGL 4.5 through llvmpipe. This is CPU-only
+  and slow but sufficient for basic GL applications. Not included in the base image.
 
 #### Games Tested Against Xvfb
 
 | Game | Result | Failure Mode |
 |:---|:---|:---|
-| SuperTux (OpenGL 3.3) | ❌ | Creates window, initializes GL context → crashes silently when GLX not found |
+| SuperTux (OpenGL 3.3) | ❌ | Starts but unusable — software GL (llvmpipe) renders at <5 FPS; segfaults without Mesa installed |
 | Alpha Centauri (DirectDraw 2D) | ✅ with `DirectDraw=0` | Forces GDI software path |
 | Civilization II (2D) | ✅ Expected | GDI-based rendering |
 | Diablo II (DirectDraw 2D) | ✅ with `-w -nofixaspect` | DirectDraw software fallback |
@@ -329,11 +336,56 @@ regardless because Xvfb provides no GLX (GL extension) support whatsoever.
 - **virgl** — Virtualized GPU for QEMU/KVM containers. Requires host GPU.
 - **GPU passthrough** — Mount `/dev/dri` into container. Requires Linux host
   with GPU. Non-portable (breaks macOS/Windows Docker Desktop hosts).
-- **VNC with VirtualGL** — Render on host GPU, stream to container. Complex.
+- **VNC with [VirtualGL](https://virtualgl.org) / [TurboVNC](https://turbovnc.org)** — Render on host GPU, stream to container. Complex.
 
 For WinBot parity, games and 3D applications should run on WinBot where the
 native Windows GPU driver is available. For WineBot, use the GDI software
 renderer and test each application individually.
+
+#### GPU Command Proxy ("Software GPU Passthrough")
+
+A common question is whether Mesa/llvmpipe could be modified to forward
+rendering commands over a Unix socket to a GPU-accessible host service,
+effectively creating a "software GPU passthrough." This pattern **has been
+implemented** in production by several projects:
+
+| Project | Technique | Status | Applicable? |
+|:---|:---|:---|:---|
+| **Anbox / Waydroid** | Android GLES stub → pipe → host renderer | Production | ❌ OpenGL ES only, not Wine's GLX |
+| **VirGL (virglrenderer)** | virtio-gpu + Mesa Gallium driver → host GPU | Production | ❌ Requires QEMU VM with virtio-gpu kernel driver; Docker containers can't do this |
+| **Android emulator (emugl)** | Pipe-based GLES forwarding from guest to host GPU | Production | ❌ OpenGL ES only, not GLX |
+| **Mesa Gallium Remote ST** | TCP-forwarded Gallium state tracker (experimental) | Dead since ~2011 | ❌ Removed from Mesa tree, not usable |
+
+**Why none of these help WineBot:**
+
+1. **GLX vs EGL/GLES:** Wine uses GLX (X11's OpenGL binding), not EGL or
+   OpenGL ES. Every existing GPU proxy project targets OpenGL ES or EGL.
+   There is no proxy protocol that speaks desktop GL through GLX.
+
+2. **Wine's rendering path:** Wine's 3D goes through this chain:
+   ```
+   Win32 app → WineD3D/DXVK → GLX call → X server → Mesa driver → GPU
+   ```
+   Interception needs to happen before the X server — either in Wine's
+   `opengl32` translation layer or in Mesa's GLX implementation. Both
+   are deep, invasive modifications.
+
+3. **Windows Docker GPU ceiling:** Even with a perfect proxy, the host GPU
+   runs in P8 power state through WSL2. Adding serialize/socket/deserialize/
+   render/readback overhead would likely be slower than CPU-only software
+   rendering for 2D workloads.
+
+**Verdict:** The GPU command proxy pattern is proven technology, but
+adapting it for Wine's GLX stack on Docker Windows is a multi-month
+engineering project with marginal payoff for WineBot's 2D UI automation
+use case.
+
+**References:**
+- [Anbox](https://github.com/anbox/anbox) — Android in a container (archived; reused Android emulator's emugl system for GLES forwarding)
+- [Waydroid](https://github.com/waydroid) — Modern Android-in-container, active development, same GLES proxy pattern
+- [virglrenderer](https://gitlab.freedesktop.org/virgl/virglrenderer) — Host-side OpenGL/Vulkan renderer for virtio-gpu virtual GPU
+- [Mesa Gallium3D](https://docs.mesa3d.org/gallium/) — Mesa 3D Graphics Library documentation (Gallium driver architecture)
+- [Android emulator emugl](https://android.googlesource.com/platform/external/qemu/+/refs/heads/main/android/emugl/) — Source tree for Android emulator's OpenGL ES emulation (emugl / libOpenglRender)
 
 ### 23. Font Smoothing Configurable
 

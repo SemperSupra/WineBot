@@ -67,6 +67,8 @@ All secrets use the `INFRA_<SERVICE>_<CREDENTIAL>` pattern:
 - ✅ All secrets read from environment variables
 - ✅ Fallback values documented as placeholders only
 - ✅ `.env` files, `/etc/winebot-credentials` in `.gitignore`
+- ✅ Use `scripts/ci/check-credentials.sh` as a pre-commit hook or CI gate
+  to detect accidental credential leakage. Run `--history` to scan all commits.
 
 ## 5. Operational Logging Policy
 
