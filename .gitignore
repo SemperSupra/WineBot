@@ -33,6 +33,13 @@ Screenshot *.png
 /models/wine-dataset/
 /models/wine-dataset-gen/
 
+# Deploy credentials (never commit)
+/etc/winebot-credentials
+/etc/winebot-credentials.template
+
+# Cross-validation output (regenerated on demand)
+/models/cross-validation/
+
 # Competitive research artifacts (→ private repo: mark-e-deyoung/winebot-research)
 /STATUS.md
 /docs/BUILD_LADDER.md

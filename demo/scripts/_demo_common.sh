@@ -110,7 +110,8 @@ init_session() {
     # container-to-container routing). 172.17.0.1 is the default Linux bridge gateway.
     local sidecar_api_url
     if [ "$API_URL" = "http://localhost:8000" ] || [ "$API_URL" = "http://127.0.0.1:8000" ]; then
-      sidecar_api_url="http://172.17.0.1:8000"
+      # Use SIDECAR_API_URL env var with Docker bridge fallback
+      sidecar_api_url="${SIDECAR_API_URL:-http://172.17.0.1:8000}"
     else
       sidecar_api_url="$API_URL"
     fi
