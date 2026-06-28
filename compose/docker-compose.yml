@@ -171,6 +171,7 @@ services:
       dockerfile: docker/Dockerfile.cv-analyzer
       args:
         WITH_YOLO: ${WITH_YOLO:-0}
+        GIT_TOKEN: ${INFRA_GHCR_TOKEN:-}
     image: winebot-cv:${WINEBOT_IMAGE_VERSION:-local}
     profiles:
       - interactive

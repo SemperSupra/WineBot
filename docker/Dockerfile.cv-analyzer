@@ -76,9 +76,12 @@ ENV FLAGS_use_onednn=0
 ENV FLAGS_use_mkldnn=0
 
 # ── Install desktop-ui-cv package (detectors, OCR, CLIP, registry) ───────────
+# Repo is private — pass GIT_TOKEN (PAT with repo scope) for pip to authenticate:
+#   docker build --build-arg GIT_TOKEN=ghp_xxx ...
+ARG GIT_TOKEN=
 ARG DESKTOP_UI_CV_REF=v0.1.0
 RUN pip install --no-cache-dir \
-    "desktop-ui-cv @ git+https://github.com/SemperSupra/desktop-ui-cv@${DESKTOP_UI_CV_REF}"
+    "desktop-ui-cv @ git+https://${GIT_TOKEN}@github.com/SemperSupra/desktop-ui-cv@${DESKTOP_UI_CV_REF}"
 
 # ── Copy sidecar server and CV tools ─────────────────────────────────────────
 COPY scripts/diagnostics/cv-sidecar-server.py /scripts/cv-sidecar-server.py
