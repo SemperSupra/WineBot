@@ -42,24 +42,26 @@ Deploy MinIO as a **TrueNAS app** via the web UI, then configure clients with DV
 
 ## Setup
 
-### Step 1: Deploy MinIO as a TrueNAS App
+### Step 1: Deploy MinIO on TrueNAS (Automated)
 
-Two options:
+Run the deployment script from your local machine:
 
-**Option A: TrueNAS Web UI (recommended)**
-1. Open TrueNAS Web UI to Apps / Custom App
-2. Click Upload App Definition and select:
-   infra/dataset-registry/truenas-apps/minio/app.yaml
-3. Or paste docker-compose.yml into the Custom App YAML field
-4. Set the root password when prompted
-5. Click Deploy
-
-**Option B: CLI on TrueNAS**
 ```bash
-ssh truenas.fritz.box
-export MINIO_ROOT_PASSWORD="your-secure-password"
-docker compose -f infra/dataset-registry/truenas-apps/minio/docker-compose.yml up -d
+bash infra/dataset-registry/scripts/deploy-truenas-api.sh
 ```
+
+The script will:
+1. Connect to TrueNAS via SSH (prompts for password if no SSH key)
+2. Auto-generate a TrueNAS API key (or accept one you provide)
+3. Prompt for MinIO root password (auto-generates with strong default)
+4. Deploy MinIO as a TrueNAS Custom App via the REST API
+5. Create S3 buckets and a dedicated DVC user
+6. Print DVC credentials and offer to run client setup
+
+Or deploy manually via the TrueNAS Web UI:
+1. Open TrueNAS Web UI / Apps / Custom App
+2. Upload truenas-apps/minio/app.yaml
+3. Set the root password, click Deploy
 
 Or copy it first:
 ```bash
