@@ -1,0 +1,191 @@
+groups:
+  - name: MinIO Configuration
+    description: Configure MinIO object storage server
+  - name: Network Configuration
+    description: Configure network ports for MinIO
+  - name: Storage Configuration
+    description: Configure storage volumes for MinIO
+  - name: Resources Configuration
+    description: Configure resource limits for MinIO
+
+questions:
+  - variable: minio
+    label: ""
+    group: MinIO Configuration
+    schema:
+      type: dict
+      attrs:
+        - variable: root_user
+          label: MinIO Root Username
+          description: |
+            Root user with full admin access to MinIO.
+            This serves as the S3 access key for admin operations.
+          schema:
+            type: string
+            default: "winebot"
+            required: true
+            min_length: 3
+            max_length: 20
+
+        - variable: root_password
+          label: MinIO Root Password
+          description: |
+            Root password for the MinIO admin user.
+            This serves as the S3 secret key for admin operations.
+            Minimum 8 characters. Auto-generates a strong password if left blank.
+          schema:
+            type: string
+            default: ""
+            private: true
+            required: true
+            min_length: 8
+            max_length: 40
+
+        - variable: extra_args
+          label: Extra MinIO Arguments
+          description: Additional command-line arguments for the MinIO server
+          schema:
+            type: list
+            default: []
+            items:
+              - variable: arg
+                label: Argument
+                schema:
+                  type: string
+                  required: true
+
+        - variable: additional_envs
+          label: Additional Environment Variables
+          description: Extra environment variables for the MinIO container
+          schema:
+            type: list
+            default: []
+            items:
+              - variable: env
+                label: Environment Variable
+                schema:
+                  type: dict
+                  attrs:
+                    - variable: name
+                      label: Name
+                      schema:
+                        type: string
+                        required: true
+                    - variable: value
+                      label: Value
+                      schema:
+                        type: string
+
+  - variable: network
+    label: ""
+    group: Network Configuration
+    schema:
+      type: dict
+      attrs:
+        - variable: api_port
+          label: S3 API Port
+          description: Port for the S3-compatible object storage API
+          schema:
+            type: int
+            default: 9000
+            min: 1024
+            max: 65535
+            required: true
+
+        - variable: console_port
+          label: Web Console Port
+          description: Port for the MinIO web management console
+          schema:
+            type: int
+            default: 9001
+            min: 1024
+            max: 65535
+            required: true
+
+        - variable: certificate_id
+          label: Certificate
+          description: TLS certificate for HTTPS access (optional)
+          schema:
+            type: int
+            default: 0
+            null: true
+
+        - variable: domain
+          label: Domain
+          description: Domain name for MinIO server URL (required with certificate)
+          schema:
+            type: string
+            default: ""
+            required: false
+
+  - variable: storage
+    label: ""
+    group: Storage Configuration
+    schema:
+      type: dict
+      attrs:
+        - variable: export
+          label: MinIO Data Storage
+          description: Host path for MinIO persistent data storage
+          schema:
+            type: hostpath
+            default: /mnt/Storage/models/minio
+            required: true
+
+        - variable: additional_storage
+          label: Additional Storage
+          description: Additional storage volumes for the MinIO container
+          schema:
+            type: list
+            default: []
+            items:
+              - variable: storage
+                label: Storage
+                schema:
+                  type: dict
+                  attrs:
+                    - variable: type
+                      label: Type
+                      schema:
+                        type: string
+                        default: host_path
+                        enum:
+                          - value: host_path
+                            description: Host Path
+                          - value: ix_volume
+                            description: ix Volume
+                    - variable: host_path
+                      label: Host Path
+                      schema:
+                        type: hostpath
+                    - variable: mount_path
+                      label: Mount Path
+                      schema:
+                        type: string
+                        required: true
+
+  - variable: resources
+    label: ""
+    group: Resources Configuration
+    schema:
+      type: dict
+      attrs:
+        - variable: limits
+          label: Resource Limits
+          schema:
+            type: dict
+            attrs:
+              - variable: cpu
+                label: CPU Limit (in cores)
+                schema:
+                  type: int
+                  default: 2
+                  min: 1
+                  max: 32
+              - variable: memory
+                label: Memory Limit (in MB)
+                schema:
+                  type: int
+                  default: 2048
+                  min: 512
+                  max: 65536
