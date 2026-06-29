@@ -184,12 +184,14 @@ services:
       - ../artifacts:/artifacts:ro
       # Mount demo output for batch CV analysis
       - ../demo/output:/demo-output:ro
-      # Host model cache (persists YOLO weights across container rebuilds)
+      # Host YOLO model weights (pre-downloaded, read-only)
       - ../models/yolo:/models:ro
       # Host tessdata cache (persists Tesseract language data)
       - ../models/tessdata:/usr/share/tesseract-ocr/5/tessdata:ro
       # Host annotation cache (persists labels across container recreations)
       - ../models/annotations:/artifacts/annotations
+      # HuggingFace model cache (writable — runtime downloads for CLIP, Florence-2, etc.)
+      - ../models/huggingface:/root/.cache/huggingface
     environment:
       YOLO_MODEL_PATH: /models/yolov8n.pt
     healthcheck:
@@ -199,6 +201,38 @@ services:
       retries: 5
       start_period: 15s
     command: ["--serve", "--host", "0.0.0.0", "--port", "8001"]
+
+  # ── Captioning Sidecar (optional, built from docker/captioning-sidecar/Dockerfile) ──
+  winebot-captioner:
+    build:
+      context: ../docker/captioning-sidecar
+      dockerfile: Dockerfile
+    image: winebot-captioner:${WINEBOT_IMAGE_VERSION:-local}
+    profiles:
+      - interactive
+      - test
+    ports:
+      - "8002:8002"
+    volumes:
+      # HuggingFace model cache (persists Florence-2 weights across rebuilds)
+      - ../models/huggingface:/root/.cache/huggingface
+    environment:
+      CAPTIONER_MODEL: ${CAPTIONER_MODEL:-microsoft/Florence-2-base}
+      CAPTIONER_LORA_PATH: ${CAPTIONER_LORA_PATH:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: ["--serve", "--host", "0.0.0.0", "--port", "8002"]
 
 volumes:
   wineprefix:
