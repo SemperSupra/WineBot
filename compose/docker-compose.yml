@@ -184,14 +184,16 @@ services:
       - ../artifacts:/artifacts:ro
       # Mount demo output for batch CV analysis
       - ../demo/output:/demo-output:ro
-      # Host YOLO model weights (pre-downloaded, read-only)
-      - ../models/yolo:/models:ro
       # Host tessdata cache (persists Tesseract language data)
       - ../models/tessdata:/usr/share/tesseract-ocr/5/tessdata:ro
       # Host annotation cache (persists labels across container recreations)
       - ../models/annotations:/artifacts/annotations
       # HuggingFace model cache (writable — runtime downloads for CLIP, Florence-2, etc.)
       - ../models/huggingface:/root/.cache/huggingface
+      # Full models directory (writable — covers training output, datasets, checkpoints)
+      - ../models:/models
+      # YOLO weights are read-only (pre-downloaded, overwrite mount for safety)
+      - ../models/yolo:/models/yolo:ro
     environment:
       YOLO_MODEL_PATH: /models/yolov8n.pt
     healthcheck:

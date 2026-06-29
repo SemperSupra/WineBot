@@ -49,3 +49,7 @@ Screenshot *.png
 /STATUS.md
 /docs/BUILD_LADDER.md
 models/annotations/
+
+# Model data (keep .gitkeep, ignore everything else)
+models/**
+!models/**/.gitkeep
