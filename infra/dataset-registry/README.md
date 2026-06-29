@@ -1,10 +1,13 @@
 # Dataset Registry
 
-A standalone S3-compatible dataset registry backed by MinIO on TrueNAS and
+A standalone S3-compatible dataset registry backed by **Garage** on TrueNAS and
 versioned with DVC (Data Version Control). This is designed to work independently —
 any project can use it to version, store, and share datasets and model artifacts.
 
-Deploy MinIO as a **TrueNAS app** via the web UI, then configure clients with DVC.
+**Why Garage over MinIO?** The official TrueNAS MinIO app (stable train) is
+[deprecated and blocks new installations](https://github.com/truenas/apps/tree/master/ix-dev/stable/minio).
+Garage is the recommended replacement — available as an official TrueNAS
+community app, actively maintained, and fully S3-compatible for DVC.
 
 ## Architecture
 
@@ -12,27 +15,31 @@ Deploy MinIO as a **TrueNAS app** via the web UI, then configure clients with DV
 ┌──────────────────────────────────────────────────────────────────┐
 │  TRUENAS (truenas.fritz.box)                                    │
 │                                                                  │
-│  MinIO Container (Docker)                                        │
-│  ├─ Port 9000: S3-compatible API                                │
-│  └─ Port 9001: Web Console                                      │
+│  Garage Container (official community app)                       │
+│  ├─ Port 30188: S3-compatible API  (DVC endpoint)               │
+│  ├─ Port 30186: Web UI              (management console)        │
+│  └─ Port 30190: Admin API           (bucket/key management)     │
+│                                                                  │
+│  Storage (host_path):                                            │
+│  ├─ /mnt/Storage/models/garage/data          → objects          │
+│  ├─ /mnt/Storage/models/garage/meta          → metadata (SSD)   │
+│  └─ /mnt/Storage/models/garage/snapshots     → snapshots        │
 │                                                                  │
 │  Buckets:                                                        │
 │  ├─ winebot-models     → Model weights, datasets, checkpoints    │
 │  ├─ winebot-annotations → Label files, evaluation results        │
 │  └─ winebot-archives   → Old versions, experiment artifacts      │
-│                                                                  │
-│  Storage: /mnt/Storage/models/minio/                             │
 └──────────────────────────────────────────────────────────────────┘
          ▲
-         │ S3 API (port 9000)
+         │ S3 API (port 30188)
          ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  CLIENT MACHINES (Windows, Linux, WSL, CI runners)               │
 │                                                                  │
 │  DVC (Data Version Control)                                      │
 │  ├─ dvc add   → track files/directories                         │
-│  ├─ dvc push  → upload to TrueNAS MinIO                         │
-│  ├─ dvc pull  → download from TrueNAS MinIO                     │
+│  ├─ dvc push  → upload to TrueNAS Garage                        │
+│  ├─ dvc pull  → download from TrueNAS Garage                    │
 │  └─ dvc dag   → show data lineage                               │
 │                                                                  │
 │  Local cache: .dvc/cache/                                       │
@@ -42,57 +49,126 @@ Deploy MinIO as a **TrueNAS app** via the web UI, then configure clients with DV
 
 ## Setup
 
-### Step 1: Deploy MinIO on TrueNAS (Automated)
+### Prerequisites
 
-Run the deployment script from your local machine:
+- TrueNAS 24.10+ (Docker-based app system)
+- SSH access to `truenas.fritz.box`
+- Sufficient storage at `/mnt/Storage/models/garage/`
+
+### Step 1: Install Garage from TrueNAS Community Train
+
+Garage is an official TrueNAS community app:
+
+1. **TrueNAS Web UI → Apps → Available Apps → Garage → Install**
+
+2. **Configure using the pre-filled values** at:
+   [`truenas-apps/garage/garage-values.yaml`](truenas-apps/garage/garage-values.yaml)
+
+   Key settings for your environment:
+   - **Storage → Data**: Host path `/mnt/Storage/models/garage/data`
+   - **Storage → Metadata**: Host path `/mnt/Storage/models/garage/meta`
+   - **Storage → Metadata Snapshots**: Host path `/mnt/Storage/models/garage/snapshots`
+   - **Network → S3 API Port**: 30188 (published)
+   - **Network → Admin Port**: 30190 (published)
+   - **Network → WebUI Port**: 30186 (published)
+   - **Garage → Replication Factor**: 1 (single node)
+   - **Garage → Region**: `garage`
+
+3. **Generate secrets** before installing:
+   ```bash
+   # Admin token (for bucket/key management)
+   openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32
+
+   # RPC secret (64-char hex)
+   openssl rand -hex 32
+   ```
+
+4. Click **Install** and wait for the app to become healthy.
+
+### Step 2: Post-Deploy — Create Buckets and DVC Keys
+
+Run the setup script. It will SSH into TrueNAS, create buckets,
+and generate DVC-compatible access keys:
 
 ```bash
-bash infra/dataset-registry/scripts/deploy-truenas-api.sh
+bash infra/dataset-registry/truenas-apps/garage/post-deploy.sh
 ```
 
-The script will:
-1. Connect to TrueNAS via SSH (prompts for password if no SSH key)
-2. Auto-generate a TrueNAS API key (or accept one you provide)
-3. Prompt for MinIO root password (auto-generates with strong default)
-4. Deploy MinIO as a TrueNAS Custom App via the REST API
-5. Create S3 buckets and a dedicated DVC user
-6. Print DVC credentials and offer to run client setup
+The script will prompt for the Garage admin token (from Step 1),
+then:
+1. Verify the Garage container is running
+2. Create `winebot-models`, `winebot-annotations`, `winebot-archives` buckets
+3. Create a `winebot-dvc` API key with read/write access
+4. Print DVC credentials
 
-Or deploy manually via the TrueNAS Web UI:
-1. Open TrueNAS Web UI / Apps / Custom App
-2. Upload truenas-apps/minio/app.yaml
-3. Set the root password, click Deploy
+Save the credentials printed at the end.
 
-Or copy it first:
+### Step 2: Post-Deploy — Create Buckets and DVC Keys
+
+Run the setup script. It will SSH into TrueNAS, create buckets,
+and generate DVC-compatible access keys:
+
 ```bash
-scp infra/dataset-registry/scripts/deploy-truenas.sh truenas.fritz.box:/tmp/
-ssh truenas.fritz.box "sudo bash /tmp/deploy-truenas.sh"
+bash infra/dataset-registry/truenas-apps/garage/post-deploy.sh
 ```
 
-The script will:
-1. Start MinIO as a Docker container with persistent storage
-2. Create buckets (`winebot-models`, `winebot-annotations`, `winebot-archives`)
-3. Generate access credentials
-4. Print DVC remote configuration for client machines
+The script will prompt for the Garage admin token (from Step 1),
+then:
+1. Verify the Garage container is running
+2. Create `winebot-models`, `winebot-annotations`, `winebot-archives` buckets
+3. Create a `winebot-dvc` API key with read/write access
+4. Optionally store credentials in the OS keychain and run client setup
 
-**Save the credentials** printed at the end.
+### Step 3: Configure Client
 
-### Step 2: Configure Client (Linux/WSL)
+**Recommended — store credentials in the OS credential manager:**
+
+The credential is stored encrypted in your OS keychain, not in a plaintext file.
+
+<details>
+<summary>Linux (libsecret/secret-tool)</summary>
 
 ```bash
-# Install DVC and configure the remote
-export INFRA_MINIO_ACCESS_KEY="winebot-dvc"
-export INFRA_MINIO_SECRET_KEY="your-secret-key"
+# Store credentials
+bash infra/dataset-registry/scripts/setup-credential-store.sh \
+  --access-key "GK..." --secret-key "your-secret-key"
+
+# Run client setup (pulls from keychain automatically)
 bash infra/dataset-registry/scripts/setup-client.sh
 ```
+</details>
 
-### Step 2: Configure Client (Windows PowerShell)
+<details>
+<summary>Windows (Windows Credential Manager)</summary>
 
 ```powershell
-$env:INFRA_MINIO_ACCESS_KEY = "winebot-dvc"
-$env:INFRA_MINIO_SECRET_KEY = "your-secret-key"
+# Store credentials
+.\infra\dataset-registry\scripts\setup-credential-store.ps1 `
+  -AccessKey "GK..." -SecretKey "your-secret-key"
+
+# Run client setup (pulls from Credential Manager automatically)
 .\infra\dataset-registry\scripts\setup-client.ps1
 ```
+
+To view stored credentials in the Windows UI:
+Control Panel → User Accounts → Credential Manager → Windows Credentials → Generic Credentials
+
+For the credential format reference:
+```powershell
+.\infra\dataset-registry\scripts\setup-credential-store.ps1 -ShowFormat
+```
+</details>
+
+<details>
+<summary>CI/CD or temporary (environment variables)</summary>
+
+```bash
+export INFRA_MINIO_ACCESS_KEY="winebot-dvc"
+export INFRA_MINIO_SECRET_KEY="your-secret-key"
+export INFRA_MINIO_PORT=30188
+bash infra/dataset-registry/scripts/setup-client.sh
+```
+</details>
 
 ## Usage
 
@@ -104,7 +180,7 @@ dvc add models/wine-dataset/
 git add models/wine-dataset.dvc .gitignore
 git commit -m "dvc: track wine-dataset v1"
 
-# Upload to TrueNAS
+# Upload to TrueNAS Garage
 dvc push -r truenas
 ```
 
@@ -160,23 +236,27 @@ export DVC_REMOTE_TRUENAS_SECRET_ACCESS_KEY="your-key"
 
 | File | Purpose |
 |:---|:---|
-| `scripts/deploy-truenas.sh` | Deploy MinIO on TrueNAS (run once) |
-| `scripts/setup-client.sh` | Configure DVC on Linux/WSL |
-| `scripts/setup-client.ps1` | Configure DVC on Windows |
-| `.env.registry.example` | Credential template |
-| `README.md` | This file |
+| `truenas-apps/garage/garage-values.yaml` | Pre-filled config for TrueNAS Garage install |
+| `truenas-apps/garage/post-deploy.sh` | Post-install: buckets, keys, DVC setup |
+| `scripts/deploy-truenas.sh` | Deploy guide (points to Web UI + post-deploy) |
+| `scripts/deploy-truenas-api.sh` | Automated deploy via TrueNAS API |
+| `scripts/setup-credential-store.sh` | OS credential store for secrets (Linux/macOS) |
+| `scripts/setup-credential-store.ps1` | Windows Credential Manager integration |
+| `scripts/setup-client.sh` | Configure DVC on Linux/WSL (auto-detects keychain) |
+| `scripts/setup-client.ps1` | Configure DVC on Windows (auto-detects Credential Manager) |
+| `.env.registry.example` | Plaintext env template (fallback only) |
 
 ## Troubleshooting
 
-### Cannot reach MinIO
+### Cannot reach Garage S3 endpoint
 
 ```bash
 # From client machine, test connectivity:
-curl -v http://truenas.fritz.box:9000/minio/health/live
+curl -v http://truenas.fritz.box:30188/health
 
-# If it fails, check TrueNAS firewall and MinIO container:
-ssh truenas.fritz.box "docker ps --filter name=minio"
-ssh truenas.fritz.box "docker logs minio --tail 20"
+# If it fails, check TrueNAS firewall and Garage container:
+ssh truenas.fritz.box "docker ps --filter name=garage"
+ssh truenas.fritz.box "docker logs garage --tail 20"
 ```
 
 ### DVC push fails with auth error

@@ -1,8 +1,0 @@
-images:
-  image:
-    repository: minio/minio
-    tag: latest
-
-consts:
-  minio_container_name: minio-dataset-registry
-  perms_container_name: permissions

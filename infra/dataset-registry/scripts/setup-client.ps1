@@ -19,8 +19,34 @@ param(
 
 # Defaults
 if (-not $TruenasHost) { $TruenasHost = "truenas.fritz.box" }
-if (-not $MinioPort) { $MinioPort = 9000 }
+if (-not $MinioPort) { $MinioPort = 30188 }
 if (-not $Bucket) { $Bucket = "winebot-models" }
+
+# ── Try Windows Credential Manager first ──────────────────────────────────────
+if ((-not $AccessKey) -or (-not $SecretKey)) {
+    $credScript = Join-Path $Here "setup-credential-store.ps1"
+    if (Test-Path $credScript) {
+        $exportOutput = & $credScript -Export 2>$null
+        if ($exportOutput) {
+            foreach ($line in $exportOutput) {
+                if ($line -match '^\$env:INFRA_MINIO_ACCESS_KEY\s*=\s*''(.+?)''') {
+                    $AccessKey = $matches[1]
+                }
+                if ($line -match '^\$env:INFRA_MINIO_SECRET_KEY\s*=\s*''(.+?)''') {
+                    $SecretKey = $matches[1]
+                }
+                if ($line -match '^\$env:INFRA_TRUENAS_HOST\s*=\s*''(.+?)''') {
+                    $TruenasHost = $matches[1]
+                }
+                if ($line -match '^\$env:INFRA_MINIO_PORT\s*=\s*(.+?)$') {
+                    $MinioPort = $matches[1]
+                }
+            }
+            $Endpoint = "http://${TruenasHost}:${MinioPort}"
+            Write-Host "[INFO] Loaded credentials from Windows Credential Manager." -ForegroundColor Green
+        }
+    }
+}
 
 $Endpoint = "http://${TruenasHost}:${MinioPort}"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -70,7 +96,7 @@ if ($inRepo) {
 
 # ── Configure Remote ─────────────────────────────────────────────────────────
 if ($AccessKey -and $SecretKey) {
-    Write-Host "[INFO] Configuring DVC remote 'truenas'..."
+    Write-Host "[INFO] Configuring DVC remote 'truenas' (Garage S3)..."
 
     if ($inRepo) {
         # Add or update remote
@@ -86,26 +112,26 @@ if ($AccessKey -and $SecretKey) {
         Write-Host "  Endpoint:  ${Endpoint}"
         Write-Host ""
 
-        # ── Test Connection ──────────────────────────────────────────────────
+        # ── Test Connection (Garage health endpoint) ─────────────────────────
         Write-Host "[INFO] Testing connection..."
         $health = $null
         try {
-            $health = Invoke-WebRequest -Uri "${Endpoint}/minio/health/live" -TimeoutSec 5 -UseBasicParsing
+            $health = Invoke-WebRequest -Uri "${Endpoint}/health" -TimeoutSec 5 -UseBasicParsing
         } catch {
             $health = $null
         }
 
         if ($health -and $health.StatusCode -eq 200) {
-            Write-Host "[INFO] MinIO reachable at ${Endpoint}" -ForegroundColor Green
+            Write-Host "[INFO] Garage S3 reachable at ${Endpoint}" -ForegroundColor Green
             Write-Host ""
             Write-Host "Quick usage:"
             Write-Host "  dvc add models\your-data"
             Write-Host "  dvc push -r truenas"
             Write-Host ""
         } else {
-            Write-Host "[WARN] Cannot reach MinIO at ${Endpoint}" -ForegroundColor Yellow
-            Write-Host "  Verify TrueNAS is running and MinIO is deployed."
-            Write-Host "  Test with: curl -v ${Endpoint}/minio/health/live"
+            Write-Host "[WARN] Cannot reach S3 at ${Endpoint}" -ForegroundColor Yellow
+            Write-Host "  Verify TrueNAS is running and Garage is deployed."
+            Write-Host "  Test with: curl -v ${Endpoint}/health"
         }
     }
 } else {
@@ -115,22 +141,30 @@ if ($AccessKey -and $SecretKey) {
     Write-Host "║           DATASET REGISTRY — WINDOWS CLIENT SETUP            ║" -ForegroundColor Cyan
     Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "No credentials found. Provide them via environment variables:"
+    Write-Host "No credentials found. Options:"
     Write-Host ""
-    Write-Host "  `$env:INFRA_TRUENAS_HOST = 'truenas.fritz.box'"
-    Write-Host "  `$env:INFRA_MINIO_PORT = 9000"
-    Write-Host "  `$env:INFRA_MINIO_BUCKET = 'winebot-models'"
-    Write-Host "  `$env:INFRA_MINIO_ACCESS_KEY = 'winebot-dvc'"
-    Write-Host "  `$env:INFRA_MINIO_SECRET_KEY = 'your-secret-key'"
-    Write-Host "  .\scripts\setup-client.ps1"
+    Write-Host "  1. Store in Windows Credential Manager (recommended):" -ForegroundColor Green
+    Write-Host "       .\scripts\setup-credential-store.ps1 -AccessKey 'GK...' -SecretKey '...'" -ForegroundColor Gray
+    Write-Host "       .\scripts\setup-client.ps1" -ForegroundColor Gray
     Write-Host ""
+    Write-Host "  2. Set environment variables (good for CI/CD):"
+    Write-Host "       `$env:INFRA_TRUENAS_HOST = 'truenas.fritz.box'"
+    Write-Host "       `$env:INFRA_MINIO_PORT = 30188"
+    Write-Host "       `$env:INFRA_MINIO_BUCKET = 'winebot-models'"
+    Write-Host "       `$env:INFRA_MINIO_ACCESS_KEY = 'winebot-dvc'"
+    Write-Host "       `$env:INFRA_MINIO_SECRET_KEY = 'your-secret-key'"
+    Write-Host "       .\scripts\setup-client.ps1"
+    Write-Host ""
+    Write-Host "  3. Use .env file (plaintext — use with caution):"
+    Write-Host "       Copy .env.registry.example to .env.registry"
+    Write-Host "       Edit with your credentials"
 
     # Create example env file
     $envExample = Join-Path $ProjectRoot ".env.registry.example"
     @"
-# ── Dataset Registry Credentials ────────────────────────────────────────────
+# ── Dataset Registry Credentials (Garage S3) ────────────────────────────────
 INFRA_TRUENAS_HOST=truenas.fritz.box
-INFRA_MINIO_PORT=9000
+INFRA_MINIO_PORT=30188
 INFRA_MINIO_BUCKET=winebot-models
 INFRA_MINIO_ACCESS_KEY=winebot-dvc
 INFRA_MINIO_SECRET_KEY=replace-with-actual-secret

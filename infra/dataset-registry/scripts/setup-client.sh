@@ -17,13 +17,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env.registry"
+CREDENTIAL_STORE="${SCRIPT_DIR}/setup-credential-store.sh"
 
 # ── Configuration (override via environment variables) ───────────────────────
 TRUENAS_HOST="${INFRA_TRUENAS_HOST:-truenas.fritz.box}"
-MINIO_PORT_API="${INFRA_MINIO_PORT:-9000}"
+MINIO_PORT_API="${INFRA_MINIO_PORT:-30188}"
 MINIO_BUCKET="${INFRA_MINIO_BUCKET:-winebot-models}"
 MINIO_ACCESS_KEY="${INFRA_MINIO_ACCESS_KEY:-}"
 MINIO_SECRET_KEY="${INFRA_MINIO_SECRET_KEY:-}"
+
+# ── Try OS credential store first ─────────────────────────────────────────────
+if [ -z "$MINIO_ACCESS_KEY" ] || [ -z "$MINIO_SECRET_KEY" ]; then
+    if [ -f "$CREDENTIAL_STORE" ] && [ -x "$CREDENTIAL_STORE" ]; then
+        CRED_EXPORT=$("$CREDENTIAL_STORE" --export 2>/dev/null) || true
+        if [ -n "$CRED_EXPORT" ]; then
+            eval "$CRED_EXPORT"
+            TRUENAS_HOST="${INFRA_TRUENAS_HOST:-$TRUENAS_HOST}"
+            MINIO_PORT_API="${INFRA_MINIO_PORT:-$MINIO_PORT_API}"
+            MINIO_ACCESS_KEY="${INFRA_MINIO_ACCESS_KEY:-$MINIO_ACCESS_KEY}"
+            MINIO_SECRET_KEY="${INFRA_MINIO_SECRET_KEY:-$MINIO_SECRET_KEY}"
+            info "Loaded credentials from OS keychain."
+        fi
+    fi
+fi
+
 MINIO_ENDPOINT="http://${TRUENAS_HOST}:${MINIO_PORT_API}"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -51,7 +68,7 @@ fi
 
 # ── Configure Remote ─────────────────────────────────────────────────────────
 if [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
-    info "Configuring DVC remote for TrueNAS MinIO..."
+    info "Configuring DVC remote for TrueNAS (Garage S3)..."
 
     # Check if we're in a DVC repo
     if [ -f "${PROJECT_ROOT}/.dvc/config" ]; then
@@ -83,25 +100,25 @@ if [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
 
     # ── Test Connection ──────────────────────────────────────────────────────
     echo ""
-    info "Testing connection to TrueNAS MinIO..."
+    info "Testing connection to TrueNAS Garage S3..."
     if dvc status -r truenas 2>/dev/null; then
         info "Connection successful!"
     else
-        # Try a direct S3 API check
-        if curl -sf "${MINIO_ENDPOINT}/minio/health/live" > /dev/null 2>&1; then
-            info "MinIO is reachable, but no DVC-tracked files yet."
+        # Try a direct S3 API check (Garage health at /health)
+        if curl -sf "${MINIO_ENDPOINT}/health" > /dev/null 2>&1; then
+            info "Garage S3 is reachable, but no DVC-tracked files yet."
             info "To version your first dataset:"
             echo "    dvc add your-data-directory/"
             echo "    dvc push -r truenas"
         else
-            warn "Cannot reach MinIO at ${MINIO_ENDPOINT}"
+            warn "Cannot reach S3 endpoint at ${MINIO_ENDPOINT}"
             warn "Verify:"
-            warn "  1. TrueNAS is running and MinIO container is up"
+            warn "  1. TrueNAS is running and Garage container is up"
             warn "  2. Hostname '${TRUENAS_HOST}' resolves correctly"
             warn "  3. Port ${MINIO_PORT_API} is not firewalled"
             echo ""
             warn "Quick test:"
-            echo "    curl -v ${MINIO_ENDPOINT}/minio/health/live"
+            echo "    curl -v ${MINIO_ENDPOINT}/health"
         fi
     fi
 else
@@ -113,24 +130,32 @@ else
     echo ""
     echo "No credentials found. You can:"
     echo ""
-    echo "  1. Set environment variables:"
+    echo "  1. Store in OS keychain (recommended — secrets stay encrypted):"
+    echo "       bash scripts/setup-credential-store.sh \\"
+    echo "         --access-key 'GK...' --secret-key 's3cr3t'"
+    echo "       bash scripts/setup-client.sh"
+    echo ""
+    echo "  2. Set environment variables (good for CI/CD):"
     echo "       export INFRA_TRUENAS_HOST=truenas.fritz.box"
     echo "       export INFRA_MINIO_ACCESS_KEY=your-access-key"
     echo "       export INFRA_MINIO_SECRET_KEY=your-secret-key"
     echo "       bash setup-client.sh"
     echo ""
-    echo "  2. Or copy .env.registry.example to .env.registry and fill in values"
-    echo "     (see below for the required format)"
+    echo "  3. Use .env file (plaintext — use with caution):"
+    echo "       cp .env.registry.example .env.registry"
+    echo "       # Edit .env.registry with your credentials"
+    echo "       set -a; source .env.registry; set +a"
+    echo "       bash setup-client.sh"
     echo ""
 
     # Generate example env file
     cat > "${ENV_FILE}.example" << 'ENVEOF'
-# ── Dataset Registry Credentials ────────────────────────────────────────────
+# ── Dataset Registry Credentials (Garage S3) ────────────────────────────────
 # Copy this to .env.registry and fill in your values.
-# Source: infra/dataset-registry/scripts/deploy-truenas.sh (run on TrueNAS first)
+# Source: infra/dataset-registry/truenas-apps/garage/post-deploy.sh
 
 INFRA_TRUENAS_HOST=truenas.fritz.box
-INFRA_MINIO_PORT=9000
+INFRA_MINIO_PORT=30188
 INFRA_MINIO_BUCKET=winebot-models
 INFRA_MINIO_ACCESS_KEY=winebot-dvc
 INFRA_MINIO_SECRET_KEY=replace-with-actual-secret
