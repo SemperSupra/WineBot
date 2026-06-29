@@ -4,6 +4,8 @@ A standalone S3-compatible dataset registry backed by MinIO on TrueNAS and
 versioned with DVC (Data Version Control). This is designed to work independently —
 any project can use it to version, store, and share datasets and model artifacts.
 
+Deploy MinIO as a **TrueNAS app** via the web UI, then configure clients with DVC.
+
 ## Architecture
 
 ```
@@ -40,14 +42,23 @@ any project can use it to version, store, and share datasets and model artifacts
 
 ## Setup
 
-### Step 1: Deploy MinIO on TrueNAS
+### Step 1: Deploy MinIO as a TrueNAS App
 
+Two options:
+
+**Option A: TrueNAS Web UI (recommended)**
+1. Open TrueNAS Web UI to Apps / Custom App
+2. Click Upload App Definition and select:
+   infra/dataset-registry/truenas-apps/minio/app.yaml
+3. Or paste docker-compose.yml into the Custom App YAML field
+4. Set the root password when prompted
+5. Click Deploy
+
+**Option B: CLI on TrueNAS**
 ```bash
-# SSH into TrueNAS
 ssh truenas.fritz.box
-
-# Run the deployment script
-sudo bash /tmp/deploy-truenas.sh
+export MINIO_ROOT_PASSWORD="your-secure-password"
+docker compose -f infra/dataset-registry/truenas-apps/minio/docker-compose.yml up -d
 ```
 
 Or copy it first:
