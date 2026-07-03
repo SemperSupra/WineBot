@@ -102,7 +102,7 @@ def train_classifier(X_train: np.ndarray, y_train: np.ndarray):
 
 
 def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
-             filenames: list, gt_lookup: dict) -> dict:
+             _filenames: list, _gt_lookup: dict) -> dict:
     """Evaluate classifier and return detailed results."""
     from sklearn.metrics import accuracy_score, confusion_matrix
 
@@ -121,8 +121,6 @@ def evaluate(clf, X_test: np.ndarray, y_test: np.ndarray,
 
     # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
-    labels = [SCENE_TYPES[i] for i in range(min(len(SCENE_TYPES), cm.shape[0]))]
-
     results = {
         "accuracy": float(acc),
         "samples": len(y_test),
@@ -196,10 +194,10 @@ def main():
         items.sort()  # deterministic
         n = len(items)
         n_train = int(n * 0.8)
-        for fname, info in items[:n_train]:
+        for fname, _info in items[:n_train]:
             train_fnames.append(fname)
             train_labels.append(SCENE_TO_IDX[scene])
-        for fname, info in items[n_train:]:
+        for fname, _info in items[n_train:]:
             test_fnames.append(fname)
             test_labels.append(SCENE_TO_IDX[scene])
 
@@ -222,12 +220,11 @@ def main():
         embeddings, loaded_fnames = extract_clip_embeddings(clip, IMAGE_DIR, valid_fnames)
 
         # Align labels with loaded files
-        label_map = {f: l for f, l in zip(valid_fnames, valid_labels)}
+        label_map = {fname: label for fname, label in zip(valid_fnames, valid_labels)}
         loaded_labels = np.array([label_map[f] for f in loaded_fnames])
 
         if split_name == "train":
             X_train, y_train = embeddings, loaded_labels
-            train_files = loaded_fnames
             print(f"  Train embeddings: {X_train.shape}")
         else:
             X_test, y_test = embeddings, loaded_labels

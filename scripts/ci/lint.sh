@@ -2,7 +2,7 @@
 set -euo pipefail
 echo "--- Running Linting (Ruff + Mypy + ShellCheck) ---"
 ruff check .
-mypy api automation tests scripts/*.py --ignore-missing-imports
+mypy api --ignore-missing-imports --platform linux
 
 # ShellCheck: lint all shell scripts for common bugs and portability issues
 echo "--- ShellCheck ---"

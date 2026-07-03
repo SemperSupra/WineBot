@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -356,10 +357,8 @@ def run_trace(session_dir: str, include_raw: bool, motion_sample_ms: int) -> int
         def handle_signal(_sig, _frame):
             nonlocal stop_requested
             stop_requested = True
-            try:
+            with contextlib.suppress(Exception):
                 proc.terminate()
-            except Exception:
-                pass
 
         signal.signal(signal.SIGTERM, handle_signal)
         signal.signal(signal.SIGINT, handle_signal)
@@ -375,18 +374,12 @@ def run_trace(session_dir: str, include_raw: bool, motion_sample_ms: int) -> int
                     logf.flush()
         finally:
             stop_stderr = True
-            try:
+            with contextlib.suppress(Exception):
                 proc.terminate()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 proc.wait(timeout=2)
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 stderr_thread.join(timeout=1)
-            except Exception:
-                pass
             write_state(session_dir, "stopped")
 
     return 0

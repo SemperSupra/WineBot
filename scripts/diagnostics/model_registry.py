@@ -840,10 +840,7 @@ def main():
 
     args = parser.parse_args()
 
-    if args.scan:
-        reg = ModelRegistry.from_scan(args.scan)
-    else:
-        reg = ModelRegistry.from_catalogue()
+    reg = ModelRegistry.from_scan(args.scan) if args.scan else ModelRegistry.from_catalogue()
 
     if args.catalog:
         reg.print_catalog()

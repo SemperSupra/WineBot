@@ -1,3 +1,4 @@
+import contextlib
 import os
 import platform
 import time
@@ -168,9 +169,7 @@ def health_check():
             return False
         if parts[0] == "192" and parts[1] == "168":
             return False
-        if parts[0] == "172" and 16 <= int(parts[1]) <= 31:
-            return False
-        return True
+        return not (parts[0] == "172" and 16 <= int(parts[1]) <= 31)
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -301,10 +300,8 @@ def health_system():
         "cpu_count": os.cpu_count(),
         "discovery": discovery_manager.status(),
     }
-    try:
+    with contextlib.suppress(OSError):
         info["loadavg"] = os.getloadavg()
-    except OSError:
-        pass
     info.update(meminfo_summary())
     return info
 
@@ -392,10 +389,8 @@ def health_wine():
     system_reg = os.path.join(wineprefix, "system.reg")
     system_reg_exists = os.path.exists(system_reg)
     owner_uid = None
-    try:
+    with contextlib.suppress(Exception):
         owner_uid = os.stat(wineprefix).st_uid
-    except Exception:
-        pass
     wine_version = safe_command(["wine", "--version"])
     return {
         "wineprefix": wineprefix,

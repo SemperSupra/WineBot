@@ -69,10 +69,7 @@ async def run_app(data: AppRunModel):
     )
     if not is_windows and not os.path.isabs(app_path):
         # If it's a naked filename, check if it's a Linux utility first
-        if shutil.which(app_path):
-            cmd = [app_path]
-        else:
-            cmd = ["wine", app_path]
+        cmd = [app_path] if shutil.which(app_path) else ["wine", app_path]
     elif is_windows:
         cmd = ["wine", app_path]
     else:

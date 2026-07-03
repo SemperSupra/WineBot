@@ -237,7 +237,7 @@ class UIElementDetector:
 
     def _classify_region(self, x: int, y: int, w: int, h: int,
                          area: int, shape: tuple) -> str:
-        aspect = w / max(h, 1)
+        w / max(h, 1)
         sh, sw = shape[:2]
 
         if h <= self.WINDOW_TITLE_HEIGHT and w > 200:
@@ -332,10 +332,7 @@ def main():
         return
 
     # Single-shot
-    if args.image:
-        img = detector.load_image(args.image)
-    else:
-        img = detector.capture()
+    img = detector.load_image(args.image) if args.image else detector.capture()
 
     result = detector.analyze(img, args.label)
     result["timestamp"] = datetime.now(UTC).isoformat()

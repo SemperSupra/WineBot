@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from functools import cache
 from typing import Any, Final
 
@@ -50,10 +50,8 @@ def manage_process(proc: subprocess.Popen) -> None:
             _reap_finished_tracked_processes_locked()
             # If still full, refuse to grow unbounded.
             if len(process_store) >= PROCESS_STORE_CAP:
-                try:
+                with suppress(Exception):
                     proc.terminate()
-                except Exception:
-                    pass
                 raise ProcessCapacityError(
                     f"Detached process tracking capacity reached ({PROCESS_STORE_CAP})."
                 )
@@ -326,6 +324,7 @@ def check_binary(name: str) -> dict[str, Any]:
 @asynccontextmanager
 async def async_subprocess_context(cmd: list[str], timeout: int | None = None):
     """Context manager to ensure a subprocess is reaped even on error or cancellation."""
+    reap_timeout = timeout if timeout is not None else 1.0
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -335,7 +334,7 @@ async def async_subprocess_context(cmd: list[str], timeout: int | None = None):
         if proc.returncode is None:
             try:
                 proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=1.0)
+                await asyncio.wait_for(proc.wait(), timeout=reap_timeout)
             except (TimeoutError, ProcessLookupError):
                 try:
                     proc.kill()

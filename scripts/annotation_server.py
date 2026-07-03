@@ -909,7 +909,7 @@ def main():
     # ── Port discovery with conflict fallback ───────────────────────────────────
     port = args.port
     max_attempts = 10
-    for attempt in range(max_attempts):
+    for _attempt in range(max_attempts):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)

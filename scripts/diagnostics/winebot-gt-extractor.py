@@ -77,13 +77,13 @@ def match_commands_to_frames(commands: list, frames: dict) -> dict:
 
     for cmd in commands:
         cmd_ts = cmd.get("timestamp_epoch_ms", 0)
-        cmd_type = cmd.get("command", "")
+        cmd.get("command", "")
 
         # Find the frame closest to this command
         best_frame = None
         best_delta = float("inf")
         for idx, frame in frames.items():
-            frame_ts = int(frame.get("timestamp_utc", "2000").replace("-", "")
+            int(frame.get("timestamp_utc", "2000").replace("-", "")
                             .replace("T", "").replace(":", "").replace("Z", "")[:14] or 0)
             # Use epoch ms if available
             frame_epoch = frame.get("timestamp_epoch_ms", 0)

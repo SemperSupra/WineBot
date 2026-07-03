@@ -312,7 +312,6 @@ def evaluate_pipeline(dataset_dir: str, api_url: str,
 
     # Per-frame accumulators
     detection_scores = []
-    state_correct = []
     state_predicted = []
     state_actual = []
     latencies = []
@@ -379,7 +378,7 @@ def evaluate_pipeline(dataset_dir: str, api_url: str,
     )
     # Compute macro-averaged F1 (unweighted mean of per-class F1)
     per_class_f1s = [pc["f1"] for pc in agg_eval["per_class"].values()]
-    macro_f1 = sum(per_class_f1s) / len(per_class_f1s) if per_class_f1s else 0.0
+    sum(per_class_f1s) / len(per_class_f1s) if per_class_f1s else 0.0
 
     # State classification
     state_results = eval_state_classification(state_predicted, state_actual)

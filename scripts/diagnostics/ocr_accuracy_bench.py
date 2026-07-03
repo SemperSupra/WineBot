@@ -74,8 +74,6 @@ def compute_word_accuracy(detected_text: str, expected_text: str) -> dict:
         return {"precision": 1.0, "recall": 1.0, "f1": 1.0, "exact_match": len(det_words) == 0}
 
     # Count fuzzy matches (any detected word contains or is contained by expected)
-    matched_exp = 0
-    matched_det = 0
     matched_det_words = set()
     matched_exp_words = set()
 
@@ -146,7 +144,7 @@ def compute_stats(values, confidence=0.95):
 
 def generate_test_texts():
     """Generate test images with known text from benchmark generators."""
-    images, texts = [], []
+    images, _texts = [], []
 
     # Explicit text-ground-truth pairs
     test_cases = [

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # EXECUTION: HOST — reads session screenshot files; pure file validation
 import argparse
+import contextlib
 import json
 import struct
 import sys
@@ -36,12 +37,10 @@ def read_png_text(path):
             elif ctype == "zTXt":
                 key, rest = chunk.split(b"\x00", 1)
                 comp_data = rest[1:]
-                try:
+                with contextlib.suppress(Exception):
                     meta[key.decode()] = zlib.decompress(comp_data).decode(
                         errors="replace"
                     )
-                except Exception:
-                    pass
             if ctype == "IEND":
                 break
     return meta

@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import datetime
 import fcntl
 import json
@@ -63,10 +64,8 @@ def load_events(session_dir: str, events_path: str | None = None):
         # Appends are atomic enough for jsonl usually.
         for line in f:
             if line.strip():
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     events.append(Event.from_json(line))
-                except json.JSONDecodeError:
-                    pass
     return events
 
 
@@ -219,10 +218,7 @@ def load_input_trace_events(session_dir: str) -> list:
     max_load_mb = int(os.getenv("WINEBOT_MAX_TRACE_LOAD_MB", "100"))
 
     event_buffer: Any
-    if max_events > 0:
-        event_buffer = deque(maxlen=max_events)
-    else:
-        event_buffer = [] # type: ignore
+    event_buffer = deque(maxlen=max_events) if max_events > 0 else []  # type: ignore
 
     total_loaded_approx_bytes = 0
 
@@ -299,10 +295,8 @@ def write_finalization_state(session_dir: str, phase: str, **extra: Any) -> None
 def clear_finalization_state(session_dir: str) -> None:
     path = _finalization_path(session_dir)
     if os.path.exists(path):
-        try:
+        with contextlib.suppress(Exception):
             os.remove(path)
-        except Exception:
-            pass
 
 
 def read_pid(path: str) -> int | None:
@@ -746,7 +740,7 @@ def cmd_start(args):
         events_path=events_path,
     )
 
-    def cleanup(signum, frame):
+    def cleanup(signum, _frame):
         nonlocal paused
         logger.info("Received stop signal. Cleaning up...")
         write_finalization_state(
@@ -793,7 +787,7 @@ def cmd_start(args):
 
         sys.exit(0)
 
-    def handle_pause(signum, frame):
+    def handle_pause(_signum, _frame):
         nonlocal paused
         if paused:
             return
@@ -813,7 +807,7 @@ def cmd_start(args):
         write_state(session_dir, "paused")
         paused = True
 
-    def handle_resume(signum, frame):
+    def handle_resume(_signum, _frame):
         nonlocal paused
         if not paused:
             return

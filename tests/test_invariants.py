@@ -2,6 +2,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from api.core.config_guard import validate_runtime_configuration
@@ -30,7 +31,7 @@ client = TestClient(app)
 )
 def test_session_transition_invariants(state, target, session_mode, expected_error):
     if expected_error:
-        with pytest.raises(Exception):
+        with pytest.raises(HTTPException):
             _validate_session_transition(state, target, session_mode)
     else:
         _validate_session_transition(state, target, session_mode)

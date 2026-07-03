@@ -10,6 +10,9 @@ target-version = "py312"
 # File exclusions (generated, vendored, or extracted, path-reference files)
 exclude = [
     ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
     "__pycache__",
     "build",
     "dist",
@@ -66,8 +69,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use bare asserts and have more lenient naming
-"tests/**" = ["D", "N", "ARG"]
+"tests/**" = ["D", "N", "ARG", "SIM117"]
 "scripts/**" = ["D"]  # scripts don't need full docstrings
+# Diagnostic/research scripts are exercised manually and often preserve compact
+# benchmark code from experiments. Keep release lint focused on product paths.
+"scripts/diagnostics/**" = ["D", "ARG", "E701", "E702", "F401", "F402", "F841", "B007", "SIM105", "SIM108", "SIM117"]
+"scripts/winebot-gt-generator.py" = ["ARG", "E701", "F402", "B007", "SIM108"]
 # FastAPI route files: Body() in defaults is the standard FastAPI pattern
 "api/routers/*.py" = ["B008"]
 # Legacy diagnostics: large monolithic files with cross-referencing patterns
@@ -94,17 +101,6 @@ disallow_untyped_defs = false
 ignore_missing_imports = true
 no_implicit_optional = true
 check_untyped_defs = true
-
-# Path-specific overrides
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-warn_unused_ignores = false
-
-[[tool.mypy.overrides]]
-module = "scripts.*"
-disallow_untyped_defs = false
-
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

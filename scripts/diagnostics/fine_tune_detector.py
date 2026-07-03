@@ -214,7 +214,7 @@ def main():
             print(f"  {k}: {v:.4f}")
         return
 
-    results = fine_tune(
+    fine_tune(
         model_path=args.model,
         data_yaml=args.data,
         output_path=args.output,

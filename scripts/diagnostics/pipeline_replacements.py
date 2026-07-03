@@ -298,7 +298,7 @@ def benchmark_clip(test_images, warmup=3, iterations=50):
             "all_probs": probs,
         })
 
-        stats = compute_stats(frame_times)
+        compute_stats(frame_times)
         all_times.extend(frame_times)
 
     agg = compute_stats(all_times)

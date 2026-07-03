@@ -89,7 +89,7 @@ def main():
             target_dir = val_dir if is_val else train_dir
             count = args.images_per_fold
 
-            for i in range(count):
+            for _i in range(count):
                 gen.DESKTOP_SIZE = random.choice(RESOLUTIONS)
                 page = scene_fn()
                 img = page.image
@@ -121,7 +121,7 @@ def main():
         # Train
         from ultralytics import YOLO
         model = YOLO("yolo26s.pt")
-        results = model.train(
+        model.train(
             data=f"{fold_dir}/data.yaml",
             epochs=args.epochs, imgsz=1280, batch=4,
             lr0=0.001, freeze=0, device=0, patience=5,

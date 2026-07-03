@@ -225,7 +225,7 @@ if __name__ == "__main__":
         args.sample_motion_ms,
     )
 
-    def handle_sigterm(sig, frame):
+    def handle_sigterm(_sig, _frame):
         proxy.stop_requested = True
         sys.exit(0)
 

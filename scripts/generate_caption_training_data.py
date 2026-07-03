@@ -148,7 +148,7 @@ def detect_scene_type(elements) -> str:
         return "control_panel"
     if has_taskbar and has_close and len(elements) > 15:
         return "multi_window"
-    if has_menu_bar and (has_list := class_counts.get("list_item", 0)) > 0:
+    if has_menu_bar and class_counts.get("list_item", 0) > 0:
         return "file_manager"
     if has_dialog and has_text_field:
         return "save_dialog"

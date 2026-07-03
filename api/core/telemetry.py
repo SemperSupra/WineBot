@@ -92,9 +92,7 @@ def should_emit(feature: str, capability: str, feature_set: str) -> bool:
         return False
 
     max_events_per_min = _env_int("WINEBOT_TELEMETRY_MAX_EVENTS_PER_MIN", 600, minimum=1)
-    if not _rate_limit_ok(max_events_per_min):
-        return False
-    return True
+    return _rate_limit_ok(max_events_per_min)
 
 
 def emit_operation_timing(

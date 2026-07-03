@@ -176,8 +176,8 @@ def train_fold(fold_dir: str, epochs: int) -> dict:
     if result.returncode != 0:
         stderr_lines = result.stderr.strip().split("\n")[-10:]
         print("    [ERROR] Training failed:", file=sys.stderr)
-        for l in stderr_lines:
-            print(f"      {l}", file=sys.stderr)
+        for line in stderr_lines:
+            print(f"      {line}", file=sys.stderr)
         return {"best_mAP50": 0, "model_path": ""}
 
     # Read result

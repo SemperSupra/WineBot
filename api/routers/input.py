@@ -749,7 +749,7 @@ def input_trace_stop(data: InputTraceStopModel | None = Body(default=None)):
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = read_session_dir() # type: ignore
+        session_dir = read_session_dir()
     if not session_dir:
         return {"status": "already_stopped"}
     assert isinstance(session_dir, str)
@@ -913,6 +913,7 @@ def input_trace_x11_core_stop(
     op_started = time.perf_counter()
     if data is None:
         data = InputTraceX11CoreStopModel()
+    session_dir: str | None = None
     if data.session_id or data.session_dir:
         session_dir = resolve_session_dir(
             data.session_id, data.session_dir, data.session_root
@@ -920,7 +921,7 @@ def input_trace_x11_core_stop(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = read_session_dir() # type: ignore
+        session_dir = read_session_dir()
     if not session_dir:
         return {"status": "already_stopped"}
     assert isinstance(session_dir, str)
@@ -1051,7 +1052,7 @@ def input_trace_client_stop(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = read_session_dir() # type: ignore
+        session_dir = read_session_dir()
     if not session_dir:
         return {"status": "disabled"}
     assert isinstance(session_dir, str)
@@ -1316,7 +1317,7 @@ def input_trace_windows_stop(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = read_session_dir() # type: ignore
+        session_dir = read_session_dir()
     if not session_dir:
         return {"status": "already_stopped"}
     assert isinstance(session_dir, str)
@@ -1460,7 +1461,7 @@ def input_trace_network_stop(
         if not os.path.isdir(session_dir):
             raise HTTPException(status_code=404, detail="Session directory not found")
     else:
-        session_dir = read_session_dir() # type: ignore
+        session_dir = read_session_dir()
     if not session_dir:
         return {"status": "disabled"}
     assert isinstance(session_dir, str)

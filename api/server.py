@@ -84,7 +84,7 @@ async def resource_monitor_task():
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     validation_errors = validate_current_environment()
     if validation_errors:
         joined = "; ".join(validation_errors)

@@ -891,7 +891,7 @@ def make_browser() -> GeneratedPage:
 
 def make_terminal() -> GeneratedPage:
     """Terminal/console window with prompt, command output, scrollback."""
-    theme = sample_theme()
+    sample_theme()
     img = np.ones((DESKTOP_SIZE[1], DESKTOP_SIZE[0], 3), dtype=np.uint8)
     img[:] = random.choice(DESKTOP_BG_THEMES)
     elems = draw_taskbar(img)
