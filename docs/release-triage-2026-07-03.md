@@ -194,14 +194,14 @@ closed after spot-checking acceptance criteria:
 
 | Issue | Evidence | Recommendation |
 |:---|:---|:---|
-| #83 `/models` writable mount | Commit `b0b2491` directly fixes model storage mount. | Close if verified |
+| #83 `/models` writable mount | Verified and closed on 2026-07-03. `compose/docker-compose.yml` mounts `../models:/models` read-write and overlays `../models/yolo:/models/yolo:ro`. | Closed as completed |
 | #70 Core image minimal verified | Title says verified; later build-intent work exists. | Close or convert to release note |
 | #69 Extract captioning sidecar | Commits `f7d234b`, `d87757b`; E2E doc says package repo/tag exists. | Close if external repo exists |
 | #68 Extract kv-ground-server | Commits `b214d73`, `7fcc43d`, `73a1051`; E2E doc says repo/tag exists. | Close if external repo exists |
 | #67 Extract desktop-ui-cv | Commits `d1fa595` through `b3a8691`; E2E doc says package installed. | Close if package repo is healthy |
 | #66 desktop-ui-cv CI/CD pipeline | Commit `81f4a96`; E2E doc says package extraction verified. | Close if downstream CI exists |
 | #63 Extract CV/OCR pipeline | Extraction phases merged in `48ca7ca`. | Close after package import check |
-| #57 Add LICENSE file | `LICENSE` exists. | Close |
+| #57 Add LICENSE file | Verified and closed on 2026-07-03. Root `LICENSE` exists and uses MIT. | Closed as completed |
 | #5 Stripped custom Wine build | Issue body says superseded by #7. | Close as superseded |
 
 ### Defer as Backlog / Enhancement
