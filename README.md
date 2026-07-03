@@ -71,11 +71,26 @@ WineBot uses a unified, validated configuration system based on environment vari
 Invalid environment values now fail closed at startup with explicit validation errors.
 For full runtime/scalability controls, see `docs/scalability.md`.
 
+## Docker Runtime on This Host
+
+Docker Desktop has been removed from this Windows host. Docker Engine v29.6.1
+runs inside WSL2 `Ubuntu`.
+
+From Windows, use explicit WSL commands:
+
+`wsl -d Ubuntu docker <args>`
+
+`wsl -d Ubuntu docker compose <args>`
+
+Do not rely on bare `docker` in PowerShell unless the user's profile has loaded
+local proxy functions. Use `docker compose`, not `docker-compose`. See
+[docs/DOCKER_ENGINE_ON_WSL2.md](docs/DOCKER_ENGINE_ON_WSL2.md).
+
 ## Quickstart
 
 Headless:
 
-`docker compose -f compose/docker-compose.yml --profile headless up --build`
+`wsl -d Ubuntu docker compose -f compose/docker-compose.yml --profile headless up --build`
 
 > **Note:** Headless mode uses Xvfb for display — **2D rendering only**.
 > There is no hardware-accelerated OpenGL, Direct3D, or Vulkan support.
@@ -84,9 +99,7 @@ Headless:
 
 Interactive (VNC + noVNC):
 
-`docker compose -f compose/docker-compose.yml --profile interactive up --build`
-
-If you only have `docker-compose` v1 installed, replace `docker compose` with `docker-compose`.
+`wsl -d Ubuntu docker compose -f compose/docker-compose.yml --profile interactive up --build`
 
 Named defaults (recommended):
 
