@@ -122,6 +122,17 @@ Findings from the CI repair:
 - Local Windows cannot execute these POSIX entrypoint contract tests directly
   (`WinError 193`); CI container execution is the authoritative verification for
   those tests.
+- A later PR #89 run, `28672050528`, failed during image build because the
+  pinned WinInspect v0.1.1 release asset no longer matched the Dockerfile
+  checksum. Per release decision, do not fall back to deprecated WinSpy; wait
+  for a proper WinInspect release asset and update WineBot to the new
+  version/digest under #88.
+- The local SBOM/license warning was diagnosed separately: the SBOM generator
+  scanned every package installed in the executing Python interpreter, so a
+  Windows/global Python environment could inject unrelated packages into the
+  WineBot SBOM. The generator now scopes the default SBOM to the installed
+  dependency closure rooted at WineBot's pinned runtime and dev/test
+  requirements, with `--all-installed` retained for full interpreter audits.
 
 ### E2E Build/Smoke Evidence
 
@@ -173,7 +184,7 @@ assurance item.
 |:---|:---|:---|
 | #86 CI failing on Python linting | Confirmed blocker; fixed on PR #89 with green CI run `28671547812`. | Merge PR #89 before release |
 | #87 Add OpenSSL DLLs for WinInspect runtime | Critical if WinInspect SSH key authentication is part of this release. | Implement before release if WinInspect is shipped; otherwise defer |
-| #88 Upgrade bundled WinInspect and evaluate v0.3.x capabilities | WineBot pins WinInspect v0.1.1; upstream latest is v0.3.1 with TLS/HTTPS, WebSocket events, credential RPC, session recording/replay, diagnostics, metrics, config, and verified formal models. | Implement before release if WinInspect is part of the release surface; otherwise defer with #87 |
+| #88 Upgrade bundled WinInspect and evaluate v0.3.x capabilities | WineBot pins WinInspect v0.1.1, but image builds are currently blocked because the pinned release asset checksum no longer matches. Tags through v0.3.3 exist, but no release asset was visible via GitHub API during triage. | Wait for a proper WinInspect release asset; then implement before release if WinInspect is part of the release surface |
 | #72 Full E2E test run | Existing E2E evidence is stale for current main and runtime. | Implement as release verification task |
 
 ### Stale or Probably Completed Issues
@@ -282,7 +293,7 @@ Prefer established tools rather than custom infrastructure:
 | Fix #86 Ruff/CI blocker | Merge PR #89 | Ignore only if releasing without CI is acceptable; defer blocks release. |
 | Fresh WSL2 Docker build/smoke | Implement | Ignore only for docs-only release; defer blocks runtime release. |
 | #87 OpenSSL DLLs | Implement if WinInspect ships | Ignore if WinInspect is out of scope; defer if SSH auth is not advertised. |
-| #88 WinInspect upgrade/evaluation | Implement if WinInspect ships | Defer with #87 if WinInspect is optional; ignore only if removing WinInspect from the image. |
+| #88 WinInspect upgrade/evaluation | Wait for release asset, then implement | Defer with #87 if WinInspect is optional; ignore only if removing WinInspect from the image. Do not fall back to deprecated WinSpy. |
 | Formal models #81 | Defer | Implement only if formal verification is a release promise; ignore only if issue is closed as out of scope. |
 | Stale issue cleanup | Implement | Defer if release code is priority; ignore leaves noisy backlog. |
 | Stale branch deletion | Implement after confirmation | Defer if branches are retained for audit; ignore leaves clutter. |
