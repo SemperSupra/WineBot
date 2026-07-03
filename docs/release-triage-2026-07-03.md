@@ -99,6 +99,30 @@ Recent nightly soak runs on `main` are passing:
 This is useful evidence for runtime stability, but it does not replace the
 failing release CI gate.
 
+Follow-up work on PR #89 (`fix/release-ci-lint-2026-07-03`) cleared the release
+CI blocker:
+
+- Run `28671547812`
+- Commit `4e7ac01`
+- Workflow `CI`
+- Result: success
+- Passing jobs:
+  - `Pre-flight (Lint & Unit)`
+  - `Integration (Smoke Test) / build-smoke-gate`
+
+Findings from the CI repair:
+
+- Ruff and API mypy gates were restored by aligning rule scope with release
+  surfaces and fixing concrete source issues.
+- The first PR CI rerun exposed a separate Linux-only unit failure caused by
+  CRLF line endings in extensionless shell entrypoints (`scripts/wb` and
+  `scripts/bin/winebotctl`).
+- `.gitattributes` now applies LF normalization to `scripts/**`, and the
+  affected entrypoints were normalized.
+- Local Windows cannot execute these POSIX entrypoint contract tests directly
+  (`WinError 193`); CI container execution is the authoritative verification for
+  those tests.
+
 ### E2E Build/Smoke Evidence
 
 Most recent documented comprehensive E2E result:
@@ -147,7 +171,7 @@ assurance item.
 
 | Issue | Finding | Recommendation |
 |:---|:---|:---|
-| #86 CI failing on Python linting | Confirmed current blocker: CI and local Ruff fail with 183 errors. | Implement before release |
+| #86 CI failing on Python linting | Confirmed blocker; fixed on PR #89 with green CI run `28671547812`. | Merge PR #89 before release |
 | #87 Add OpenSSL DLLs for WinInspect runtime | Critical if WinInspect SSH key authentication is part of this release. | Implement before release if WinInspect is shipped; otherwise defer |
 | #88 Upgrade bundled WinInspect and evaluate v0.3.x capabilities | WineBot pins WinInspect v0.1.1; upstream latest is v0.3.1 with TLS/HTTPS, WebSocket events, credential RPC, session recording/replay, diagnostics, metrics, config, and verified formal models. | Implement before release if WinInspect is part of the release surface; otherwise defer with #87 |
 | #72 Full E2E test run | Existing E2E evidence is stale for current main and runtime. | Implement as release verification task |
@@ -240,8 +264,8 @@ Prefer established tools rather than custom infrastructure:
 
 ### Recommended Minimal Release Gate
 
-1. Implement #86 lint/CI synchronization.
-2. Run full CI on `main` and confirm green.
+1. Merge PR #89 for #86 lint/CI synchronization.
+2. Run full CI on `main` after merge and confirm green.
 3. Verify Docker Engine through the real WSL2 `Ubuntu` runtime.
 4. Run a fresh build and smoke:
    - `wsl -d Ubuntu docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner scripts/ci/test.sh`
@@ -255,7 +279,7 @@ Prefer established tools rather than custom infrastructure:
 
 | Item | Recommendation | User options |
 |:---|:---|:---|
-| Fix #86 Ruff/CI blocker | Implement | Ignore only if releasing without CI is acceptable; defer blocks release. |
+| Fix #86 Ruff/CI blocker | Merge PR #89 | Ignore only if releasing without CI is acceptable; defer blocks release. |
 | Fresh WSL2 Docker build/smoke | Implement | Ignore only for docs-only release; defer blocks runtime release. |
 | #87 OpenSSL DLLs | Implement if WinInspect ships | Ignore if WinInspect is out of scope; defer if SSH auth is not advertised. |
 | #88 WinInspect upgrade/evaluation | Implement if WinInspect ships | Defer with #87 if WinInspect is optional; ignore only if removing WinInspect from the image. |
