@@ -195,7 +195,7 @@ closed after spot-checking acceptance criteria:
 | Issue | Evidence | Recommendation |
 |:---|:---|:---|
 | #83 `/models` writable mount | Verified and closed on 2026-07-03. `compose/docker-compose.yml` mounts `../models:/models` read-write and overlays `../models/yolo:/models/yolo:ro`. | Closed as completed |
-| #70 Core image minimal verified | Title says verified; later build-intent work exists. | Close or convert to release note |
+| #70 Core image minimal verified | Verified and closed on 2026-07-03. Core image uses build intents, CV dependencies live in sidecars, and runtime requirements do not include OpenCV/PyTorch/Tesseract. | Closed as completed |
 | #69 Extract captioning sidecar | Commits `f7d234b`, `d87757b`; E2E doc says package repo/tag exists. | Close if external repo exists |
 | #68 Extract kv-ground-server | Commits `b214d73`, `7fcc43d`, `73a1051`; E2E doc says repo/tag exists. | Close if external repo exists |
 | #67 Extract desktop-ui-cv | Commits `d1fa595` through `b3a8691`; E2E doc says package installed. | Close if package repo is healthy |
