@@ -8,15 +8,13 @@ end-to-end build/smoke evidence.
 
 Repository: `SemperSupra/WineBot`
 
-Current local branch:
+Current closeout branch as of 2026-07-04:
 
-- `main` at `e79753c`
-- Tracks `origin/main`
-- Local working tree has documentation edits from this triage session:
-  - `AGENTS.md`
-  - `README.md`
-  - `docs/DOCKER_ENGINE_ON_WSL2.md`
-  - `docs/release-triage-2026-07-03.md`
+- `fix/release-ci-lint-2026-07-03` at `b762b1d`
+- Tracks `origin/fix/release-ci-lint-2026-07-03`
+- Draft PR #89: `https://github.com/SemperSupra/WineBot/pull/89`
+- Current PR state: mergeable, but checks are red due the WinInspect image
+  build blocker described below.
 
 ## Executive Finding
 
@@ -49,7 +47,12 @@ Use the real host WSL2 environment before release.
 
 ### Pull Requests
 
-Open PRs: none.
+At the initial triage point, open PRs were none. Follow-up release-readiness
+work is now tracked in draft PR #89:
+
+| PR | Branch | State | Finding |
+|:---|:---|:---|:---|
+| #89 | `fix/release-ci-lint-2026-07-03` | Draft, mergeable | Lint/API type/SBOM fixes are implemented; latest checks are blocked by WinInspect asset packaging, not by the lint fixes. |
 
 ### Remote Branches
 
@@ -122,11 +125,11 @@ Findings from the CI repair:
 - Local Windows cannot execute these POSIX entrypoint contract tests directly
   (`WinError 193`); CI container execution is the authoritative verification for
   those tests.
-- A later PR #89 run, `28672050528`, failed during image build because the
-  pinned WinInspect v0.1.1 release asset no longer matched the Dockerfile
-  checksum. Per release decision, do not fall back to deprecated WinSpy; wait
-  for a proper WinInspect release asset and update WineBot to the new
-  version/digest under #88.
+- Later PR #89 runs, including latest checked run `28672978950`, fail during
+  image build because the pinned WinInspect v0.1.1 release asset no longer
+  matches the Dockerfile checksum. Per release decision, do not fall back to
+  deprecated WinSpy; wait for a proper WinInspect release asset and update
+  WineBot to the new version/digest under #88.
 - The local SBOM/license warning was diagnosed separately: the SBOM generator
   scanned every package installed in the executing Python interpreter, so a
   Windows/global Python environment could inject unrelated packages into the
