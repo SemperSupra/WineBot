@@ -80,6 +80,17 @@ more xdotool/AutoIt parsing:
 WineBot's existing `/health/windows` and `/inspect/window` endpoints can grow a
 WinInspect backend while keeping their public API stable.
 
+Current WineBot integration exposes read-only daemon/window/screen inspection
+through:
+
+- `GET /health/wininspect`
+- `GET /wininspect/capabilities`
+- `GET /wininspect/windows`
+- `GET /wininspect/window/{hwnd}`
+- `GET /wininspect/screen`
+- `GET /wininspect/pick`
+- `POST /inspect/window`
+
 ### 3. Keep Mutations Brokered
 
 WinInspect exposes mutating methods:
@@ -141,9 +152,10 @@ These should feed diagnostic bundles rather than release-facing APIs first.
 
 1. Build the image with WinInspect v0.4.0 once registry connectivity is stable.
 2. Run `bash /scripts/diagnostics/smoke-wininspect.sh` inside the container.
-3. Add a WineBot diagnostic endpoint or bundle section that captures
-   `daemon.capabilities`.
-4. Add a WinInspect-backed implementation path for read-only window discovery.
+3. Extend diagnostic bundles to persist `daemon.capabilities`,
+   `daemon.status`, and smoke output with release artifacts.
+4. Use the read-only WinInspect API endpoints in the dashboard and E2E
+   diagnostics where structured HWND/control data is useful.
 5. Gate any WinInspect mutation method behind the Input Broker.
 6. Keep issue #87 open until `wininspectd.exe` and `wininspect.exe capabilities`
    smoke under Wine.

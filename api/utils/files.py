@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -28,6 +27,21 @@ from api.core.session_context import set_current_session_dir
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.utils.config import config
 from api.utils.process import pid_running
+
+fcntl: Any
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows host test compatibility
+
+    class _NoopFcntl:
+        LOCK_EX = 0
+        LOCK_UN = 0
+
+        @staticmethod
+        def flock(*_args):
+            return None
+
+    fcntl = _NoopFcntl()
 
 SESSION_FILE: Final[str] = "/tmp/winebot_current_session"
 INSTANCE_STATE_FILE: Final[str] = "/tmp/winebot_instance_state.json"

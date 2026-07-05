@@ -5,6 +5,7 @@ import time
 
 from fastapi import APIRouter
 
+from api.core import wininspect
 from api.core.broker import broker
 from api.core.config_guard import validate_runtime_configuration
 from api.core.recorder import recording_status
@@ -366,6 +367,22 @@ async def health_windows():
             else (listing.get("error") or listing.get("stderr"))
         ),
     }
+    if wininspect.enabled() and wininspect.installed():
+        try:
+            wi_windows = []
+            for item in wininspect.list_top_windows():
+                hwnd = str(item.get("hwnd") or "").strip()
+                if not hwnd:
+                    continue
+                info = wininspect.window_info(hwnd)
+                wi_windows.append(info)
+            payload["wininspect"] = {
+                "ok": True,
+                "count": len(wi_windows),
+                "windows": wi_windows,
+            }
+        except Exception as exc:
+            payload["wininspect"] = {"ok": False, "error": str(exc)}
     emit_operation_timing(
         read_session_dir(),
         feature="health",
@@ -378,6 +395,39 @@ async def health_windows():
         metric_name="health.windows.latency",
         tags={"window_count": len(windows)},
     )
+    return payload
+
+
+@router.get("/wininspect")
+def health_wininspect():
+    """WinInspect daemon status and runtime capabilities."""
+    daemon = wininspect.ensure_daemon(start=True)
+    payload: dict[str, object] = {
+        "enabled": daemon.get("enabled", False),
+        "installed": daemon.get("installed", False),
+        "running": daemon.get("running", False),
+        "host": daemon.get("host"),
+        "port": daemon.get("port"),
+        "daemon": daemon,
+        "tools": {
+            "dir": str(wininspect.tool_dir()),
+            "daemon": str(wininspect.daemon_exe()),
+            "cli": str(wininspect.cli_exe()),
+            "gui": str(wininspect.gui_exe()),
+        },
+    }
+    if not daemon.get("running"):
+        payload["ok"] = False
+        payload["error"] = daemon.get("error")
+        return payload
+    try:
+        payload["health"] = wininspect.health()
+        payload["capabilities"] = wininspect.capabilities()
+        payload["status"] = wininspect.status()
+        payload["ok"] = True
+    except Exception as exc:
+        payload["ok"] = False
+        payload["error"] = str(exc)
     return payload
 
 
@@ -425,6 +475,14 @@ def health_tools():
         "xinput",
     ]
     details = {name: check_binary(name) for name in tools}
+    details["wininspect"] = {
+        "present": wininspect.installed(),
+        "path": str(wininspect.cli_exe()) if wininspect.cli_exe().is_file() else None,
+        "daemon_path": (
+            str(wininspect.daemon_exe()) if wininspect.daemon_exe().is_file() else None
+        ),
+        "gui_path": str(wininspect.gui_exe()) if wininspect.gui_exe().is_file() else None,
+    }
     missing = [name for name, info in details.items() if not info["present"]]
     return {"ok": len(missing) == 0, "missing": missing, "tools": details}
 

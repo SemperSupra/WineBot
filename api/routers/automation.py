@@ -1,11 +1,13 @@
 import os
+import re
 import shutil
 import subprocess
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
+from api.core import wininspect
 from api.core.broker import broker
 from api.core.models import (
     AHKModel,
@@ -25,6 +27,19 @@ from api.utils.files import (
 from api.utils.process import ProcessCapacityError, manage_process, safe_command
 
 router = APIRouter(tags=["automation"])
+
+
+def _wininspect_or_503() -> None:
+    state = wininspect.ensure_daemon(start=True)
+    if not state.get("running"):
+        raise HTTPException(
+            status_code=503,
+            detail=str(state.get("error") or "WinInspect daemon is not available"),
+        )
+
+
+def _wininspect_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=502, detail=f"WinInspect request failed: {exc}")
 
 
 def _require_active_session() -> str:
@@ -152,6 +167,76 @@ async def list_windows():
             if len(parts) == 2:
                 windows.append({"id": parts[0], "title": parts[1]})
     return {"windows": windows}
+
+
+@router.get("/wininspect/capabilities")
+async def wininspect_capabilities():
+    """Return WinInspect runtime capabilities."""
+    _wininspect_or_503()
+    try:
+        return {
+            "ok": True,
+            "capabilities": wininspect.capabilities(),
+            "health": wininspect.health(),
+        }
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.get("/wininspect/windows")
+async def wininspect_windows(include_info: bool = True):
+    """List top-level Windows HWNDs through WinInspect."""
+    _wininspect_or_503()
+    try:
+        top = wininspect.list_top_windows()
+        if not include_info:
+            return {"ok": True, "windows": top, "count": len(top)}
+        windows = []
+        for item in top:
+            hwnd = str(item.get("hwnd") or "").strip()
+            if hwnd:
+                windows.append(wininspect.window_info(hwnd))
+        return {"ok": True, "windows": windows, "count": len(windows)}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.get("/wininspect/window/{hwnd}")
+async def wininspect_window(hwnd: str, include_tree: bool = False):
+    """Inspect a single HWND through WinInspect."""
+    _wininspect_or_503()
+    try:
+        payload = {"ok": True, "info": wininspect.window_info(hwnd)}
+        if include_tree:
+            payload["tree"] = wininspect.window_tree(hwnd)
+        return payload
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.get("/wininspect/screen")
+async def wininspect_screen():
+    """Return WinInspect desktop geometry and DPI information."""
+    _wininspect_or_503()
+    try:
+        return {"ok": True, "screen": wininspect.screen_info()}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.get("/wininspect/pick")
+async def wininspect_pick(x: int = Query(ge=0), y: int = Query(ge=0)):
+    """Return the HWND at a screen coordinate through WinInspect."""
+    _wininspect_or_503()
+    try:
+        picked = wininspect.pick_at_point(x, y)
+        hwnd = str(picked.get("hwnd") or "").strip()
+        payload = {"ok": True, "picked": picked}
+        if hwnd:
+            payload["info"] = wininspect.window_info(hwnd)
+        return payload
+    except Exception as exc:
+        raise _wininspect_error(exc)
 
 
 @router.post("/windows/focus")
@@ -330,5 +415,42 @@ async def inspect_window(data: InspectWindowModel):
     if not data.title and not data.handle:
         raise HTTPException(status_code=400, detail="Must provide title or handle")
 
-    # Logic for calling au3 inspect ...
-    return {"status": "ok", "details": {}}
+    _wininspect_or_503()
+    try:
+        if data.list_only:
+            windows = wininspect.list_top_windows()
+            return {
+                "status": "ok",
+                "backend": "wininspect",
+                "windows": windows,
+                "count": len(windows),
+            }
+
+        hwnd = data.handle
+        matches = []
+        if not hwnd and data.title:
+            matches = wininspect.find_windows(title_regex=re.escape(data.title))
+            if not matches and data.include_empty:
+                matches = wininspect.find_windows(title_regex=data.title)
+            if matches:
+                hwnd = str(matches[0].get("hwnd") or "").strip()
+
+        if not hwnd:
+            raise HTTPException(status_code=404, detail="Window not found")
+
+        info = wininspect.window_info(hwnd)
+        payload: dict[str, object] = {
+            "status": "ok",
+            "backend": "wininspect",
+            "handle": hwnd,
+            "details": info,
+        }
+        if matches:
+            payload["matches"] = matches[: data.max_controls]
+        if data.include_controls:
+            payload["controls"] = wininspect.window_tree(hwnd)
+        return payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _wininspect_error(exc)
