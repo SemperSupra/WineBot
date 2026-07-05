@@ -7,7 +7,78 @@ available upstream.
 
 Repository: `SemperSupra/WineBot`
 Branch inspected: `fix/release-ci-lint-2026-07-03`
-Open PR: #89, draft, mergeable but currently unstable until CI is rerun.
+Open PR: #89, draft, mergeable. CI was rerun after the WinInspect v0.4.0
+update and read-only API integration; latest run `28753849320` is green.
+
+## Closeout Update - 2026-07-05 PM
+
+### Current Status
+
+- PR #89 remains open as a draft and is mergeable.
+- Local branch `fix/release-ci-lint-2026-07-03` is synchronized with origin at
+  commit `5f0c0dc`.
+- Latest PR #89 CI run `28753849320` passed:
+  - `Pre-flight (Lint & Unit)`
+  - `Integration (Smoke Test) / build-smoke-gate`
+- The integration smoke includes `scripts/diagnostics/smoke-wininspect.sh`,
+  which validates WinInspect CLI/daemon startup, loopback daemon readiness,
+  capabilities, and top-window listing under Wine.
+
+### Implemented Since Initial Triage
+
+- WinInspect v0.4.0 Dockerfile pin and checksum were pushed to PR #89.
+- WinInspect v0.4.0 checksum was refreshed to match the republished upstream
+  portable asset:
+  `83b64999fef9ab01d749ab94193899e3915774d217900ac80c3c34021ff3e416`.
+- Added a read-only WinInspect client in `api/core/wininspect.py`.
+- Added read-only endpoints:
+  - `GET /health/wininspect`
+  - `GET /wininspect/capabilities`
+  - `GET /wininspect/windows`
+  - `GET /wininspect/window/{hwnd}`
+  - `GET /wininspect/screen`
+  - `GET /wininspect/pick`
+  - `POST /inspect/window` using the WinInspect backend
+- Added focused tests in `tests/test_wininspect.py`.
+- Updated API and WinInspect integration docs.
+
+### Current Release-Gate Interpretation
+
+- #86 CI lint/type gate: resolved by PR #89 if merged.
+- #87 WinInspect runtime dependency check: resolved by PR #89 if merged; no
+  speculative OpenSSL DLL vendoring is indicated by current smoke evidence.
+- #88 WinInspect upgrade/evaluation: resolved by PR #89 if merged.
+- #72 full E2E: still open. CI build-smoke is current, but a manual/operator
+  E2E pass from the real WSL2 Docker host remains pending.
+- #81 formal models: still deferred. No executable formal model artifacts exist.
+
+### What Worked
+
+- CI confirmed the updated image builds and smokes with WinInspect v0.4.0.
+- The WinInspect read-only API slice gives WineBot structured HWND/window/screen
+  inspection without exposing mutating WinInspect methods.
+- Mutating methods are explicitly blocked in the WineBot WinInspect client until
+  they can be routed through Input Broker authorization and existing traces.
+
+### What Did Not Work
+
+- This sandbox could not run local WSL2 Docker verification because
+  `wsl -d Ubuntu` was not available here (`WSL_E_DISTRO_NOT_FOUND`).
+- Local Windows-host mypy still reports a platform-only `os.statvfs` typing
+  warning if run directly on `api/utils/files.py`; CI mypy runs under Linux and
+  passed.
+- Formal models could not be synchronized or executed because they do not yet
+  exist as executable artifacts.
+
+### Next Steps
+
+1. Decide whether to mark PR #89 ready for review.
+2. After PR #89 merges, close #86, #87, and #88 with CI run `28753849320` as
+   evidence.
+3. Run and document the manual WSL2 host E2E/operator smoke when the actual
+   `Ubuntu` Docker host is available.
+4. Keep #72 open until that manual E2E evidence exists.
+5. Keep #81 open/deferred unless formal verification becomes a release promise.
 
 ## Changes Made
 
@@ -37,6 +108,9 @@ Direct asset verification passed on the host:
   - `LICENSE`
 
 ## Current Findings
+
+The findings below record the initial triage state. Where they conflict with
+the closeout update above, the closeout update is authoritative.
 
 ### Critical Release Items
 

@@ -148,17 +148,26 @@ These should feed diagnostic bundles rather than release-facing APIs first.
 | WinInspect recording | WineBot has its own recorder and artifact manifest. Evaluate later, do not mix formats now. |
 | UDP discovery / external bind | Release should remain loopback-only unless explicitly exposing WinInspect. |
 
-## Immediate Action Plan
+## Closeout Status - 2026-07-05
 
-1. Build the image with WinInspect v0.4.0 once registry connectivity is stable.
-2. Run `bash /scripts/diagnostics/smoke-wininspect.sh` inside the container.
-3. Extend diagnostic bundles to persist `daemon.capabilities`,
+Completed on PR #89:
+
+- Image build and CI smoke with WinInspect v0.4.0 passed in CI run
+  `28753849320`.
+- `scripts/diagnostics/smoke-wininspect.sh` verifies CLI/daemon help,
+  loopback daemon readiness, capabilities, and top-window listing under Wine.
+- WineBot exposes the first read-only API slice through `/health/wininspect`,
+  `/wininspect/*`, and `/inspect/window`.
+
+Remaining work:
+
+1. Extend diagnostic bundles to persist `daemon.capabilities`,
    `daemon.status`, and smoke output with release artifacts.
-4. Use the read-only WinInspect API endpoints in the dashboard and E2E
+2. Use the read-only WinInspect API endpoints in the dashboard and E2E
    diagnostics where structured HWND/control data is useful.
-5. Gate any WinInspect mutation method behind the Input Broker.
-6. Keep issue #87 open until `wininspectd.exe` and `wininspect.exe capabilities`
-   smoke under Wine.
+3. Gate any WinInspect mutation method behind the Input Broker.
+4. Keep #87 and #88 open until PR #89 merges, then close them with CI run
+   `28753849320` as evidence.
 
 ## Related Tracking
 

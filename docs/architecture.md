@@ -36,6 +36,12 @@ Choosing the correct base image is critical for supporting modern versions of Wi
 3.  **Control Layer (Linux/Container)**
     *   **API Server (`api/server.py`):** FastAPI service on port 8000. Orchestrates automation.
     *   **Helper Scripts (`scripts/`, `automation/`):** Shell wrappers for X11 and Wine interactions.
+    *   **WinInspect sidecar (`wininspectd.exe`):** Lazily started under Wine
+        for read-only HWND/window/screen inspection over loopback TCP
+        (`127.0.0.1:1985`). WineBot exposes this through
+        `/health/wininspect`, `/wininspect/*`, and the WinInspect-backed
+        `/inspect/window` route. Mutating WinInspect methods are blocked until
+        they are routed through the Input Broker and existing audit traces.
     *   **Entrypoint (`entrypoint.sh`):** Bootstraps user permissions, X11, Wine, and API.
 
 ## Control Surfaces
@@ -66,6 +72,14 @@ WineBot eliminates "magic values" by centralizing all settings in `api/utils/con
 ## API & Automation Flow
 
 External Agents -> HTTP API (8000) -> `api/server.py` -> Shell Helpers -> `wine`/`xdotool`/`import` -> Application
+
+Read-only Windows inspection flow:
+
+External Agents -> HTTP API (8000) -> `api/core/wininspect.py` ->
+`wininspectd.exe` over loopback TCP -> Wine HWND/window/screen APIs.
+
+WinInspect mutations are intentionally not part of the direct flow. Future
+input/control use must pass through `api/core/broker.py` first.
 
 ## Startup Flow
 
