@@ -1,0 +1,155 @@
+# WinInspect v0.4.0 Integration
+
+## Summary
+
+WinInspect v0.4.0 is no longer just a WinSpy-style GUI inspector. It ships:
+
+- `wininspectd.exe`: daemon/broker
+- `wininspect.exe`: CLI client
+- `wininspect-gui.exe`: native GUI client
+- length-prefixed JSON protocol over TCP and named pipe transports
+- capability probing through `daemon.health` and `daemon.capabilities`
+- window, screen, process, clipboard, registry, input, metrics, and control
+  method families
+
+WineBot should treat WinInspect as a read-first inspection sidecar inside the
+Wine prefix. Mutating operations must remain subordinate to WineBot's input
+broker and control policy.
+
+## Build And Deployment Requirements
+
+Pinned release asset in `docker/Dockerfile`:
+
+- `WinInspectPortable-v0.4.0.zip`
+- SHA256: `cd7052e45e0dd858332de42926e7ef4da5a863845ecf2d552327ec8b6dfa21cc`
+
+The portable zip contains only:
+
+- `wininspect.exe`
+- `wininspectd.exe`
+- `wininspect-gui.exe`
+- `config.default.json`
+- `LICENSE`
+
+Release smoke must verify runtime dependencies under Wine rather than assuming
+DLL needs. Use:
+
+```bash
+bash /scripts/diagnostics/smoke-wininspect.sh
+```
+
+This smoke checks CLI/daemon startup, loopback daemon readiness, capabilities,
+and top-window listing.
+
+## Recommended WineBot Use
+
+### 1. Capabilities First
+
+At startup or diagnostic time, query WinInspect capabilities and persist the
+result in diagnostics:
+
+- `daemon.health`
+- `daemon.capabilities`
+- CLI equivalent: `wine wininspect.exe capabilities`
+
+Use capability fields to decide whether to use a feature:
+
+- `uia`: expected false on Wine 10.0 today
+- `clipboard`: useful for inspection and controlled workflows
+- `input_injection`: useful only behind WineBot broker authorization
+- `registry_write`: do not expose by default
+- `service_manager`: expected false on Wine
+- `window_highlight`: useful for debugging and visual diagnostics
+- `pipe_available`: useful to choose named pipe versus TCP
+
+### 2. Replace Ad Hoc Inspection Where Practical
+
+Use WinInspect for structured window and screen inspection instead of adding
+more xdotool/AutoIt parsing:
+
+- `window.listTop`
+- `window.listChildren`
+- `window.getInfo`
+- `window.getTree`
+- `window.pickAtPoint`
+- `window.findRegex`
+- `screen.desktopInfo`
+- `screen.getPixel`
+- `screen.pixelSearch`
+
+WineBot's existing `/health/windows` and `/inspect/window` endpoints can grow a
+WinInspect backend while keeping their public API stable.
+
+### 3. Keep Mutations Brokered
+
+WinInspect exposes mutating methods:
+
+- `window.controlClick`
+- `window.controlSend`
+- `input.mouseClick`
+- `input.text`
+- `input.hotkey`
+- `window.move`
+- `window.resize`
+- `process.kill`
+- `reg.write`
+
+WineBot should not expose these directly until they are routed through the
+existing Input Broker and audit controls. The preferred integration is:
+
+1. WineBot API receives an authorized request.
+2. Input Broker grants or denies control.
+3. WineBot calls WinInspect only after broker approval.
+4. WineBot records the action in existing input/control traces.
+
+### 4. Prefer Loopback TCP Initially
+
+WinInspect supports TCP, TLS TCP, named pipe, HTTP, WebSocket, and UDP
+discovery in its protocol docs. For WineBot:
+
+- start with loopback TCP on `127.0.0.1:1985`
+- do not bind externally by default
+- keep WinInspect discovery disabled unless there is a deliberate multi-node
+  discovery feature
+- defer SSH-key/TLS auth until WineBot needs remote WinInspect access
+
+Named pipe support should be probed with `pipe_available`, but TCP is easier to
+smoke and diagnose from Linux-side WineBot processes.
+
+### 5. Metrics And Diagnostics
+
+Use WinInspect's daemon status/metrics as diagnostic data:
+
+- `daemon.status`
+- `daemon.metrics`
+- `daemon.diag`
+
+These should feed diagnostic bundles rather than release-facing APIs first.
+
+## Features To Defer
+
+| Feature | Reason |
+|:---|:---|
+| `ui.inspect` | UIA is expected unavailable on Wine 10.0 until Wine/UIA support improves. |
+| `mem.read` / `mem.write` | High-risk debug feature; keep out of normal release surface. |
+| `reg.write` / `reg.delete` | Mutating registry operations require explicit policy and recovery design. |
+| `daemon.downloadUpdate` | WineBot already pins third-party tools in Docker builds. Runtime self-update breaks reproducibility. |
+| WinInspect recording | WineBot has its own recorder and artifact manifest. Evaluate later, do not mix formats now. |
+| UDP discovery / external bind | Release should remain loopback-only unless explicitly exposing WinInspect. |
+
+## Immediate Action Plan
+
+1. Build the image with WinInspect v0.4.0 once registry connectivity is stable.
+2. Run `bash /scripts/diagnostics/smoke-wininspect.sh` inside the container.
+3. Add a WineBot diagnostic endpoint or bundle section that captures
+   `daemon.capabilities`.
+4. Add a WinInspect-backed implementation path for read-only window discovery.
+5. Gate any WinInspect mutation method behind the Input Broker.
+6. Keep issue #87 open until `wininspectd.exe` and `wininspect.exe capabilities`
+   smoke under Wine.
+
+## Related Tracking
+
+- #87: WinInspect runtime dependency check
+- #88: WinInspect upgrade and capability evaluation
+- #94: reusable Wine automation helper bundle extraction

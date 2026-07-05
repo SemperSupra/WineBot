@@ -90,7 +90,12 @@ test_launch() {
 }
 
 test_launch "/scripts/internal/au3info.sh" "Au3Info"
-test_launch "wine /opt/winebot/windows-tools/WinSpy/winspy.exe" "WinSpy"
+if [ -f /scripts/diagnostics/smoke-wininspect.sh ]; then
+    bash /scripts/diagnostics/smoke-wininspect.sh /tmp/wininspect_smoke
+else
+    echo "Error: WinInspect smoke script not found."
+    exit 1
+fi
 
 echo "Inspector tests complete."
 

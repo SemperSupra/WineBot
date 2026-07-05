@@ -4,13 +4,8 @@ set -e
 TOOLS_DIR="/opt/winebot/windows-tools"
 
 # 1. Check for pre-installed location (from build-time template)
-if [ -f "$TOOLS_DIR/WinSpy/WinSpy.exe" ]; then
-    echo "WinSpy++ already pre-installed at $TOOLS_DIR/WinSpy/WinSpy.exe"
-    exit 0
-fi
-
-if [ -f "$TOOLS_DIR/WinSpy/winspy.exe" ]; then
-    echo "WinSpy++ already pre-installed at $TOOLS_DIR/WinSpy/winspy.exe"
+if [ -f "$TOOLS_DIR/WinSpy/wininspect.exe" ] && [ -f "$TOOLS_DIR/WinSpy/wininspectd.exe" ]; then
+    echo "WinInspect already pre-installed at $TOOLS_DIR/WinSpy"
     exit 0
 fi
 
@@ -22,11 +17,14 @@ fi
 
 mkdir -p "$TOOLS_DIR/WinSpy"
 
-WINSPY_URL="https://github.com/strobejb/winspy/releases/download/v1.8.4/WinSpy_Release_x86.zip"
+WININSPECT_VERSION="${WININSPECT_VERSION:-v0.4.0}"
+WININSPECT_SHA256="${WININSPECT_SHA256:-cd7052e45e0dd858332de42926e7ef4da5a863845ecf2d552327ec8b6dfa21cc}"
+WININSPECT_URL="https://github.com/SemperSupra/WinInspect/releases/download/${WININSPECT_VERSION}/WinInspectPortable-${WININSPECT_VERSION#v}.zip"
 
-echo "Downloading WinSpy++..."
-curl -sL -o /tmp/winspy.zip "$WINSPY_URL"
-unzip -q -o /tmp/winspy.zip -d "$TOOLS_DIR/WinSpy"
-rm /tmp/winspy.zip
+echo "Downloading WinInspect ${WININSPECT_VERSION}..."
+curl -fsSL -o /tmp/wininspect.zip "$WININSPECT_URL"
+echo "${WININSPECT_SHA256}  /tmp/wininspect.zip" | sha256sum -c -
+unzip -q -o /tmp/wininspect.zip -d "$TOOLS_DIR/WinSpy"
+rm /tmp/wininspect.zip
 
-echo "WinSpy++ installed to $TOOLS_DIR/WinSpy"
+echo "WinInspect installed to $TOOLS_DIR/WinSpy"

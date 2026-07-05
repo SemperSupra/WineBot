@@ -145,7 +145,7 @@ Preferred (API-first) usage:
 scripts/winebotctl run ahk --file my_script.ahk --focus-title "My App"
 ```
 
-### Windows Inspectors (Au3Info / WinSpy)
+### Windows Inspectors (Au3Info / WinInspect)
 Use API inspection for agent-driven automation. Native inspector binaries are still available for interactive debugging when needed.
 
 **Enable Inspectors:**
@@ -159,10 +159,16 @@ Run the installer inside the container (only needs to be done once per container
 # AutoIt Window Info (pre-installed)
 /scripts/au3info.sh
 
-# WinSpy (if installed via /scripts/install-inspectors.sh)
-wine /opt/winebot/windows-tools/WinSpy/winspy.exe
+# WinInspect GUI (if installed via /scripts/install-inspectors.sh)
+wine /opt/winebot/windows-tools/WinSpy/wininspect-gui.exe
+
+# WinInspect daemon/CLI smoke
+bash /scripts/diagnostics/smoke-wininspect.sh
 ```
 *Note: These run graphically. Use VNC/noVNC to interact with them.*
+
+See [WinInspect v0.4.0 Integration](wininspect-v0.4.0-integration.md) for the
+daemon, protocol, and capability-based integration plan.
 
 ### WinSpy-Style API Inspection
 For agent-driven automation, you can query control metadata via the API:
