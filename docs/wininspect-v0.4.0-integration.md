@@ -21,7 +21,7 @@ broker and control policy.
 Pinned release asset in `docker/Dockerfile`:
 
 - `WinInspectPortable-v0.4.0.zip`
-- SHA256: `cd7052e45e0dd858332de42926e7ef4da5a863845ecf2d552327ec8b6dfa21cc`
+- SHA256: `83b64999fef9ab01d749ab94193899e3915774d217900ac80c3c34021ff3e416`
 
 The portable zip contains only:
 

@@ -15,7 +15,7 @@ Open PR: #89, draft, mergeable but currently unstable until CI is rerun.
 - Updated the pinned portable asset URL:
   `https://github.com/SemperSupra/WinInspect/releases/download/v0.4.0/WinInspectPortable-v0.4.0.zip`
 - Updated the SHA256 pin:
-  `cd7052e45e0dd858332de42926e7ef4da5a863845ecf2d552327ec8b6dfa21cc`
+  `83b64999fef9ab01d749ab94193899e3915774d217900ac80c3c34021ff3e416`
 
 Upstream release:
 
@@ -27,6 +27,8 @@ Direct asset verification passed on the host:
 
 - Downloaded `WinInspectPortable-v0.4.0.zip` to `C:\tmp`.
 - `Get-FileHash -Algorithm SHA256` matched the published checksum.
+- Note: the upstream v0.4.0 portable asset was republished during this triage.
+  The current pin matches the current `.sha256` sidecar.
 - Zip contents:
   - `wininspect.exe`
   - `wininspectd.exe`
