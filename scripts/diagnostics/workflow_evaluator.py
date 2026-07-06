@@ -46,8 +46,8 @@ def _lazy_import_ui():
     global _ui_imports
     if _ui_imports is None:
         try:
-            from winebot_cv.ocr.engines import get_ocr_engine
             from winebot_cv.detectors.engines import get_ui_detector
+            from winebot_cv.ocr.engines import get_ocr_engine
             _ui_imports = (get_ui_detector, get_ocr_engine)
         except ImportError:
             _ui_imports = (None, None)
@@ -531,8 +531,8 @@ def label_states_with_clip(sm: WorkflowStateMachine, frame_dir: str,
         Same state machine with scene labels added to each state.
     """
     try:
-        from winebot_cv.embedding.clip import get_clip_embedder
         from clip_index import FrameIndex
+        from winebot_cv.embedding.clip import get_clip_embedder
     except ImportError:
         print("  [CLIP] clip_embedder/clip_index not available — skipping labels",
               file=sys.stderr)
@@ -677,8 +677,8 @@ def main():
     if args.clip_search:
         print(f"\n  [CLIP] Searching: \"{args.clip_search}\"...", file=sys.stderr)
         try:
-            from winebot_cv.embedding.clip import get_clip_embedder
             from clip_index import FrameIndex
+            from winebot_cv.embedding.clip import get_clip_embedder
 
             clip = get_clip_embedder()
             if clip.available and args.clip_index and os.path.isdir(args.clip_index):

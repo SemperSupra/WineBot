@@ -25,8 +25,8 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from winebot_cv.ocr.engines import available_backends, get_ocr_engine
 from winebot_cv.detectors.engines import available_detectors, get_ui_detector
+from winebot_cv.ocr.engines import available_backends, get_ocr_engine
 
 
 def compute_stats(times: list, confidence: float = 0.95) -> dict:
