@@ -164,15 +164,9 @@ services:
       - wineprefix:/wineprefix
     command: ["/work/scripts/ci/smoke-test.sh"]
 
-  # ── CV/OCR Sidecar (optional, built from docker/Dockerfile.cv-analyzer) ──
+  # ── CV/OCR Sidecar (pre-built image from ghcr.io/sempersupra/desktop-ui-cv) ──
   winebot-cv:
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile.cv-analyzer
-      args:
-        WITH_YOLO: ${WITH_YOLO:-0}
-        GIT_TOKEN: ${INFRA_GHCR_TOKEN:-}
-    image: winebot-cv:${WINEBOT_IMAGE_VERSION:-local}
+    image: ghcr.io/sempersupra/desktop-ui-cv:${DESKTOP_UI_CV_TAG:-main}
     profiles:
       - interactive
       - test
