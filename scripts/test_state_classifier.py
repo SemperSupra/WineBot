@@ -64,7 +64,7 @@ def load_ground_truth(split: str = "test") -> dict:
     images = data if isinstance(data, list) else data.get("images", [])
 
     # Filter by split if manifest has split info
-    manifest_split = data.get("split", split) if isinstance(data, dict) else split
+    data.get("split", split) if isinstance(data, dict) else split
     if isinstance(data, dict) and data.get("split") != split:
         # manifest might cover different split, but still use all available
         # since we can filter by image directory instead

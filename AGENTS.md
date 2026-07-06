@@ -49,16 +49,30 @@ WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 d
 
 ## 4. Common Tasks
 
+### Docker runtime on this host
+
+Docker Desktop has been removed. Docker Engine v29.6.1 runs inside WSL2
+`Ubuntu`; use explicit WSL commands from Windows:
+
+```powershell
+wsl -d Ubuntu docker <args>
+wsl -d Ubuntu docker compose <args>
+```
+
+Do not run bare `docker` from Windows PowerShell unless you know the user's
+PowerShell profile loaded the local proxy functions. Use `docker compose`, not
+`docker-compose`. See [docs/DOCKER_ENGINE_ON_WSL2.md](docs/DOCKER_ENGINE_ON_WSL2.md).
+
 ### How to run tests?
 ```bash
 # Rapid local feedback (Watch mode)
 ./scripts/bin/dev-watch.sh
 
 # UI/UX Policy Compliance
-docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner pytest tests/e2e/test_ux_quality.py
+wsl -d Ubuntu docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner pytest tests/e2e/test_ux_quality.py
 
 # Unit tests
-docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner scripts/ci/test.sh
+wsl -d Ubuntu docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner scripts/ci/test.sh
 ```
 
 ### How to apply config changes?

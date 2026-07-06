@@ -1178,7 +1178,7 @@ PY
   config)
     action="${1:-list}"
     shift || true
-    
+
     config_root="${WINEBOT_CONFIG_ROOT:-${HOME}/.config/winebot}"
     global_config_file="${WINEBOT_CONFIG_FILE:-${config_root}/env}"
     instance_suffix="${HOSTNAME:-local}"
@@ -1381,7 +1381,7 @@ EOF
           ;;
       esac
     done
-    
+
     if [ "$follow" = "true" ]; then
       url="${BASE_URL}/logs/tail?source=${source}&follow=true"
       headers=()

@@ -102,7 +102,6 @@ def run():
 
     all_results = {}
     total_frames = 0
-    total_elements = 0
     total_ocr = 0
     total_yolo = 0
 
@@ -121,7 +120,6 @@ def run():
         print(f"  {video_name}: {len(frames)} frames ", end="", flush=True)
 
         per_video = []
-        vid_elements = 0
         vid_ocr = 0
         vid_yolo = 0
 

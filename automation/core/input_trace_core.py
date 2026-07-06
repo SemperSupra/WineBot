@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -313,14 +314,10 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                     f"xinput test '{spec}' exited early; trying next candidate.\n"
                 )
                 err.flush()
-                try:
+                with contextlib.suppress(Exception):
                     selector.unregister(proc.stdout)
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(ValueError):
                     procs.remove(proc)
-                except ValueError:
-                    pass
 
         start_device("pointer", pointer_info)
         start_device("keyboard", keyboard_info)
@@ -338,10 +335,8 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
             nonlocal stop_requested
             stop_requested = True
             for proc in procs:
-                try:
+                with contextlib.suppress(Exception):
                     proc.terminate()
-                except Exception:
-                    pass
 
         signal.signal(signal.SIGTERM, handle_signal)
         signal.signal(signal.SIGINT, handle_signal)
@@ -357,10 +352,8 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                         meta = key.data
                         line = stream.readline() # type: ignore
                         if not line:
-                            try:
+                            with contextlib.suppress(Exception):
                                 selector.unregister(stream)
-                            except Exception:
-                                pass
                             continue
                         line = line.strip()
                         if not line:
@@ -427,15 +420,11 @@ def run_trace(session_dir: str, motion_sample_ms: int) -> int:
                         logf.flush()
         finally:
             for proc in procs:
-                try:
+                with contextlib.suppress(Exception):
                     proc.terminate()
-                except Exception:
-                    pass
             for proc in procs:
-                try:
+                with contextlib.suppress(Exception):
                     proc.wait(timeout=2)
-                except Exception:
-                    pass
             write_state(session_dir, "stopped")
 
     return 0
@@ -445,10 +434,8 @@ def stop_trace(session_dir: str) -> int:
     pid = read_pid(session_dir)
     if pid is None:
         return 1
-    try:
+    with contextlib.suppress(Exception):
         os.kill(pid, signal.SIGTERM)
-    except Exception:
-        pass
     write_state(session_dir, "stopped")
     return 0
 

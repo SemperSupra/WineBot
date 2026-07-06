@@ -1,9 +1,11 @@
+import contextlib
 import os
 import platform
 import time
 
 from fastapi import APIRouter
 
+from api.core import wininspect
 from api.core.broker import broker
 from api.core.config_guard import validate_runtime_configuration
 from api.core.recorder import recording_status
@@ -168,9 +170,7 @@ def health_check():
             return False
         if parts[0] == "192" and parts[1] == "168":
             return False
-        if parts[0] == "172" and 16 <= int(parts[1]) <= 31:
-            return False
-        return True
+        return not (parts[0] == "172" and 16 <= int(parts[1]) <= 31)
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -301,10 +301,8 @@ def health_system():
         "cpu_count": os.cpu_count(),
         "discovery": discovery_manager.status(),
     }
-    try:
+    with contextlib.suppress(OSError):
         info["loadavg"] = os.getloadavg()
-    except OSError:
-        pass
     info.update(meminfo_summary())
     return info
 
@@ -369,6 +367,22 @@ async def health_windows():
             else (listing.get("error") or listing.get("stderr"))
         ),
     }
+    if wininspect.enabled() and wininspect.installed():
+        try:
+            wi_windows = []
+            for item in wininspect.list_top_windows():
+                hwnd = str(item.get("hwnd") or "").strip()
+                if not hwnd:
+                    continue
+                info = wininspect.window_info(hwnd)
+                wi_windows.append(info)
+            payload["wininspect"] = {
+                "ok": True,
+                "count": len(wi_windows),
+                "windows": wi_windows,
+            }
+        except Exception as exc:
+            payload["wininspect"] = {"ok": False, "error": str(exc)}
     emit_operation_timing(
         read_session_dir(),
         feature="health",
@@ -384,6 +398,39 @@ async def health_windows():
     return payload
 
 
+@router.get("/wininspect")
+def health_wininspect():
+    """WinInspect daemon status and runtime capabilities."""
+    daemon = wininspect.ensure_daemon(start=True)
+    payload: dict[str, object] = {
+        "enabled": daemon.get("enabled", False),
+        "installed": daemon.get("installed", False),
+        "running": daemon.get("running", False),
+        "host": daemon.get("host"),
+        "port": daemon.get("port"),
+        "daemon": daemon,
+        "tools": {
+            "dir": str(wininspect.tool_dir()),
+            "daemon": str(wininspect.daemon_exe()),
+            "cli": str(wininspect.cli_exe()),
+            "gui": str(wininspect.gui_exe()),
+        },
+    }
+    if not daemon.get("running"):
+        payload["ok"] = False
+        payload["error"] = daemon.get("error")
+        return payload
+    try:
+        payload["health"] = wininspect.health()
+        payload["capabilities"] = wininspect.capabilities()
+        payload["status"] = wininspect.status()
+        payload["ok"] = True
+    except Exception as exc:
+        payload["ok"] = False
+        payload["error"] = str(exc)
+    return payload
+
+
 @router.get("/wine")
 def health_wine():
     """Wine prefix and binary details."""
@@ -392,10 +439,8 @@ def health_wine():
     system_reg = os.path.join(wineprefix, "system.reg")
     system_reg_exists = os.path.exists(system_reg)
     owner_uid = None
-    try:
+    with contextlib.suppress(Exception):
         owner_uid = os.stat(wineprefix).st_uid
-    except Exception:
-        pass
     wine_version = safe_command(["wine", "--version"])
     return {
         "wineprefix": wineprefix,
@@ -430,6 +475,14 @@ def health_tools():
         "xinput",
     ]
     details = {name: check_binary(name) for name in tools}
+    details["wininspect"] = {
+        "present": wininspect.installed(),
+        "path": str(wininspect.cli_exe()) if wininspect.cli_exe().is_file() else None,
+        "daemon_path": (
+            str(wininspect.daemon_exe()) if wininspect.daemon_exe().is_file() else None
+        ),
+        "gui_path": str(wininspect.gui_exe()) if wininspect.gui_exe().is_file() else None,
+    }
     missing = [name for name, info in details.items() if not info["present"]]
     return {"ok": len(missing) == 0, "missing": missing, "tools": details}
 

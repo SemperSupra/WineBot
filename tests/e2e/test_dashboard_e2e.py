@@ -59,7 +59,7 @@ def test_dashboard_loads(page: Page):
         pass
     else:
         # Failed state
-        assert False, f"VNC failed to connect. Status: {status}"
+        raise AssertionError(f"VNC failed to connect. Status: {status}")
 
     # 4. Verify Canvas
     canvas = page.locator("#vnc-container canvas:not(#vnc-crosshair)")

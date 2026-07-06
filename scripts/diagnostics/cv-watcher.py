@@ -9,6 +9,7 @@ fail — shows exactly what appeared on screen at each step.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -201,10 +202,8 @@ class CVWatcher:
             )
             # compare outputs metric to stderr
             raw = result.stderr.strip()
-            try:
+            with contextlib.suppress(ValueError):
                 diff_pixels = int(raw)
-            except ValueError:
-                pass
         except Exception:
             pass
 
@@ -289,7 +288,7 @@ class CVWatcher:
 
         rows = []
         for snap in self.history:
-            windows_str = ", ".join(
+            ", ".join(
                 f"{w['title']}" for w in snap.get("windows", [])[:10]
             )
             rows.append(

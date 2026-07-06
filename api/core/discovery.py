@@ -74,7 +74,7 @@ class DiscoveryManager:
         zc = Zeroconf()
         found_other = False
 
-        def on_service_state_change(zeroconf, service_type, name, state_change):
+        def on_service_state_change(_zeroconf, _service_type, _name, state_change):
             nonlocal found_other
             if state_change is ServiceStateChange.Added:
                 # Basic check - if we find ANY other winebot service

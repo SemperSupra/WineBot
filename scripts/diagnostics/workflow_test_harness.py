@@ -610,8 +610,8 @@ def evaluate_detections(results_dir: str, detector_name: str = "wine",
         import requests
         _use_api = True
     else:
-        from winebot_cv.ocr.engines import get_ocr_engine
         from winebot_cv.detectors.engines import get_ui_detector
+        from winebot_cv.ocr.engines import get_ocr_engine
         detector = get_ui_detector(detector_name)
         ocr = get_ocr_engine(ocr_backend)
         _use_api = False

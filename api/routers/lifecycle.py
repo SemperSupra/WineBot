@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -308,7 +309,7 @@ async def lifecycle_status():
 async def lifecycle_openbox_menu():
     """Open the Openbox root menu via keyboard shortcut fallback."""
     session_dir = read_session_dir()
-    result = safe_command(["xdotool", "key", "ctrl+alt+m"], timeout=2.0)
+    result = safe_command(["xdotool", "key", "ctrl+alt+m"], timeout=2)
     if not result.get("ok"):
         raise HTTPException(
             status_code=500,
@@ -893,10 +894,8 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
             )
 
             if data.restart_wine:
-                try:
+                with contextlib.suppress(Exception):
                     subprocess.Popen(["wine", "explorer"])
-                except Exception:
-                    pass
 
             status = "resumed"
             if current_session == target_dir:

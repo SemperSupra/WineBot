@@ -284,9 +284,8 @@ class RecordingAnalyzer:
             with open(manifest_path) as f:
                 manifest = json.load(f)
 
-        start_epoch = 0
         if manifest:
-            start_epoch = float(manifest.get("start_time_epoch", 0))
+            float(manifest.get("start_time_epoch", 0))
 
         # Match each event to the nearest frame
         enriched = []

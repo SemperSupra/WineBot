@@ -13,10 +13,7 @@ def d3des_encrypt(challenge, password):
     # VNC reverses bits of each byte in the key
     key = bytearray(8)
     pw_bytes = password
-    if len(pw_bytes) > 8:
-        pw_bytes = pw_bytes[:8]
-    else:
-        pw_bytes = pw_bytes + b"\0" * (8 - len(pw_bytes))
+    pw_bytes = pw_bytes[:8] if len(pw_bytes) > 8 else pw_bytes + b"\x00" * (8 - len(pw_bytes))
 
     for i in range(8):
         b = pw_bytes[i]

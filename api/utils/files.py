@@ -1,6 +1,6 @@
 import asyncio
+import contextlib
 import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +27,21 @@ from api.core.session_context import set_current_session_dir
 from api.core.versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 from api.utils.config import config
 from api.utils.process import pid_running
+
+fcntl: Any
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows host test compatibility
+
+    class _NoopFcntl:
+        LOCK_EX = 0
+        LOCK_UN = 0
+
+        @staticmethod
+        def flock(*_args):
+            return None
+
+    fcntl = _NoopFcntl()
 
 SESSION_FILE: Final[str] = "/tmp/winebot_current_session"
 INSTANCE_STATE_FILE: Final[str] = "/tmp/winebot_instance_state.json"
@@ -349,10 +364,8 @@ def resolve_session_dir(
 
 def ensure_session_subdirs(session_dir: str) -> None:
     for subdir in ("logs", "screenshots", "scripts", "user"):
-        try:
+        with contextlib.suppress(Exception):
             os.makedirs(os.path.join(session_dir, subdir), exist_ok=True)
-        except Exception:
-            pass
 
 
 def ensure_user_profile(user_dir: str) -> None:
@@ -936,10 +949,8 @@ def next_segment_index(session_dir: str) -> int:
     current = None
     os.makedirs(session_dir, exist_ok=True)
     with open(lock_path, "w") as lock_file:
-        try:
+        with contextlib.suppress(Exception):
             fcntl.flock(lock_file, fcntl.LOCK_EX)
-        except Exception:
-            pass
         if os.path.exists(index_path):
             try:
                 with open(index_path) as f:
@@ -962,10 +973,8 @@ def next_segment_index(session_dir: str) -> int:
                 f.write(str(next_value))
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             fcntl.flock(lock_file, fcntl.LOCK_UN)
-        except Exception:
-            pass
     return current
 
 
@@ -987,16 +996,12 @@ def append_trace_event(path: str, payload: dict[str, Any]) -> None:
         payload_with_version.setdefault("schema_version", EVENT_SCHEMA_VERSION)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a") as f:
-            try:
+            with contextlib.suppress(Exception):
                 fcntl.flock(f, fcntl.LOCK_EX)
-            except Exception:
-                pass
             f.write(json.dumps(payload_with_version) + "\n")
             f.flush()
-            try:
+            with contextlib.suppress(Exception):
                 fcntl.flock(f, fcntl.LOCK_UN)
-            except Exception:
-                pass
     except Exception:
         pass
 

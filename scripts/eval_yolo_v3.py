@@ -259,7 +259,7 @@ def main():
         print("\n  Per-class F1 (worst→best):")
         sorted_classes = sorted(result["per_class"].items(), key=lambda x: x[1]["f1"])
         for cls_name, stats in sorted_classes:
-            bar = "█" * max(1, int(stats["f1"] * 40))
+            "█" * max(1, int(stats["f1"] * 40))
             print(f"    {cls_name:20s}  F1={stats['f1']:.4f}  "
                   f"P={stats['precision']:.3f}  R={stats['recall']:.3f}  "
                   f"GT={stats['gt']:4d}  Pred={stats['pred']:4d}  "

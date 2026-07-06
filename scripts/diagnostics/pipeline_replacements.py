@@ -25,8 +25,8 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from winebot_cv.ocr.engines import available_backends, get_ocr_engine
 from winebot_cv.detectors.engines import available_detectors, get_ui_detector
+from winebot_cv.ocr.engines import available_backends, get_ocr_engine
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
@@ -298,7 +298,7 @@ def benchmark_clip(test_images, warmup=3, iterations=50):
             "all_probs": probs,
         })
 
-        stats = compute_stats(frame_times)
+        compute_stats(frame_times)
         all_times.extend(frame_times)
 
     agg = compute_stats(all_times)

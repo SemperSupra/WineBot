@@ -269,7 +269,7 @@ def main():
     args = parser.parse_args()
 
     if args.build:
-        dataset = build_dataset()
+        build_dataset()
         report = score_against_ground_truth()
         print_report(report)
     elif args.score:

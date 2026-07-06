@@ -138,6 +138,10 @@ if [[ "$PHASE" == "all" || "$PHASE" == "smoke" ]]; then
         exit 1
     fi
     api_curl -X POST http://localhost:8000/apps/run -H "Content-Type: application/json" -d '{"path":"pkill","args":"-f notepad.exe","detach":false}' >/dev/null || true
+    if [ "${WINEBOT_WININSPECT_SMOKE:-1}" = "1" ]; then
+        log "Running WinInspect smoke..."
+        bash /scripts/diagnostics/smoke-wininspect.sh "$LOG_DIR/wininspect"
+    fi
     log "Smoke tests: PASSED"
 fi
 

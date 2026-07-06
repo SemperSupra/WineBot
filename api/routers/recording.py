@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import subprocess
@@ -232,7 +233,7 @@ async def start_recording(data: RecordingStartModel | None = Body(default=None))
             "automation.recorder",
             "start",
             "--session-dir",
-            str(session_dir), # type: ignore
+            str(session_dir),
             "--display",
             str(display),
             "--resolution",
@@ -374,7 +375,7 @@ async def stop_recording_endpoint():
         )
         result = await run_async_command(cmd, timeout=stop_cmd_timeout_sec)
         if not result["ok"]:
-            error_text = (result.get("stderr") or result.get("error") or "").strip()
+            error_text = str(result.get("stderr") or result.get("error") or "").strip()
             lower_error = error_text.lower()
             if "timed out" in lower_error or "timeout" in lower_error:
                 # Keep API stop responsive when ffmpeg finalization is still draining.
@@ -645,7 +646,7 @@ async def pause_recording():
         settle_seconds = float(getattr(config, "WINEBOT_RECORDING_STATE_SETTLE_SECONDS", 2.0))
         settle_iters = max(1, int(settle_seconds * 5))
         paused = False
-        for attempt in range(2):
+        for _attempt in range(2):
             for _ in range(settle_iters):
                 if recorder_state(session_dir) == RecorderState.PAUSED.value:
                     paused = True
@@ -774,7 +775,7 @@ async def resume_recording():
         settle_seconds = float(getattr(config, "WINEBOT_RECORDING_STATE_SETTLE_SECONDS", 2.0))
         settle_iters = max(1, int(settle_seconds * 5))
         resumed = False
-        for attempt in range(2):
+        for _attempt in range(2):
             for _ in range(settle_iters):
                 current_state = recorder_state(session_dir)
                 if current_state != RecorderState.PAUSED.value and recorder_running(session_dir):
@@ -953,10 +954,8 @@ def recording_health():
     uptime_s = 0
     state_path = os.path.join(session_dir, "recorder.state")
     if os.path.exists(state_path):
-        try:
+        with contextlib.suppress(Exception):
             uptime_s = int(time.time() - os.path.getmtime(state_path))
-        except Exception:
-            pass
 
     return {
         "status": state if running else "idle",

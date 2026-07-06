@@ -61,7 +61,7 @@ DIALOG_MIN_H = 80
 
 
 def classify_region(x: int, y: int, w: int, h: int) -> str:
-    aspect = w / max(h, 1)
+    w / max(h, 1)
     if h <= WINDOW_TITLE_HEIGHT and w > 200:
         return "title_bar"
     if h <= MENU_BAR_HEIGHT and 15 < w < 800:

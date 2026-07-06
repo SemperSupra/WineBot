@@ -62,6 +62,7 @@ WineBot publishes explicit API and artifact/event schema versions.
 | GET | `/health/system` | System stats |
 | GET | `/health/x11` | X11 status |
 | GET | `/health/windows` | X11 window list |
+| GET | `/health/wininspect` | WinInspect daemon health and capabilities |
 | GET | `/health/wine` | Wine prefix details |
 | GET | `/health/tools` | Tool availability |
 | GET | `/health/storage` | Storage stats |
@@ -84,6 +85,11 @@ WineBot publishes explicit API and artifact/event schema versions.
 | POST | `/control/mode` | Set instance control mode |
 | GET | `/ui` | noVNC + API dashboard UI |
 | GET | `/windows` | List visible windows |
+| GET | `/wininspect/capabilities` | WinInspect capabilities and health |
+| GET | `/wininspect/windows` | WinInspect top-level HWND list |
+| GET | `/wininspect/window/{hwnd}` | WinInspect window details |
+| GET | `/wininspect/screen` | WinInspect desktop information |
+| GET | `/wininspect/pick` | WinInspect HWND lookup at coordinates |
 | POST | `/windows/focus` | Focus a window |
 | POST | `/input/mouse/click` | Click at coordinates |
 | POST | `/apps/run` | Run a Windows app |
@@ -112,7 +118,12 @@ System stats (uptime, load average, CPU count, memory).
 X11/display status and active window.
 
 #### `GET /health/windows`
-Window list and active window details.
+Window list and active window details. When WinInspect is enabled and installed,
+the response also includes a `wininspect` object with enriched HWND details.
+
+#### `GET /health/wininspect`
+WinInspect daemon state, tool paths, `daemon.health`, `daemon.capabilities`, and
+`daemon.status`. This endpoint starts `wininspectd.exe` lazily when available.
 
 #### `GET /health/wine`
 Wine prefix status and `wine --version`.
@@ -313,6 +324,30 @@ Summarize metrics from `logs/perf_metrics.jsonl` for a session.
 
 ### Control
 
+#### `GET /wininspect/capabilities`
+Return WinInspect runtime health and capability flags.
+- **Response:** `{"ok": true, "health": {...}, "capabilities": {...}}`.
+
+#### `GET /wininspect/windows`
+List top-level Windows HWNDs through WinInspect.
+- **Parameters:**
+  - `include_info` (optional, default `true`): enrich each HWND with `window.getInfo`.
+- **Response:** `{"ok": true, "count": 1, "windows": [...]}`.
+
+#### `GET /wininspect/window/{hwnd}`
+Inspect a single HWND through WinInspect.
+- **Parameters:**
+  - `include_tree` (optional, default `false`): include `window.getTree`.
+- **Response:** `{"ok": true, "info": {...}, "tree": {...}}`.
+
+#### `GET /wininspect/screen`
+Return WinInspect desktop geometry and DPI information.
+
+#### `GET /wininspect/pick`
+Return the HWND at a desktop coordinate.
+- **Parameters:** `x`, `y`.
+- **Response:** `{"ok": true, "picked": {...}, "info": {...}}`.
+
 #### `POST /windows/focus`
 Focus a specific window.
 - **Body:** `{"window_id": "0x123456"}`
@@ -485,7 +520,8 @@ Run a Python script using the embedded Windows Python environment (`winpy`).
 - **Response:** `{"status": "ok", "stdout": "..."}`
 
 #### `POST /inspect/window`
-Inspect a Windows window and its controls (WinSpy-style) via AutoIt.
+Inspect a Windows window and its controls through the read-only WinInspect
+backend. This endpoint still checks the WineBot Input Broker before inspection.
 - **Body (inspect by title or handle):**
   ```json
   {
@@ -503,7 +539,7 @@ Inspect a Windows window and its controls (WinSpy-style) via AutoIt.
     "include_empty": false
   }
   ```
-- **Response:** `{"status": "ok", "details": {}}` (current implementation returns a placeholder payload).
+- **Response:** `{"status": "ok", "backend": "wininspect", "handle": "0x100", "details": {...}}`.
 
 ## Usage
 

@@ -156,7 +156,6 @@ def _match_elements(prev_elements: list[dict], curr_elements: list[dict],
 
     Returns annotated current elements with temporal status.
     """
-    matched_curr = set()
     element_map = []
 
     for ce in curr_elements:
@@ -1101,11 +1100,10 @@ def create_app() -> FastAPI:
 
         # Also load manifest if present
         manifest_path = os.path.join(frames_dir, "manifest.json")
-        manifest = {}
         if os.path.exists(manifest_path):
             try:
                 with open(manifest_path) as f:
-                    manifest = json.load(f)
+                    json.load(f)
             except Exception:
                 pass
 

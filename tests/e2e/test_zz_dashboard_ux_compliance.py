@@ -1,3 +1,4 @@
+import contextlib
 import re
 import time
 
@@ -175,13 +176,10 @@ def test_b_recording_state_machine_ui(page: Page):
         paused = False
         for _ in range(2):
             pause_btn.click()
-            try:
+            with contextlib.suppress(AssertionError):
                 expect(
                     page.locator(".toast", has_text="Recording pause successful")
                 ).to_be_visible(timeout=5000)
-            except AssertionError:
-                # Poll-driven state updates can converge before the toast is observed.
-                pass
             try:
                 expect(page.locator("#badge-recording")).to_contain_text(
                     "paused", timeout=8000
@@ -210,12 +208,10 @@ def test_b_recording_state_machine_ui(page: Page):
 
     # 4. Transition to STOPPED/IDLE
     stop_btn.click()
-    try:
+    with contextlib.suppress(AssertionError):
         expect(
             page.locator(".toast", has_text="Recording stop successful")
         ).to_be_visible(timeout=5000)
-    except AssertionError:
-        pass
     wait_recording_idle(timeout_seconds=60)
     expect(stop_btn).to_be_disabled(timeout=10000)
     expect(start_btn).to_be_enabled(timeout=15000)
