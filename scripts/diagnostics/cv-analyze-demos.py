@@ -21,7 +21,7 @@ from pathlib import Path
 # Add scripts to path so we can import engines
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cv2
-from ui_detectors import YOLOUIDetector
+from winebot_cv.detectors.engines import YOLOUIDetector
 
 SIDECAR_URL = os.environ.get("CV_SIDECAR_URL", "http://localhost:8001")
 # Derive project root from this script's location: scripts/diagnostics/ → ../../ → project root

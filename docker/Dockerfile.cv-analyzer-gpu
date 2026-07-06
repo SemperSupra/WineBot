@@ -142,9 +142,6 @@ COPY scripts/diagnostics/vlm_ollama.py /scripts/vlm_ollama.py
 COPY scripts/diagnostics/provenance.py /scripts/provenance.py
 # Legacy engine files — still needed by cohort scripts (benchmarks, workflows).
 # New code should import from the winebot_cv package instead.
-COPY scripts/diagnostics/ocr_engines.py /scripts/ocr_engines.py
-COPY scripts/diagnostics/ui_detectors.py /scripts/ui_detectors.py
-COPY scripts/diagnostics/clip_embedder.py /scripts/clip_embedder.py
 COPY scripts/diagnostics/model_registry.py /scripts/model_registry.py
 
 # ── Pre-download CLIP model weights (survives rebuilds via shared cache) ──────

@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from benchmark_dataset import GENERATORS
-from ocr_engines import available_backends, get_ocr_engine
+from winebot_cv.ocr.engines import available_backends, get_ocr_engine
 
 
 def compute_char_accuracy(detected_text: str, expected_text: str) -> dict:
