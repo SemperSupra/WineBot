@@ -53,3 +53,6 @@ models/annotations/
 # Model data (keep .gitkeep, ignore everything else)
 models/**
 !models/**/.gitkeep
+
+# Nested standalone repos (managed separately on GitHub)
+/desktop-ui-cv/
