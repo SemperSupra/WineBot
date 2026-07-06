@@ -25,8 +25,8 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ocr_engines import available_backends, get_ocr_engine
-from ui_detectors import available_detectors, get_ui_detector
+from winebot_cv.ocr.engines import available_backends, get_ocr_engine
+from winebot_cv.detectors.engines import available_detectors, get_ui_detector
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ def benchmark_clip(test_images, warmup=3, iterations=50):
     results = []
 
     # CLIP ViT-B-32 (current)
-    from clip_embedder import get_clip_embedder
+    from winebot_cv.embedding.clip import get_clip_embedder
     clip = get_clip_embedder("open_clip")
     if not clip.available:
         print("[clip] OpenCLIP not available, skipping")
