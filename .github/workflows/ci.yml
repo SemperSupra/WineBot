@@ -59,3 +59,110 @@ jobs:
       generate_trust_pack: true
       trust_pack_dir: artifacts/trust-pack
       trust_pack_artifact_name: trust-pack-ci
+
+  conformance:
+    name: 🔬 Conformance (winebot-contracts)
+    needs: [pre-flight, integration]
+    if: |
+      always() &&
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.ref_name == 'main' ||
+       startsWith(github.ref_name, 'release/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install conformance test deps
+        run: |
+          pip install -r contracts/tests/conformance/requirements.txt
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Build WineBot image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: intent-slim
+          build-args: |
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/sempersupra/winebot-base:base-2026-05-04' }}
+            BUILD_INTENT=slim
+            VCS_REF=${{ github.sha }}
+            SOURCE_REPO=https://github.com/${{ github.repository }}
+          load: true
+          push: false
+          tags: winebot:conformance-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start WineBot container
+        id: start-winebot
+        run: |
+          API_TOKEN=$(openssl rand -hex 32)
+          echo "api-token=$API_TOKEN" >> $GITHUB_OUTPUT
+          export API_TOKEN=$API_TOKEN
+          docker compose -f compose/docker-compose.yml --profile interactive up -d winebot
+          # Wait for the API to be ready
+          echo "Waiting for WineBot API to be ready..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_TOKEN" http://localhost:8000/health 2>/dev/null | grep -q 200; then
+              echo "API ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run shared conformance tests
+        id: conformance
+        continue-on-error: false
+        env:
+          API_URL: http://localhost:8000
+          API_TOKEN: ${{ steps.start-winebot.outputs.api-token }}
+          CONFORMANCE_RESULTS_DIR: conformance-results
+        run: |
+          mkdir -p "$CONFORMANCE_RESULTS_DIR"
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "http://localhost:8000" \
+            --api-token "${{ steps.start-winebot.outputs.api-token }}" \
+            --results-file "$CONFORMANCE_RESULTS_DIR/winebot-$(date -u +%Y%m%d-%H%M%S).json" \
+            -v --tb=short \
+            --junit-xml="$CONFORMANCE_RESULTS_DIR/junit-winebot.xml"
+
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-results-winebot-${{ github.run_id }}
+          path: conformance-results/
+
+      - name: Conformance release gate
+        if: |
+          success() &&
+          (github.ref_name == 'main' || startsWith(github.ref_name, 'release/'))
+        run: |
+          RESULTS=$(ls conformance-results/winebot-*.json 2>/dev/null | head -1)
+          if [ -z "$RESULTS" ]; then
+            echo "No conformance results found — skipping gate"
+            exit 0
+          fi
+          FAILED=$(python3 -c "import json; d=json.load(open('$RESULTS')); print(d['summary']['failed'])")
+          TOTAL=$(python3 -c "import json; d=json.load(open('$RESULTS')); print(d['summary']['total'])")
+          RATE=$(python3 -c "import json; d=json.load(open('$RESULTS')); print(d['summary']['pass_rate'])")
+          echo "Conformance: $TOTAL tests, $RATE% pass rate"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "❌ Conformance FAILED — release gate blocked"
+            python3 -c "import json; d=json.load(open('$RESULTS')); [print(f'  FAIL: {f[\"test\"]} — {f[\"message\"]}') for f in d['failures']]"
+            exit 1
+          fi
+          echo "✅ Conformance PASSED — release gate cleared"
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose/docker-compose.yml down -v 2>/dev/null || true
