@@ -1,0 +1,43 @@
+# WineBot — Commercial License
+
+This commercial license is required for any commercial use of WineBot by any
+**organization, company, government entity, or any legal entity** (not an
+individual natural person). Individuals may use WineBot for any purpose under
+the PolyForm Noncommercial License + Additional Permission.
+
+## Scope
+
+A commercial license grants you the right to:
+
+1. **Use** WineBot for any internal commercial purpose
+2. **Install and operate** WineBot in production environments
+3. **Modify** WineBot for your internal needs
+4. **Integrate** WineBot into your products and services
+5. **Receive support** and maintenance updates
+
+## What Is Not Covered
+
+- Redistribution or sublicensing of WineBot to third parties
+- Creating competing products based on WineBot
+- Transferring licenses between organizations
+
+## Pricing
+
+Contact the licensor for current pricing. Tiers available:
+
+| Tier | Use Case |
+|:-----|:---------|
+| **Single Project** | One application or internal tool |
+| **Enterprise** | Unlimited internal use across the organization |
+| **OEM/Embedded** | Integration into distributed products |
+
+## Contact
+
+Mark E. DeYoung
+Email: [contact email]
+Project: https://github.com/SemperSupra/WineBot
+
+---
+
+*This document is a summary of commercial licensing terms. A formal license
+agreement will be provided upon request. Terms are negotiable.*

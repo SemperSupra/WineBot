@@ -452,3 +452,14 @@ Use the `Base Image` workflow to publish versioned base images:
 - `docs/installing-apps.md`
 - `docs/testing.md`
 - `docs/troubleshooting.md`
+
+## License
+
+**PolyForm Noncommercial 1.0.0**
+
+- **Non-commercial use** — Free for everyone (education, research, personal, hobby, government).
+- **Commercial use** — ANY commercial use by ANY person or organization requires a [commercial license](LICENSE.commercial).
+
+See [LICENSE](LICENSE) for the full license terms and [NOTICE](NOTICE) for third-party attributions.
+
+Commercial license inquiries: [contact information]

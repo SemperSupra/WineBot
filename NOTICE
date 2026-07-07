@@ -1,0 +1,67 @@
+WineBot
+Copyright (c) 2026 Mark E. DeYoung.
+Licensed under PolyForm Noncommercial 1.0.0 with Additional Permission.
+
+========================================================================
+Third-Party Notices
+========================================================================
+
+This project incorporates or depends on components from the following
+projects. Each component has its own license and copyright.
+
+========================================================================
+websockify (LGPLv3)
+========================================================================
+websockify is used as a standalone subprocess (not linked) to provide
+the VNC-to-WebSocket proxy.
+
+Copyright (C) 2011 OpenStack Foundation
+Copyright (C) 2010 Joel Martin
+License: GNU Lesser General Public License v3.0 (LGPLv3)
+Source: https://github.com/novnc/websockify
+
+========================================================================
+Wine (LGPLv2.1+)
+========================================================================
+Wine provides the Windows compatibility layer. It is a standalone
+system-level dependency within the Docker image.
+
+Copyright (C) 2003-2024 Wine contributors
+License: GNU Lesser General Public License v2.1 or later
+Source: https://www.winehq.org/
+
+========================================================================
+AutoHotkey (GPLv2+)
+========================================================================
+AutoHotkey is bundled as a standalone binary for Windows automation.
+
+Copyright (C) 2004-2024 AutoHotkey contributors
+License: GNU General Public License v2.0 or later
+Source: https://www.autohotkey.com/
+
+========================================================================
+AutoIt (Freeware)
+========================================================================
+AutoIt is bundled as a standalone binary for Windows automation.
+
+Copyright (C) 1999-2024 AutoIt Consulting Ltd.
+License: AutoIt End-User License Agreement (freeware)
+Source: https://www.autoitscript.com/
+
+========================================================================
+WinInspect (MIT)
+========================================================================
+WinInspect provides Windows UI inspection capabilities.
+
+Copyright (C) 2024 SemperSupra
+License: MIT
+Source: https://github.com/SemperSupra/WinInspect
+
+========================================================================
+Python Embedded (Python Software Foundation License)
+========================================================================
+A minimal embedded Python distribution for running automation scripts.
+
+Copyright (C) 2001-2024 Python Software Foundation
+License: Python Software Foundation License (PSF)
+Source: https://www.python.org/
