@@ -455,10 +455,11 @@ Use the `Base Image` workflow to publish versioned base images:
 
 ## License
 
-**PolyForm Noncommercial 1.0.0**
+**PolyForm Noncommercial 1.0.0** with Additional Terms for Government Use.
 
-- **Non-commercial use** — Free for everyone (education, research, personal, hobby, government).
+- **Non-commercial use** — Free for everyone (education, research, personal, hobby, charitable, non-profit).
 - **Commercial use** — ANY commercial use by ANY person or organization requires a [commercial license](LICENSE.commercial).
+- **Government use** — Requires a [commercial license](LICENSE.commercial). Government is NOT exempt under this license.
 
 See [LICENSE](LICENSE) for the full license terms and [NOTICE](NOTICE) for third-party attributions.
 
