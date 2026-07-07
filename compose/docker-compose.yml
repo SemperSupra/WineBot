@@ -190,6 +190,13 @@ services:
       - ../models/yolo:/models/yolo:ro
     environment:
       YOLO_MODEL_PATH: /models/yolov8n.pt
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
       interval: 10s
@@ -198,12 +205,9 @@ services:
       start_period: 15s
     command: ["--serve", "--host", "0.0.0.0", "--port", "8001"]
 
-  # ── Captioning Sidecar (optional, built from docker/captioning-sidecar/Dockerfile) ──
+  # ── Captioning Sidecar (optional, pre-built image from ghcr.io/sempersupra/desktop-ui-cv) ──
   winebot-captioner:
-    build:
-      context: ../docker/captioning-sidecar
-      dockerfile: Dockerfile
-    image: winebot-captioner:${WINEBOT_IMAGE_VERSION:-local}
+    image: ghcr.io/sempersupra/desktop-ui-cv:${DESKTOP_UI_CV_TAG:-main}-captioner
     profiles:
       - interactive
       - test

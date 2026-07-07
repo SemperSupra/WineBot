@@ -1,1 +1,0 @@
-"""desktop-ui-cv module."""

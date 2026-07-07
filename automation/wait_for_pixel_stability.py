@@ -1,1 +1,0 @@
-examples/wait_for_pixel_stability.py
