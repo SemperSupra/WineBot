@@ -1,9 +1,14 @@
 # Design Decision: Switch from MinIO to Garage for Dataset Registry
 
 **Date:** 2026-06-29
-**Status:** Decided
+**Status:** Decided — implementation moved to Maintenance repo
 **Deciders:** Mark E. DeYoung
 **Category:** Infrastructure — Dataset Versioning
+
+> **NOTE:** The dataset-registry implementation (`infra/dataset-registry/`)
+> was moved to `C:\Users\Mark\Projects\Maintenance\infra/dataset-registry/`
+> on 2026-07-07 as part of cross-project infrastructure consolidation.
+> See the [Maintenance repo](https://github.com/sempersupra/maintenance) for current scripts and configs.
 
 ## Context
 
