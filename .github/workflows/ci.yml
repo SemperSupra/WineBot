@@ -89,12 +89,25 @@ jobs:
           cd winebot
           scripts/ci/wait-for-container-health.sh compose/docker-compose.yml headless winebot 60 2
 
+      - name: Read API token from container
+        id: api-token
+        run: |
+          cd winebot
+          TOKEN=$(docker compose exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(docker compose exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "API token read: ${TOKEN:0:8}..." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run conformance tests
         env:
           API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
+          API_TOKEN: ${{ steps.api-token.outputs.token }}
         run: |
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" \
+            --api-token "$API_TOKEN" \
             --results-file conformance-results.json \
             -v --tb=short
 
