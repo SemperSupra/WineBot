@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import tempfile
 import time
 import uuid
@@ -95,13 +96,13 @@ def validate_path(path: str):
 
 def statvfs_info(path: str) -> dict[str, Any]:
     try:
-        st = os.statvfs(path)
+        st = shutil.disk_usage(path)
         return {
             "path": path,
             "ok": True,
-            "total_bytes": st.f_frsize * st.f_blocks,
-            "free_bytes": st.f_frsize * st.f_bfree,
-            "avail_bytes": st.f_frsize * st.f_bavail,
+            "total_bytes": st.total,
+            "free_bytes": st.free,
+            "avail_bytes": st.free,
             "writable": os.access(path, os.W_OK),
         }
     except FileNotFoundError:

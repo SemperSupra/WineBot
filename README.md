@@ -457,6 +457,8 @@ Use the `Base Image` workflow to publish versioned base images:
 
 **PolyForm Noncommercial 1.0.0** with Additional Terms for Government Use.
 
+[![REUSE status](https://api.reuse.software/badge/github.com/SemperSupra/WineBot)](https://api.reuse.software/info/github.com/SemperSupra/WineBot)
+
 - **Non-commercial use** — Free for everyone (education, research, personal, hobby, charitable, non-profit).
 - **Commercial use** — ANY commercial use by ANY person or organization requires a [commercial license](LICENSE.commercial).
 - **Government use** — Requires a [commercial license](LICENSE.commercial). Government is NOT exempt under this license.
