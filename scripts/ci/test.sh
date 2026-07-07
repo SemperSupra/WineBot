@@ -27,20 +27,3 @@ pytest \
   tests/test_auto_view.py \
   tests/test_ui_dashboard.py \
   tests/test_ui_accessibility.py
-
-echo ""
-echo "--- CV Analysis Gate ---"
-# Run CV batch analysis on demo output if available
-CV_BATCH="/work/scripts/diagnostics/cv-batch-analyze.py"
-DEMO_OUTPUT="/work/demo/output"
-if [ -f "$CV_BATCH" ] && [ -d "$DEMO_OUTPUT" ]; then
-  echo "  Running CV batch analysis on demo/output/ ..."
-  if python3 "$CV_BATCH" --input "$DEMO_OUTPUT" --exit-on-warnings 2>&1; then
-    echo "  CV Analysis Gate: PASSED (no warnings)"
-  else
-    echo "  CV Analysis Gate: WARNINGS FOUND — check demo output"
-    # Non-fatal for now; upgrade to hard failure when demos stabilize
-  fi
-else
-  echo "  CV analysis skipped ($CV_BATCH not found or $DEMO_OUTPUT not found)"
-fi

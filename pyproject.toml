@@ -20,11 +20,9 @@ exclude = [
     ".eggs",
     # Path reference files (single-line module paths, not real Python)
     "automation/diagnose_vnc_client.py",
-    "automation/find_and_click.py",
     "automation/input_trace_core.py",
     "automation/notepad_create_and_verify.py",
     "automation/vnc_input_proxy.py",
-    "automation/wait_for_pixel_stability.py",
     "scripts/analyze-trace-latency.py",
     "scripts/verify-screenshot-metadata.py",
 ]
@@ -74,14 +72,8 @@ ignore = [
 # Diagnostic/research scripts are exercised manually and often preserve compact
 # benchmark code from experiments. Keep release lint focused on product paths.
 "scripts/diagnostics/**" = ["D", "ARG", "E701", "E702", "F401", "F402", "F841", "B007", "SIM105", "SIM108", "SIM117"]
-"scripts/winebot-gt-generator.py" = ["ARG", "E701", "F402", "B007", "SIM108"]
 # FastAPI route files: Body() in defaults is the standard FastAPI pattern
 "api/routers/*.py" = ["B008"]
-# Legacy diagnostics: large monolithic files with cross-referencing patterns
-"scripts/diagnostics/ui_detectors.py" = ["F821", "ARG002"]
-"scripts/diagnostics/cv-element-detect.py" = ["ARG002"]
-"scripts/diagnostics/cv-omni-analyze.py" = ["ARG002"]
-"scripts/diagnostics/workflow_evaluator.py" = ["ARG002"]
 
 [tool.ruff.format]
 # Use consistent formatting
