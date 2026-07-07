@@ -80,9 +80,102 @@ jobs:
       trust_pack_dir: artifacts/trust-pack-release
       trust_pack_artifact_name: trust-pack-release
 
-  publish:
+  conformance-gate:
     runs-on: ubuntu-latest
     needs: [release-guards, smoke-test]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: winebot
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: mark-e-deyoung/winebot-contracts
+          path: contracts
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install conformance test deps
+        run: |
+          pip install -r contracts/tests/conformance/requirements.txt
+
+      - name: Build REL image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: winebot
+          file: winebot/docker/Dockerfile
+          target: intent-rel
+          build-args: |
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/sempersupra/winebot-base:base-2026-05-04' }}
+            BUILD_INTENT=rel
+          load: true
+          push: false
+          tags: winebot:rel-conformance
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start WineBot service
+        id: start-winebot
+        run: |
+          cd winebot
+          docker compose -f compose/docker-compose.yml --profile headless up -d winebot
+          # Get container IP for API access (headless profile doesn't expose ports)
+          CONTAINER_NAME=$(docker compose -f compose/docker-compose.yml ps -q winebot)
+          CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+          echo "container-ip=$CONTAINER_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for WineBot to be healthy
+        run: |
+          cd winebot
+          scripts/ci/wait-for-container-health.sh compose/docker-compose.yml headless winebot 60 2
+
+      - name: Read API token from container
+        id: api-token
+        run: |
+          cd winebot
+          TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Run conformance tests
+        env:
+          API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
+          API_TOKEN: ${{ steps.api-token.outputs.token }}
+        run: |
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" \
+            --api-token "$API_TOKEN" \
+            --results-file conformance-results.json \
+            -v --tb=short
+
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: conformance-results-release
+          path: conformance-results.json
+
+      - name: Fail on conformance failure
+        if: failure()
+        run: |
+          echo "❌ Conformance gate failed — release blocked"
+          echo "Fix conformance failures before publishing."
+          exit 1
+
+      - name: Stop services
+        if: always()
+        run: |
+          cd winebot
+          docker compose -f compose/docker-compose.yml --profile headless down --remove-orphans
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [release-guards, smoke-test, conformance-gate]
     timeout-minutes: 60
     environment: release
     outputs:
