@@ -118,9 +118,14 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Start WineBot service
+        id: start-winebot
         run: |
           cd winebot
           docker compose -f compose/docker-compose.yml --profile headless up -d winebot
+          # Get container IP for API access (headless profile doesn't expose ports)
+          CONTAINER_NAME=$(docker compose -f compose/docker-compose.yml ps -q winebot)
+          CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER_NAME")
+          echo "container-ip=$CONTAINER_IP" >> "$GITHUB_OUTPUT"
 
       - name: Wait for WineBot to be healthy
         run: |
@@ -128,9 +133,11 @@ jobs:
           scripts/ci/wait-for-container-health.sh compose/docker-compose.yml headless winebot 60 2
 
       - name: Run conformance tests
+        env:
+          API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
         run: |
           python -m pytest contracts/tests/conformance/ \
-            --api-url http://localhost:8000 \
+            --api-url "$API_URL" \
             --results-file conformance-results.json \
             -v --tb=short
 
