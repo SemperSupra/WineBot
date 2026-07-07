@@ -93,9 +93,9 @@ jobs:
         id: api-token
         run: |
           cd winebot
-          TOKEN=$(docker compose exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)
+          TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)
           if [ -z "$TOKEN" ]; then
-            TOKEN=$(docker compose exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
+            TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
           fi
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "API token read: ${TOKEN:0:8}..." >> "$GITHUB_STEP_SUMMARY"
