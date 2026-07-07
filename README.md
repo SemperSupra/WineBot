@@ -463,4 +463,4 @@ Use the `Base Image` workflow to publish versioned base images:
 
 See [LICENSE](LICENSE) for the full license terms and [NOTICE](NOTICE) for third-party attributions.
 
-Commercial license inquiries: [contact information]
+**Commercial license inquiries:** See [docs/licensing.md](docs/licensing.md) or email `mark.e.deyoung@gmail.com` with subject "WineBot Commercial License".
