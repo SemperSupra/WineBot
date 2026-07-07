@@ -1,0 +1,40 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: WineBot
+Upstream-Contact: Mark E. DeYoung <mark.e.deyoung@gmail.com>
+Source: https://github.com/SemperSupra/WineBot
+
+Files: *
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: NOTICE
+Copyright: 2026 Mark E. DeYoung
+License: LicenseRef-WineBot-Notices
+
+Files: LICENSE.commercial
+Copyright: 2026 Mark E. DeYoung
+License: LicenseRef-WineBot-Commercial
+
+Files: docker/Dockerfile docker/base.Dockerfile docker/entrypoint.sh
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: .github/workflows/*.yml .github/ISSUE_TEMPLATE/*.md
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: requirements/*.txt tests/e2e/requirements.txt
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: windows-tools/download_tool.sh windows-tools/download_tools.sh
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: .pre-commit-config.yaml .trivyignore .dockerignore .editorconfig
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
+
+Files: .gitignore .gitattributes
+Copyright: 2026 Mark E. DeYoung
+License: PolyForm-Noncommercial-1.0
