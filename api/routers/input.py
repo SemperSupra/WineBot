@@ -646,11 +646,13 @@ def input_trace_status(
     if not target_dir:
         return {"running": False, "state": None, "session_dir": None}
     assert isinstance(target_dir, str)
+    running = input_trace_running(target_dir)
     pid = input_trace_pid(target_dir)
     payload = {
         "session_dir": target_dir,
         "pid": pid,
-        "running": input_trace_running(target_dir),
+        "running": running,
+        "tracing": running,
         "state": input_trace_state(target_dir),
         "log_path": input_trace_log_path(target_dir),
     }
