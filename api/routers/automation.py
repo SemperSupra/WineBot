@@ -13,8 +13,10 @@ from api.core.models import (
     AHKModel,
     AppRunModel,
     AutoItModel,
+    ClickModel,
     FocusModel,
     InspectWindowModel,
+    KeyModel,
     PythonScriptModel,
 )
 from api.core.telemetry import emit_operation_timing
@@ -231,6 +233,65 @@ async def wininspect_screen():
     _wininspect_or_503()
     try:
         return {"ok": True, "screen": wininspect.screen_info()}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+# ── WinInspect mutation endpoints (brokered through Input Broker) ─────────
+
+
+@router.post("/wininspect/click")
+async def wininspect_click(data: ClickModel):
+    """Click at screen coordinates or window control via WinInspect.
+    If window_id is provided, uses window.controlClick on that HWND.
+    Otherwise uses input.mouseClick at absolute coordinates."""
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+    await broker.report_agent_activity()
+    _wininspect_or_503()
+    try:
+        if data.window_id:
+            result = wininspect.control_click(
+                hwnd=data.window_id,
+                x=data.x if not data.relative else None,
+                y=data.y if not data.relative else None,
+                button={1: "left", 2: "right", 3: "middle"}.get(data.button, "left"),
+            )
+        else:
+            result = wininspect.mouse_click(data.x, data.y)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.post("/wininspect/key")
+async def wininspect_key(data: KeyModel):
+    """Send keystrokes or hotkey via WinInspect.
+    Single keys use input.text; composite keys (with +) use input.hotkey."""
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+    await broker.report_agent_activity()
+    _wininspect_or_503()
+    try:
+        if "+" in data.keys:
+            result = wininspect.send_hotkey(data.keys)
+        else:
+            result = wininspect.send_text(data.keys)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
+@router.post("/wininspect/hotkey")
+async def wininspect_hotkey(data: KeyModel):
+    """Send a keyboard hotkey combination via WinInspect."""
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+    await broker.report_agent_activity()
+    _wininspect_or_503()
+    try:
+        result = wininspect.send_hotkey(data.keys)
+        return {"ok": True, "result": result}
     except Exception as exc:
         raise _wininspect_error(exc)
 

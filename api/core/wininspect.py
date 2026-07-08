@@ -34,6 +34,16 @@ READ_ONLY_METHODS = {
     "screen.pixelSearch",
 }
 
+# Mutating methods — only callable through brokered endpoints.
+MUTATION_METHODS = {
+    "window.controlClick",
+    "input.mouseClick",
+    "input.text",
+    "input.hotkey",
+    "window.ensureVisible",
+    "window.ensureForeground",
+}
+
 _daemon_lock = threading.Lock()
 _daemon_proc: subprocess.Popen | None = None
 
@@ -255,7 +265,7 @@ def _write_frame(sock: socket.socket, payload: dict[str, Any]) -> None:
 
 
 def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    if method not in READ_ONLY_METHODS:
+    if method not in READ_ONLY_METHODS and method not in MUTATION_METHODS:
         raise WinInspectError(f"WinInspect method is not allowed by WineBot: {method}")
     state = ensure_daemon(start=True)
     if not state.get("running"):
@@ -343,3 +353,32 @@ def list_children(hwnd: str) -> list[dict[str, Any]]:
     """List child windows of an HWND through WinInspect."""
     result = request("window.listChildren", {"hwnd": hwnd})["result"]
     return result if isinstance(result, list) else []
+
+
+# ── Mutation methods (must be called through brokered endpoints) ──────────
+
+
+def control_click(hwnd: str, x: int | None = None, y: int | None = None,
+                  button: str = "left") -> dict[str, Any]:
+    """Send a click to a window control at optional coordinates."""
+    params: dict[str, Any] = {"hwnd": hwnd, "button": button}
+    if x is not None:
+        params["x"] = x
+    if y is not None:
+        params["y"] = y
+    return request("window.controlClick", params)["result"]
+
+
+def mouse_click(x: int, y: int, button: str = "left") -> dict[str, Any]:
+    """Click at screen coordinates."""
+    return request("input.mouseClick", {"x": x, "y": y, "button": button})["result"]
+
+
+def send_text(text: str) -> dict[str, Any]:
+    """Type text into the foreground window."""
+    return request("input.text", {"text": text})["result"]
+
+
+def send_hotkey(keys: str) -> dict[str, Any]:
+    """Send a keyboard hotkey combination."""
+    return request("input.hotkey", {"keys": keys})["result"]
