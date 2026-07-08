@@ -214,6 +214,17 @@ async def wininspect_window(hwnd: str, include_tree: bool = False):
         raise _wininspect_error(exc)
 
 
+@router.get("/wininspect/window/{hwnd}/children")
+async def wininspect_children(hwnd: str):
+    """List child windows of an HWND through WinInspect."""
+    _wininspect_or_503()
+    try:
+        children = wininspect.list_children(hwnd)
+        return {"ok": True, "children": children, "count": len(children)}
+    except Exception as exc:
+        raise _wininspect_error(exc)
+
+
 @router.get("/wininspect/screen")
 async def wininspect_screen():
     """Return WinInspect desktop geometry and DPI information."""

@@ -26,6 +26,7 @@ READ_ONLY_METHODS = {
     "window.listChildren",
     "window.getInfo",
     "window.getTree",
+    "window.getZOrder",
     "window.pickAtPoint",
     "window.findRegex",
     "screen.desktopInfo",
@@ -265,7 +266,7 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.3.0",
+            "protocol_version": "0.4.0",
             **(params or {}),
         },
     }
@@ -336,3 +337,9 @@ def find_windows(
 def pick_at_point(x: int, y: int) -> dict[str, Any]:
     result = request("window.pickAtPoint", {"x": x, "y": y})["result"]
     return result if isinstance(result, dict) else {"raw": result}
+
+
+def list_children(hwnd: str) -> list[dict[str, Any]]:
+    """List child windows of an HWND through WinInspect."""
+    result = request("window.listChildren", {"hwnd": hwnd})["result"]
+    return result if isinstance(result, list) else []
