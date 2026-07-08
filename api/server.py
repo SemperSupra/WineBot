@@ -1,6 +1,8 @@
 import asyncio
 import hmac
 import os
+import platform
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
@@ -199,6 +201,9 @@ async def add_security_and_version_headers(request: Request, call_next):
     response.headers["X-WineBot-Artifact-Schema-Version"] = ARTIFACT_SCHEMA_VERSION
     response.headers["X-WineBot-Event-Schema-Version"] = EVENT_SCHEMA_VERSION
 
+    # Request ID — UUID for every response (required by conformance contracts)
+    response.headers["X-Request-ID"] = str(uuid.uuid4())
+
     # Security Hardening Headers
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -263,6 +268,9 @@ def get_version():
         "api_version": API_VERSION,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "event_schema_version": EVENT_SCHEMA_VERSION,
+        "os": "Linux",
+        "hostname": platform.node(),
+        "winbot_version": VERSION,
     }
 
 

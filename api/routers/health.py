@@ -205,11 +205,17 @@ def health_check():
     invariant_report = _evaluate_invariants()
     payload = {
         "status": status,
+        "hostname": platform.node(),
         "x11": "connected" if x11.get("ok") else "unavailable",
         "wineprefix": "ready" if prefix_ok else "missing",
-        "tools_ok": len(missing) == 0,
-        "missing_tools": missing,
-        "storage_ok": storage_ok,
+        "tools": {
+            "ok": len(missing) == 0,
+            "missing": missing,
+        },
+        "storage": {
+            "ok": storage_ok,
+            "paths": storage,
+        },
         "security_warning": security_warning,
         "uptime_seconds": int(time.time() - START_TIME),
         "invariants_ok": invariant_report["ok"],
@@ -230,6 +236,11 @@ def health_check():
     )
     return payload
 
+
+@router.get("/presence")
+def health_presence():
+    """Human presence detection — always returns present for headless operation."""
+    return {"present": False, "detection": "disabled"}
 
 @router.get("/invariants")
 def health_invariants():
