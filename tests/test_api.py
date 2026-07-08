@@ -180,7 +180,7 @@ def test_version_endpoint_and_headers(auth_headers):
         response = client.get("/version", headers=auth_headers)
         assert response.status_code == 200
         payload = response.json()
-        assert payload["api_version"] == "1.0"
+        assert payload["api_version"] == "1.0.0"
         assert payload["artifact_schema_version"] == "1.0"
         assert payload["event_schema_version"] == "1.0"
         assert response.headers["X-WineBot-API-Version"] == payload["api_version"]
