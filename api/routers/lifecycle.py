@@ -603,7 +603,7 @@ async def lifecycle_cancel():
     if not _shutdown_in_progress:
         return {"status": "no_pending"}
     _shutdown_in_progress = False
-    _shutdown_mode = None
+    _shutdown_mode = ""
     _shutdown_started_at = 0.0
     return {"status": "cancelled"}
 
