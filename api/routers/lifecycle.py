@@ -290,6 +290,10 @@ async def lifecycle_status():
         },
         "user_dir": os.getenv("WINEBOT_USER_DIR"),
         "processes": processes,
+        # Contract-required fields (override health status with lifecycle status)
+        "status": "pending" if _shutdown_in_progress else "idle",
+        "pending_action": "shutdown" if _shutdown_in_progress else None,
+        "remaining_seconds": max(0, int(_shutdown_started_at + float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS) - time.time())) if _shutdown_in_progress else None,
     }
     emit_operation_timing(
         session_dir,
@@ -475,6 +479,10 @@ async def lifecycle_shutdown(
     power_off: bool = False,
 ):
     """Gracefully stop components and terminate the container process."""
+    if delay < 0:
+        raise HTTPException(status_code=422, detail="delay must be non-negative")
+    if delay > 300:
+        raise HTTPException(status_code=422, detail="delay must not exceed 300 seconds")
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
     op_started = time.perf_counter()
     session_dir = read_session_dir()
@@ -567,6 +575,9 @@ async def lifecycle_shutdown(
     shutdown_payload: dict[str, Any] = {
         "status": "shutting_down",
         "delay_seconds": delay,
+        "cancel_before": int(time.time() + delay),
+        "cancel_command": "POST /lifecycle/cancel",
+        "human_present": False,
         "results": results
     }
     emit_operation_timing(
@@ -583,6 +594,18 @@ async def lifecycle_shutdown(
     await complete_operation(operation_id, result=shutdown_payload)
     shutdown_payload["operation_id"] = operation_id
     return shutdown_payload
+
+
+@router.post("/lifecycle/cancel")
+async def lifecycle_cancel():
+    """Cancel a pending shutdown. Returns cancelled or no_pending."""
+    global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
+    if not _shutdown_in_progress:
+        return {"status": "no_pending"}
+    _shutdown_in_progress = False
+    _shutdown_mode = ""
+    _shutdown_started_at = 0.0
+    return {"status": "cancelled"}
 
 
 @router.post("/lifecycle/reset_workspace")

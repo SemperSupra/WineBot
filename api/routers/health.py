@@ -240,7 +240,7 @@ def health_check():
 @router.get("/presence")
 def health_presence():
     """Human presence detection — always returns present for headless operation."""
-    return {"present": False, "detection": "disabled"}
+    return {"present": False, "evidence": [], "detection": "disabled"}
 
 @router.get("/invariants")
 def health_invariants():
@@ -495,7 +495,8 @@ def health_tools():
         "gui_path": str(wininspect.gui_exe()) if wininspect.gui_exe().is_file() else None,
     }
     missing = [name for name, info in details.items() if not info["present"]]
-    return {"ok": len(missing) == 0, "missing": missing, "tools": details}
+    all_ok = len(missing) == 0
+    return {"ok": all_ok, "all_ok": all_ok, "missing": missing, "tools": details}
 
 
 @router.get("/storage")
