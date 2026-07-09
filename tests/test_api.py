@@ -48,7 +48,7 @@ def test_health_check(
 def test_health_check_unauthorized(mock_run):
     with patch.dict(os.environ, {"API_TOKEN": "test-token", "WINEBOT_RECORD": "1"}):
         response = client.get("/health", headers={"X-API-Key": "wrong"})
-        assert response.status_code == 403
+        assert response.status_code == 401
 
 
 @patch(
