@@ -290,7 +290,8 @@ async def lifecycle_status():
         },
         "user_dir": os.getenv("WINEBOT_USER_DIR"),
         "processes": processes,
-        # Contract-required fields
+        # Contract-required fields (override health status with lifecycle status)
+        "status": "pending" if _shutdown_in_progress else "idle",
         "pending_action": "shutdown" if _shutdown_in_progress else None,
         "remaining_seconds": max(0, int(_shutdown_started_at + float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS) - time.time())) if _shutdown_in_progress else None,
     }
@@ -478,6 +479,10 @@ async def lifecycle_shutdown(
     power_off: bool = False,
 ):
     """Gracefully stop components and terminate the container process."""
+    if delay < 0:
+        raise HTTPException(status_code=422, detail="delay must be non-negative")
+    if delay > 300:
+        raise HTTPException(status_code=422, detail="delay must not exceed 300 seconds")
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
     op_started = time.perf_counter()
     session_dir = read_session_dir()
