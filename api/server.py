@@ -245,7 +245,7 @@ async def verify_token_logic(request: Request, api_key: str = Security(api_key_h
     if expected_token:
         provided_token = (api_key or "").strip()
         if not provided_token or not hmac.compare_digest(provided_token, expected_token):
-            raise HTTPException(status_code=403, detail="Invalid or missing API Token")
+            raise HTTPException(status_code=401, detail="Invalid or missing API Token")
     return api_key
 
 
