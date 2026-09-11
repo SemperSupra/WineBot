@@ -113,27 +113,41 @@ jobs:
 
       - name: Run provisional vNext classified evidence slices
         if: always() && steps.start-winebot.outcome == 'success'
-        continue-on-error: true
         env:
           API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
           API_TOKEN: ${{ steps.api-token.outputs.token }}
         run: |
+          set +e
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" --api-token "$API_TOKEN" \
             -m vnext_portable_core_candidate \
             --results-file provisional-vnext-core-results.json -v --tb=short
+          core_rc=$?
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" --api-token "$API_TOKEN" \
             -m vnext_capability_extension_candidate \
             --results-file provisional-vnext-extension-results.json -v --tb=short
+          extension_rc=$?
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" --api-token "$API_TOKEN" \
             -m vnext_implementation_specific \
             --results-file provisional-vnext-implementation-results.json -v --tb=short
+          implementation_rc=$?
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" --api-token "$API_TOKEN" \
             -m vnext_unresolved \
             --results-file provisional-vnext-unresolved-results.json -v --tb=short
+          unresolved_rc=$?
+          set -e
+          {
+            echo "### Provisional vNext conformance slices"
+            echo "These are classification evidence only; classification is incomplete and non-native."
+            echo "- portable-core candidate exit: $core_rc"
+            echo "- capability-extension candidate exit: $extension_rc"
+            echo "- implementation-specific exit: $implementation_rc"
+            echo "- unresolved exit: $unresolved_rc"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
       - name: Upload conformance results
         if: always()
