@@ -166,6 +166,11 @@ jobs:
           implementation_rc=$?
           python -m pytest contracts/tests/conformance/ \
             --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_obsolete_contract \
+            --results-file provisional-vnext-obsolete-results.json -v --tb=short
+          obsolete_rc=$?
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
             -m vnext_unresolved \
             --results-file provisional-vnext-unresolved-results.json -v --tb=short
           unresolved_rc=$?
@@ -176,6 +181,7 @@ jobs:
             echo "- portable-core candidate exit: $core_rc"
             echo "- capability-extension candidate exit: $extension_rc"
             echo "- implementation-specific exit: $implementation_rc"
+            echo "- obsolete-contract exit: $obsolete_rc"
             echo "- unresolved exit: $unresolved_rc"
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
