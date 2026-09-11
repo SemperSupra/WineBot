@@ -61,6 +61,37 @@ jobs:
           repository: mark-e-deyoung/winebot-contracts
           path: contracts
 
+      - name: Bind exact conformance revisions
+        id: revisions
+        run: |
+          WINEBOT_SHA=$(git -C winebot rev-parse HEAD)
+          CONTRACT_SHA=$(git -C contracts rev-parse HEAD)
+          python - "$WINEBOT_SHA" "$CONTRACT_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          context = {
+              "winebot_revision": sys.argv[1],
+              "contract_revision": sys.argv[2],
+              "executor_venue": "github-actions-ubuntu",
+              "evidence_class": "cloud-linux/wine",
+              "native_acceptance": "not_claimed",
+          }
+          Path("conformance-context.json").write_text(
+              json.dumps(context, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          echo "winebot-sha=$WINEBOT_SHA" >> "$GITHUB_OUTPUT"
+          echo "contract-sha=$CONTRACT_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Conformance evidence binding"
+            echo "- WineBot: $WINEBOT_SHA"
+            echo "- winebot-contracts: $CONTRACT_SHA"
+            echo "- evidence class: cloud-linux/wine"
+            echo "- native acceptance: not claimed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -155,6 +186,7 @@ jobs:
         with:
           name: conformance-results
           path: |
+            conformance-context.json
             conformance-results.json
             provisional-vnext-*-results.json
           if-no-files-found: warn
