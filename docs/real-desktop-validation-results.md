@@ -1,7 +1,7 @@
 # Real Desktop Validation Results
 
 **Date:** 2026-06-27
-**Setup:** Windows 11 desktop, CV sidecar on RTX 3090
+**Setup:** Windows 11 desktop, CV sidecar on generic hardware acceleration
 **Resolution:** 1966x823
 **Pipeline:** YOLO26-S v2 + PP-OCRv6 tiny + 22-class ML state classifier
 
