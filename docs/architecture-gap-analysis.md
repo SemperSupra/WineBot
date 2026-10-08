@@ -26,9 +26,9 @@
 │                                        │ HTTP                  │
 │                                        ▼                       │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │              TrueNAS GPU Server (remote)                 │   │
+│  │              Optional remote accelerator service                 │   │
 │  │  ┌──────────────────┐  ┌──────────────────────────┐    │   │
-│  │  │  A5000 #0         │  │  A5000 #1               │    │   │
+│  │  │  Accelerator A         │  │  Accelerator B               │    │   │
 │  │  │  Ollama (19 mod.) │  │  Captioning Sidecar     │    │   │
 │  │  │  KV-Ground-8B     │  │  Florence-2 base        │    │   │
 │  │  │  (4-bit GGUF)     │  │  ~135ms inference       │    │   │
@@ -43,9 +43,9 @@
 |-----------|------|-----|------------|-------|
 | `winebot` (rel) | winebot-base (`intent-rel`) | CPU only | `/entrypoint.sh` → X11+VNC+API | 8000, 5900, 6080, 5354 |
 | `winebot` (slim) | winebot-base (`intent-slim`) | CPU only | `/entrypoint.sh` → headless | — |
-| `winebot-cv:gpu` | `nvidia/cuda:12.6.3-runtime` | RTX 3090 | `cv-sidecar-server.py --serve` | 8001 |
+| `winebot-cv:gpu` | `nvidia/cuda:12.6.3-runtime` | generic accelerator | `cv-sidecar-server.py --serve` | 8001 |
 | `winebot-cv` (CPU) | `nvidia/cuda:12.6.3-runtime` | CPU | `cv-sidecar-server.py --serve` | 8001 |
-| Captioning sidecar | Custom Dockerfile | A5000 #1 | `florence2_captioner.py` | 8002 |
+| Captioning sidecar | Custom Dockerfile | Accelerator B | `florence2_captioner.py` | 8002 |
 | Test runner | Playwright-based | CPU | pytest | — |
 
 ### CI/CD Pipeline (GitHub Actions)
@@ -153,12 +153,12 @@ PR/Push to main
 
 | Metric | Value |
 |--------|-------|
-| YOLO inference | 40ms (RTX 3090) |
+| YOLO inference | 40ms (generic accelerator) |
 | Pipeline latency | 330ms (324-339 95% CI) |
 | Detection F1 (v3) | **0.970** (held-out, 22 classes) |
 | OCR char-F1 | 0.41 (PP-OCRv6 tiny) |
 | State classifier | 100% synthetic, ~60% real |
-| GPU config | 24GB RTX 3090 + 2× A5000 |
+| GPU config | implementation-dependent accelerator capacity |
 | Total model registry | 18 models, 15 active |
 | Annotation tool | 15/30 real frames annotated |
 
