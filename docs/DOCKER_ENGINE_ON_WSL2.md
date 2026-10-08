@@ -141,5 +141,5 @@ Use `docker compose`, not `docker-compose`.
 Keep any support SSH key in an operator-controlled private secret store. Do not document actual private-key locations publicly.
 
 ```text
-%LOCAL_PRIVATE_DATA_ROOT%\root\.ssh\id_rsa
+<operator-managed-private-key-path>
 ```
