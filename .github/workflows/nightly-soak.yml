@@ -116,13 +116,8 @@ jobs:
           mkdir -p "${FAIL_DIR}"
           test -f "${FAIL_DIR}/collected-at-utc.txt" || date -u +"%Y-%m-%dT%H:%M:%SZ" > "${FAIL_DIR}/collected-at-utc.txt"
 
-      - name: Upload failure diagnostics artifact
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: nightly-failure-diagnostics
-          path: ${{ github.workspace }}/artifacts/nightly-failure
-          if-no-files-found: warn
+      # Security hold: unsanitized failure diagnostics remain job-local.
+      # Re-enable uploads only after the public artifact sanitization gate is qualified.
 
       - name: Verify nightly artifacts
         if: always()
