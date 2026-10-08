@@ -338,7 +338,7 @@ def main():
                 break
 
     print(f"\nDone! Generated {total} caption pairs to {output_path}", file=sys.stderr)
-    print(f"Estimated LoRA training time: ~{total // 1000 + 1} hours on RTX 3090", file=sys.stderr)
+    print("Estimated LoRA training time depends on accelerator and workload; benchmark on target hardware.", file=sys.stderr)
 
 
 if __name__ == "__main__":
