@@ -53,7 +53,7 @@ Docker's engine storage remains inside the WSL2 ext4 VHDX:
 Persistent host data that must survive WSL distro rebuilds is stored on Windows:
 
 ```text
-C:\Users\Mark\wsl-data\
+%LOCAL_PRIVATE_DATA_ROOT%\
   models/
   datasets/
   checkpoints/
@@ -62,19 +62,18 @@ C:\Users\Mark\wsl-data\
   update-secrets.ps1
 ```
 
-Large ML artifacts should use `C:\Users\Mark\wsl-data\` rather than WSL-only
+Large ML artifacts should use `%LOCAL_PRIVATE_DATA_ROOT%\` rather than WSL-only
 paths when they need to survive distro resets.
 
 ## Networking
 
-WSL2 uses mirrored networking. The current Windows LAN IP is `192.168.178.27`.
-Published container ports, for example `-p 8080:80`, are reachable on the LAN at
-that host IP. mDNS/Avahi works between the LAN, Windows host, WSL2, and
+WSL2 uses mirrored networking. Use a deployment-specific private network address; never publish a live host address.
+Published container ports, for example `-p 8080:80`, are reachable on the LAN at the configured local endpoint. mDNS/Avahi works between the LAN, Windows host, WSL2, and
 containers.
 
 ## Credentials
 
-Four Docker Swarm secrets currently exist:
+Example Docker Swarm secret names (not a deployed inventory):
 
 - `infra_ghcr_token`
 - `infra_cloudflare_token`
@@ -84,13 +83,13 @@ Four Docker Swarm secrets currently exist:
 Ad-hoc container environment values live at:
 
 ```text
-C:\Users\Mark\wsl-data\.env
+%LOCAL_PRIVATE_DATA_ROOT%\.env
 ```
 
 Credential sync is handled by:
 
 ```text
-C:\Users\Mark\wsl-data\update-secrets.ps1
+%LOCAL_PRIVATE_DATA_ROOT%\update-secrets.ps1
 ```
 
 That script reads Windows Credential Manager and syncs both the `.env` file and
@@ -139,8 +138,8 @@ Use `docker compose`, not `docker-compose`.
 
 ## SSH Key Access
 
-The WSL rebuild/support SSH key is stored at:
+Keep any support SSH key in an operator-controlled private secret store. Do not document actual private-key locations publicly.
 
 ```text
-C:\Users\Mark\wsl-data\root\.ssh\id_rsa
+%LOCAL_PRIVATE_DATA_ROOT%\root\.ssh\id_rsa
 ```
