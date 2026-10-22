@@ -61,6 +61,37 @@ jobs:
           repository: mark-e-deyoung/winebot-contracts
           path: contracts
 
+      - name: Bind exact conformance revisions
+        id: revisions
+        run: |
+          WINEBOT_SHA=$(git -C winebot rev-parse HEAD)
+          CONTRACT_SHA=$(git -C contracts rev-parse HEAD)
+          python - "$WINEBOT_SHA" "$CONTRACT_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          context = {
+              "winebot_revision": sys.argv[1],
+              "contract_revision": sys.argv[2],
+              "executor_venue": "github-actions-ubuntu",
+              "evidence_class": "cloud-linux/wine",
+              "native_acceptance": "not_claimed",
+          }
+          Path("conformance-context.json").write_text(
+              json.dumps(context, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          echo "winebot-sha=$WINEBOT_SHA" >> "$GITHUB_OUTPUT"
+          echo "contract-sha=$CONTRACT_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Conformance evidence binding"
+            echo "- WineBot: $WINEBOT_SHA"
+            echo "- winebot-contracts: $CONTRACT_SHA"
+            echo "- evidence class: cloud-linux/wine"
+            echo "- native acceptance: not claimed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -111,12 +142,93 @@ jobs:
             --results-file conformance-results.json \
             -v --tb=short
 
+      - name: Run provisional vNext classified evidence slices
+        if: always() && steps.start-winebot.outcome == 'success'
+        env:
+          API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
+        run: |
+          reset_winebot() {
+            cd winebot
+            docker compose -f compose/docker-compose.yml --profile headless restart winebot
+            scripts/ci/wait-for-container-health.sh compose/docker-compose.yml headless winebot 60 2
+            TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)
+            if [ -z "$TOKEN" ]; then
+              TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
+            fi
+            if [ -z "$TOKEN" ]; then
+              echo "WineBot API token unavailable after reset" >&2
+              return 1
+            fi
+            export API_TOKEN="$TOKEN"
+            cd ..
+          }
+
+          reset_winebot
+          set +e
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_portable_core_candidate \
+            --results-file provisional-vnext-core-results.json -v --tb=short
+          core_rc=$?
+          set -e
+
+          reset_winebot
+          set +e
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_capability_extension_candidate \
+            --results-file provisional-vnext-extension-results.json -v --tb=short
+          extension_rc=$?
+          set -e
+
+          reset_winebot
+          set +e
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_implementation_specific \
+            --results-file provisional-vnext-implementation-results.json -v --tb=short
+          implementation_rc=$?
+          set -e
+
+          reset_winebot
+          set +e
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_obsolete_contract \
+            --results-file provisional-vnext-obsolete-results.json -v --tb=short
+          obsolete_rc=$?
+          set -e
+
+          reset_winebot
+          set +e
+          python -m pytest contracts/tests/conformance/ \
+            --api-url "$API_URL" --api-token "$API_TOKEN" \
+            -m vnext_unresolved \
+            --results-file provisional-vnext-unresolved-results.json -v --tb=short
+          unresolved_rc=$?
+          set -e
+
+          {
+            echo "### Provisional vNext conformance slices"
+            echo "Each slice starts from a restarted healthy WineBot service; results remain classification evidence only, incomplete, and non-native."
+            echo "- portable-core candidate exit: $core_rc"
+            echo "- capability-extension candidate exit: $extension_rc"
+            echo "- implementation-specific exit: $implementation_rc"
+            echo "- obsolete-contract exit: $obsolete_rc"
+            echo "- unresolved exit: $unresolved_rc"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
       - name: Upload conformance results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: conformance-results
-          path: conformance-results.json
+          path: |
+            conformance-context.json
+            conformance-results.json
+            provisional-vnext-*-results.json
+          if-no-files-found: warn
 
       - name: Stop services
         if: always()
