@@ -2,18 +2,29 @@
 set -euo pipefail
 
 OUT_DIR="${1:-artifacts/trust-pack}"
-mkdir -p "$OUT_DIR"
 
-timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# The checkout can be a synthetic PR merge commit rather than the source head.
+# Record both IDs with unambiguous names; refuse provenance-free evidence.
+checkout_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+source_sha="${WINEBOT_SOURCE_HEAD_SHA:-$checkout_sha}"
+for candidate in "$checkout_sha" "$source_sha"; do
+    if [[ ! "$candidate" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "Trust pack requires valid full checkout/source Git SHAs" >&2
+        exit 1
+    fi
+done
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "$OUT_DIR"
 
 cat > "${OUT_DIR}/summary.md" <<EOF
 # WineBot Trust Pack
 
 - Generated: ${timestamp}
-- Branch: ${branch}
-- Commit: ${sha}
+- Checkout ref: ${branch}
+- Tested checkout commit: ${checkout_sha}
+- Source head commit: ${source_sha}
+- Note: These may differ when GitHub Actions checks out a pull-request merge candidate.
 
 ## Included Artifacts
 
