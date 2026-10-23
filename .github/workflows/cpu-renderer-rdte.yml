@@ -82,10 +82,11 @@ jobs:
           docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
           docker build -f docker/cpu-renderers.Dockerfile \
             --build-arg BASE_IMAGE=winebot:rdte-slim -t winebot:rdte-cpu .
-      - name: WGL bounded complexity and resolution sweep under Wine+LLVMpipe
-        timeout-minutes: 5
+      - name: WGL CPU SIMD/multithread and geometric workload matrix (bounded)
+        timeout-minutes: 7
         run: |
-          for config in "1 1 320" "20 128 640" "25 1024 960"; do
+          for threads in 1 2 4; do
+            for config in "1 1 320" "20 128 640" "25 1024 960"; do
             read -r frames triangles width <<< "$config"
             if ! timeout -k 10s 85s docker run --rm --init --network none \
               --cpus=2 --memory=3g --pids-limit=256 \
@@ -95,7 +96,7 @@ jobs:
               --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
               -a -s '-screen 0 1280x960x24 +extension GLX -nolisten tcp' \
               python3 /opt/winebot/cpu_renderer.py exec \
-              --profile cpu-opengl-llvmpipe --threads 4 -- \
+              --profile cpu-opengl-llvmpipe --threads "$threads" -- \
               wine /fixture.exe "$frames" "$triangles" "$width" \
               > /tmp/winebot-wgl-job-local.log 2>&1; then
                 echo 'UNQUALIFIED: Windows/WGL bounded draw failed'
@@ -106,6 +107,12 @@ jobs:
                 echo 'UNQUALIFIED: Windows/WGL success identity mismatch'
                 exit 2
             fi
-            echo "PASS: Windows/WGL frames=$frames triangles=$triangles width=$width"
+            draw_ms="$(grep -Eo 'elapsed_ms=[0-9]{1,10}' /tmp/winebot-wgl-job-local.log | tail -1 | cut -d= -f2)"
+            if [[ ! "$draw_ms" =~ ^[0-9]{1,10}$ ]]; then
+              echo 'UNQUALIFIED: Windows/WGL elapsed timing unavailable'
+              exit 2
+            fi
+            echo "PASS: Windows/WGL threads=$threads frames=$frames triangles=$triangles width=$width elapsed_ms=$draw_ms"
+            done
           done
           # Raw Wine stdout/stderr remains job-local and is never uploaded.
