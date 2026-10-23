@@ -15,7 +15,7 @@ def _has_fail_closed_record_policy(source: str) -> bool:
     header, boundary, _ = source.partition("\njobs:\n")
     if not boundary:
         return False
-    return WORKFLOW_GUARD in header and DECLARATION.findall(source) == ["'false'"]
+    return WORKFLOW_GUARD in (header + "\n") and DECLARATION.findall(source) == ["'false'"]
 
 
 def test_public_build_workflows_disable_automatic_build_record_upload() -> None:
