@@ -177,6 +177,9 @@ jobs:
 
       - name: Generate trust pack artifact
         if: ${{ inputs.generate_trust_pack }}
+        env:
+          # Checkout of a PR may be a synthetic merge; preserve the actual source head.
+          WINEBOT_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: scripts/ci/generate-trust-pack.sh "${{ inputs.trust_pack_dir }}"
 
       - name: Upload trust pack
