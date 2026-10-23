@@ -31,14 +31,14 @@ def _icd(profile, override):
     if override:
         candidates = [override]
     elif profile == "cpu-vulkan-lavapipe":
-        candidates = sorted(glob.glob("/usr/share/vulkan/icd.d/lvp_icd.*.json"))
+        candidates = sorted(glob.glob("/usr/share/vulkan/icd.d/lvp_icd*.json"))
     else:
         candidates = [os.environ.get("WINEBOT_SWIFTSHADER_ICD", "")]
     for candidate in candidates:
         if not candidate or not Path(candidate).is_file():
             continue
         filename = Path(candidate).name.lower()
-        if profile == "cpu-vulkan-lavapipe" and not filename.startswith("lvp_icd."):
+        if profile == "cpu-vulkan-lavapipe" and not (filename == "lvp_icd.json" or filename.startswith("lvp_icd.")):
             continue
         if profile == "cpu-vulkan-swiftshader" and "swiftshader" not in filename:
             continue
