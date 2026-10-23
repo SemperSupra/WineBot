@@ -106,8 +106,37 @@ def test_command_does_not_write_artifact_if_input_invalid(tmp_path: Path) -> Non
 )
 def test_public_workflows_do_not_publish_raw_conformance_data(workflow_path: str) -> None:
     source = Path(workflow_path).read_text(encoding="utf-8")
-    assert "--tb=no --show-capture=no" in source
+    assert "--tb=no --show-capture=no -rN" in source
     assert "path: conformance-summary-public.json" in source
     assert "path: conformance-results.json" not in source
     assert "steps.public-conformance-summary.outcome == 'success'" in source
     assert "TOKEN:0:8" not in source
+
+def test_quiet_pytest_console_does_not_echo_assertion_response(tmp_path: Path) -> None:
+    fixture = tmp_path / "test_probe_private_payload.py"
+    fixture.write_text(
+        'def test_probe():\\n'
+        '    payload = {"value": "SYNTHETIC-UNPUBLISHED-MARKER"}\\n'
+        '    assert "count" in payload\\n',
+        encoding="utf-8",
+    )
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(fixture),
+            "-v",
+            "--tb=no",
+            "--show-capture=no",
+            "-rN",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert process.returncode == 1
+    assert "1 failed" in process.stdout
+    assert "SYNTHETIC-UNPUBLISHED-MARKER" not in process.stdout
+    assert "SYNTHETIC-UNPUBLISHED-MARKER" not in process.stderr
