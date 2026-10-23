@@ -1,0 +1,36 @@
+name: RDTE WineBot builtin Windows GUI visuals (NOT release)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/rdte-wine-program-visuals.yml
+      - scripts/ci/rdte-wine-windows-program-visuals.sh
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+jobs:
+  winebot-windows-builtins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout qualified disposable WineBot candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Build actual WineBot and launch Windows GUI programs
+        shell: bash
+        run: bash scripts/ci/rdte-wine-windows-program-visuals.sh
+      - name: Upload only scoped synthetic app window images and allowlisted verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: winebot-wine-builtins-window-only
+          path: |
+            artifacts/public-wine-gui/*.png
+            artifacts/public-wine-gui/public_results.json
+          if-no-files-found: ignore
+          retention-days: 1
