@@ -88,8 +88,8 @@ jobs:
           for config in "1 1 320" "20 128 640" "25 1024 960"; do
             read -r frames triangles width <<< "$config"
             if ! timeout -k 10s 85s docker run --rm --init --network none \
-              --user 1000:1000 --cpus=2 --memory=3g --pids-limit=256 \
-              -e HOME=/home/winebot -e WINEDEBUG=-all \
+              --cpus=2 --memory=3g --pids-limit=256 \
+              -e WINEDEBUG=-all \
               -e WINEPREFIX=/tmp/winebot-fixture-prefix \
               -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
               --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
