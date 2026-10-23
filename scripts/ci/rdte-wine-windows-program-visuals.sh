@@ -34,6 +34,9 @@ test "$status" = healthy || exit 1
 docker exec -u winebot -e DISPLAY=:99 "$CID" sh -lc \
   'command -v wine >/dev/null && command -v xdotool >/dev/null && command -v import >/dev/null'
 echo "WINEBOT_WINE_X11_CAPTURE_PREREQS=PASS"
+# WineBot owns its bind-mounted artifact tree as UID 1000; restore this runner's
+# write access for only the public output directory after guest startup.
+sudo chown -R "$(id -u):$(id -g)" artifacts/public-wine-gui
 docker exec -u winebot "$CID" sh -lc \
  'mkdir -p /tmp/public-wine-gui; printf "%s\n" "WineBot synthetic Notepad text" "Human: readable app UI" "Assistive: keyboard+focus" "Automation: reproducible test" "Agents: observe-act-verify" > /tmp/public-wine-gui/demo.txt'
 printf 'app,launched,window_visible,window_capture\n' > artifacts/public-wine-gui/results.csv
