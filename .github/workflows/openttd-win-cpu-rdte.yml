@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/openttd-win-cpu-rdte.yml
+      - docker/openttd-software-gl.Dockerfile
 permissions:
   contents: read
 concurrency:
@@ -43,6 +44,7 @@ jobs:
         timeout-minutes: 13
         run: |
           docker build -f docker/Dockerfile --target intent-slim -t winebot:openttd-rdte .
+          docker build -f docker/openttd-software-gl.Dockerfile -t winebot:openttd-cpu .
       - name: Launch actual Windows OpenTTD through Wine and confirm visible game window
         timeout-minutes: 3
         run: |
@@ -52,7 +54,7 @@ jobs:
             -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 \
             -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
             -v "$RUNNER_TEMP/win-game:/game:ro" \
-            --entrypoint /usr/bin/xvfb-run winebot:openttd-rdte \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
             -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
             /bin/bash -euo pipefail -c '
               exe="$(find /game -type f -iname openttd.exe -print -quit)"
