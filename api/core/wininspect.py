@@ -184,7 +184,16 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
         log_file = open(_log_path(), "ab")
         try:
             proc = subprocess.Popen(
-                ["wine", str(daemon_exe())],
+                [
+                    "wine", str(daemon_exe()),
+                    "--no-config",
+                    "--bind", DEFAULT_HOST,
+                    "--ipv4",
+                    "--port", str(port()),
+                    "--no-discovery",
+                    "--headless",
+                    "--read-only",
+                ],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
