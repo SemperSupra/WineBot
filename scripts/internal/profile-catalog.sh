@@ -221,3 +221,31 @@ wb_profile_render_values() {
   wb_profile_use_case_values "$use_case"
   wb_profile_performance_values "$perf"
 }
+
+# Independent visual appearance/geometry axis. This does NOT change control
+# ownership, lease semantics, API admission or performance/recording policy.
+wb_profile_visual_names() {
+  cat <<'EOF'
+deterministic-cv
+human-readable
+assistive-readable
+EOF
+}
+
+wb_profile_visual_values() {
+  case "${1:-}" in
+    deterministic-cv)
+      cat <<'EOF'
+WINE_DPI=96
+WINE_FONT_SMOOTHING=grayscale
+EOF
+      ;;
+    human-readable|assistive-readable)
+      cat <<'EOF'
+WINE_DPI=144
+WINE_FONT_SMOOTHING=grayscale
+EOF
+      ;;
+    *) return 1 ;;
+  esac
+}
