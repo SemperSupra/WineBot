@@ -92,6 +92,20 @@ jobs:
                 exit 2
               fi
               echo "PASS: SuperTux rendered scoped game-window content"
+              # Direct X11 primitive only; not WineBot broker/API input conformance.
+              if ! timeout -k 1s 5s xdotool windowfocus "$wid"; then
+                echo "UNQUALIFIED: direct X11 window focus"
+                exit 2
+              fi
+              if ! timeout -k 1s 5s xdotool key --clearmodifiers Down; then
+                echo "UNQUALIFIED: direct X11 keyboard event submission"
+                exit 2
+              fi
+              if ! xdotool search --onlyvisible --name SuperTux >/dev/null 2>&1; then
+                echo "UNQUALIFIED: Windows game window lost after X11 key"
+                exit 2
+              fi
+              echo "PASS: direct X11 focus and key submission with game window present"
               kill "$child" 2>/dev/null || true
               wineserver -k >/dev/null 2>&1 || true
             '
