@@ -99,3 +99,15 @@ def test_command_does_not_write_artifact_if_input_invalid(tmp_path: Path) -> Non
     )
     assert process.returncode != 0
     assert not out.exists()
+
+@pytest.mark.parametrize(
+    "workflow_path",
+    [".github/workflows/ci.yml", ".github/workflows/release.yml"],
+)
+def test_public_workflows_do_not_publish_raw_conformance_data(workflow_path: str) -> None:
+    source = Path(workflow_path).read_text(encoding="utf-8")
+    assert "--tb=no --show-capture=no" in source
+    assert "path: conformance-summary-public.json" in source
+    assert "path: conformance-results.json" not in source
+    assert "steps.public-conformance-summary.outcome == 'success'" in source
+    assert "TOKEN:0:8" not in source
