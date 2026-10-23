@@ -57,7 +57,7 @@ class CpuRendererTests(unittest.TestCase):
         self.assertTrue(cr.renderer_identified("cpu-opengl-llvmpipe", "OpenGL renderer string: llvmpipe (LLVM)"))
         self.assertFalse(cr.renderer_identified("cpu-opengl-llvmpipe", "OpenGL renderer string: hardware"))
         self.assertTrue(cr.renderer_identified("cpu-vulkan-lavapipe", "deviceName = llvmpipe (LLVM)"))
-        self.assertFalse(cr.renderer_identified("cpu-vulkan-lavapipe", "deviceName = hardware\\nloader: lavapipe exists"))
+        self.assertFalse(cr.renderer_identified("cpu-vulkan-lavapipe", "deviceName = hardware" + chr(10) + "loader: lavapipe exists"))
         self.assertTrue(cr.renderer_identified("cpu-vulkan-swiftshader", "deviceName = SwiftShader Device"))
 
     def test_probe_no_raw_output(self):
