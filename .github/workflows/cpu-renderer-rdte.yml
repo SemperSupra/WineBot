@@ -72,10 +72,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Compile tiny Win32 OpenGL fixture on public runner
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 >/dev/null
-          x86_64-w64-mingw32-gcc -O2 -o /tmp/winebot-cpu-gl-smoke.exe \
-            tests/fixtures/cpu_gl_smoke.c -lopengl32 -lgdi32 -luser32
+          docker build -f docker/Dockerfile --target hook-dll-builder -t winebot:rdte-mingw .
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/cpu_gl_smoke.c:/src.c:ro" \
+            -v /tmp:/output winebot:rdte-mingw -O2 -o /output/winebot-cpu-gl-smoke.exe \
+            /src.c -lopengl32 -lgdi32 -luser32
       - name: Build qualified WineBot candidate and opt-in CPU rendering layer
         run: |
           docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
