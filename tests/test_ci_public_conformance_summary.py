@@ -53,6 +53,16 @@ def test_projection_preserves_counts_and_only_static_test_identifiers() -> None:
     assert "environment" not in rendered
 
 
+def test_bare_pytest_basename_is_preserved_without_runtime_text() -> None:
+    raw = sample_report()
+    raw["failures"][0]["test"] = "test_automation.py::TestWindows::test_windows_has_count"
+    report = PROJECT(raw)
+    assert report["failed_tests"] == [
+        {"test_id": "test_automation.py::TestWindows::test_windows_has_count"}
+    ]
+    assert "SENSITIVE-TOKEN-VALUE" not in json.dumps(report)
+
+
 def test_untrusted_test_id_is_redacted_instead_of_republished() -> None:
     raw = sample_report()
     raw["failures"][0]["test"] = "tests/conformance/test_health.py::test_a[param=private-token]"
