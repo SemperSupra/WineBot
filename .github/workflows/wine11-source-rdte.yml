@@ -1,0 +1,62 @@
+name: Wine 11.0 source-build RDTE
+
+# Isolated branch push (not pull_request): existing production CI has separate
+# artifact-publication gates. Do not trigger its PR workflows for this probe.
+on:
+  push:
+    branches:
+      - experiment/wine-11.0-source-20261023
+    paths:
+      - docker/wine11-source.Dockerfile
+      - scripts/ci/wine11-source-smoke.sh
+      - .github/workflows/wine11-source-rdte.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine11-source-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disposable disk capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build pristine Wine 11.0 source (x86-64 + WoW64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain \
+            --file docker/wine11-source.Dockerfile \
+            --target wine11-runtime \
+            --tag winebot-wine11:rdte \
+            .
+      - name: Bounded headless smoke (offline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none \
+            --cpus=2 \
+            --memory=4g \
+            --pids-limit=256 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            winebot-wine11:rdte
+      - name: Report bounded disposition
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' 'Wine 11.0 source-build RDTE only.' \
+            'No image push, artifact upload, screenshots, credentials or promotion.' \
+            'Inspect the exact run/job conclusion; failure is unqualified, not a pass.'
