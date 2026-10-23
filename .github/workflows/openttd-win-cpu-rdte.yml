@@ -49,8 +49,8 @@ jobs:
         timeout-minutes: 3
         run: |
           timeout -k 10s 155s docker run --rm --init --network none \
-            --cpus=2 --memory=3g --pids-limit=256 --user 1000:1000 \
-            -e HOME=/home/winebot -e WINEPREFIX=/tmp/winebot-openttd-fixture \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEPREFIX=/tmp/winebot-openttd-fixture \
             -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 \
             -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
             -v "$RUNNER_TEMP/win-game:/game:ro" \
