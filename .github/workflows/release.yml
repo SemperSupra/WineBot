@@ -156,7 +156,7 @@ jobs:
             --api-url "$API_URL" \
             --api-token "$API_TOKEN" \
             --results-file conformance-results.json \
-            -v --tb=short
+            -v --tb=no --show-capture=no
 
       - name: Project safe public conformance evidence
         id: public-conformance-summary
