@@ -62,6 +62,37 @@ for spec in 'notepad|notepad.exe|[Nn]otepad' \
   done
   if test -n "$window"; then
     visible=1
+    # Local, read-only semantic API probe with allowlisted booleans/count classes.
+    # Never print WinInspect process/window details, HWNDs, paths, or API tokens.
+    if test "$app" = notepad; then
+      if ! docker exec -i -u winebot -e API_TOKEN="$API_TOKEN" "$CID" python3 - <<'PY' > artifacts/public-wine-gui/semantic.tmp 2>/dev/null
+import json, os, urllib.error, urllib.request
+root="http://127.0.0.1:8000"
+token=os.environ["API_TOKEN"]
+def check(path):
+    req=urllib.request.Request(root+path, headers={"X-API-Key": token})
+    try:
+        with urllib.request.urlopen(req, timeout=9) as resp:
+            return resp.status, json.load(resp)
+    except urllib.error.HTTPError as err:
+        return err.code, None
+    except Exception:
+        return 0, None
+xc,xd=check("/windows")
+cc,cd=check("/wininspect/capabilities")
+wc,wd=check("/wininspect/windows")
+count=wd.get("count") if isinstance(wd,dict) else None
+cls=("unavailable" if type(count) is not int else
+    "zero" if count==0 else "one" if count==1 else "two-plus")
+print(json.dumps({"x11_windows_api_ok": xc==200,
+ "wininspect_capabilities_ok": cc==200,
+ "wininspect_windows_ok": wc==200,
+ "wininspect_window_count_class": cls}))
+PY
+      then
+        echo '{"x11_windows_api_ok":false,"wininspect_capabilities_ok":false,"wininspect_windows_ok":false,"wininspect_window_count_class":"unavailable"}' > artifacts/public-wine-gui/semantic.tmp
+      fi
+    fi
     if docker exec -u winebot -e DISPLAY=:99 "$CID" bash -lc \
       'import -display :99 -window "$1" "png:/tmp/public-wine-gui/$2.png" >/dev/null 2>&1 && convert "/tmp/public-wine-gui/$2.png" -strip "/tmp/public-wine-gui/$2.png"' _ "$window" "$app"; then
       if docker cp "$CID:/tmp/public-wine-gui/$app.png" "artifacts/public-wine-gui/$app.png" >/dev/null 2>&1; then capture=1; fi
@@ -72,7 +103,7 @@ for spec in 'notepad|notepad.exe|[Nn]otepad' \
   echo "WINEBOT_APP_$(echo "$app" | tr '[:lower:]' '[:upper:]')=LAUNCH:$launch,WINDOW:$visible,CAPTURE:$capture"
 done
 python3 - <<'PY'
-import csv,json,pathlib,struct
+import csv,json,os,pathlib,struct
 root=pathlib.Path("artifacts/public-wine-gui")
 items=list(csv.DictReader((root/"results.csv").open()))
 assert len(items)==4
@@ -89,7 +120,17 @@ for item in items:
             continue
         photos.append({"app":item["app"],"width":w,"height":h})
 (root/"results.csv").unlink()
+semantic_path=root/"semantic.tmp"
+semantic=json.loads(semantic_path.read_text()) if semantic_path.is_file() else {}
+semantic_path.unlink(missing_ok=True)
+dpi=int(os.environ.get("WINE_DPI","96"))
+smoothing=os.environ.get("WINE_FONT_SMOOTHING","grayscale")
+if dpi not in (96,120,144,192) or smoothing not in ("off","grayscale","cleartype"):
+    raise ValueError("Unexpected Wine UI profile")
 (root/"public_results.json").write_text(json.dumps({
+ "wine_dpi":dpi,
+ "font_smoothing":smoothing,
+ "semantic_probe":semantic,
  "schema":"winebot.synthetic-window-rdte.v1",
  "venue":"WineBot intent-rel container on disposable public Ubuntu CI",
  "results":items,
