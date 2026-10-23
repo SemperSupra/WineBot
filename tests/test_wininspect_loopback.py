@@ -22,7 +22,7 @@ def test_daemon_spawn_is_explicit_loopback_and_read_only(tmp_path):
     assert result["started"] is True
     args = spawn.call_args.args[0]
     assert args[:2] == ["wine", str(wi.daemon_exe())]
-    for flag in ("--no-config", "--ipv4", "--no-discovery", "--headless", "--read-only"):
+    for flag in ("--no-config", "--ipv4", "--no-discovery", "--no-mdns", "--headless", "--read-only"):
         assert flag in args
     assert args[args.index("--bind") + 1] == "127.0.0.1"
     assert args[args.index("--port") + 1] == str(wi.port())
