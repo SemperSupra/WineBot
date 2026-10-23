@@ -56,6 +56,38 @@ Legacy aliases remain accepted:
 | `max-quality` | on | on | on | on | off | Higher-fidelity capture for demos/visual review. |
 | `diagnostic` | on | on | on | on | on | Maximum observability for debugging and incident triage. |
 
+## Visual Display Profiles (Orthogonal, Opt-In)
+
+The visual axis selects **Wine desktop DPI and font smoothing**, independently of
+use-case authorization and performance/recording settings. Existing commands
+without `--visual` keep their current display settings.
+
+```sh
+./scripts/wb profile list
+./scripts/wb profile up human-interactive --visual human-readable --dry-run
+./scripts/wb profile up supervised-agent --visual assistive-readable --dry-run
+./scripts/wb profile up agent-batch --visual deterministic-cv --dry-run
+```
+
+| Visual preset | `WINE_DPI` | `WINE_FONT_SMOOTHING` | Scope |
+| :--- | ---: | :--- | :--- |
+| `human-readable` | 144 | grayscale | Larger desktop menus and dialogs |
+| `assistive-readable` | 144 | grayscale | Visual legibility only, **not screen-reader qualification** |
+| `deterministic-cv` | 96 | grayscale | Pinned visual geometry and repeatable screenshot baseline |
+
+The presets use Wine's existing registry and Docker Compose controls. They do
+**not** change principal identity, instance/session control, broker leases,
+the active Windows application, screen size, window layout or evidence policy.
+
+**Empirical support:** Disposable WineBot windows and captured 96/144 DPI
+comparison [#131](https://github.com/SemperSupra/WineBot/pull/131)
+show that 144 DPI improves label/menu readability, while fixed-size Wine File
+Manager and Registry Editor windows may clip text. The follow-up must qualify
+DPI-aware resizing/viewport transforms and accessibility focus. ClearType
+did not improve static text in Xvfb over grayscale in the tested environment.
+Do not claim this preset supplies NVDA/UIA access, a usable human control lease,
+CV-model consistency across different display sizes, or software-renderer gains.
+
 ## Admission Guard Rules
 
 WineBot rejects invalid or contradictory combinations at startup and API admission points.
