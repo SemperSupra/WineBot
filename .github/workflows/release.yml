@@ -145,6 +145,11 @@ jobs:
           if [ -z "$TOKEN" ]; then
             TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
           fi
+          if [ -z "$TOKEN" ]; then
+            echo "Conformance token unavailable" >&2
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Run conformance tests
@@ -158,12 +163,21 @@ jobs:
             --results-file conformance-results.json \
             -v --tb=short
 
-      - name: Upload conformance results
+      - name: Project safe public conformance evidence
+        id: public-conformance-summary
         if: always()
+        run: |
+          python3 winebot/scripts/ci/sanitize-conformance-results.py \
+            --input conformance-results.json \
+            --output conformance-summary-public.json
+
+      - name: Upload conformance results
+        if: ${{ always() && steps.public-conformance-summary.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: conformance-results-release
-          path: conformance-results.json
+          path: conformance-summary-public.json
+          if-no-files-found: error
 
       - name: Fail on conformance failure
         if: failure()
