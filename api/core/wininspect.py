@@ -83,11 +83,23 @@ def timeout_seconds() -> float:
     return max(0.1, min(value, 30.0))
 
 
+WININSPECT_DEFAULT_DIR = "/opt/winebot/windows-tools/WinSpy"
+WININSPECT_REQUIRED_FILES = ("wininspectd.exe", "wininspect.exe")
+
+
 def tool_dir() -> Path:
-    return Path(
-        os.getenv("WINEBOT_WININSPECT_DIR", "/opt/winebot/windows-tools/WinSpy").strip()
-        or "/opt/winebot/windows-tools/WinSpy"
-    )
+    """Locate a complete WinInspect installation without mixing layouts.
+
+    WinInspect Portable v0.4.4 stages its binaries under App/WinInspect,
+    whereas older installations use a flat directory. An explicit
+    WINEBOT_WININSPECT_DIR may point to either layout. Fail closed if neither
+    contains both required executables; never scan other installed programs.
+    """
+    root = Path(os.getenv("WINEBOT_WININSPECT_DIR", "").strip() or WININSPECT_DEFAULT_DIR)
+    for candidate in (root, root / "App" / "WinInspect"):
+        if all((candidate / name).is_file() for name in WININSPECT_REQUIRED_FILES):
+            return candidate
+    return root
 
 
 def daemon_exe() -> Path:
