@@ -11,6 +11,8 @@ permissions:
 
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  WINE_DPI: '144'
+  WINE_FONT_SMOOTHING: 'grayscale'
 
 jobs:
   winebot-windows-builtins:
