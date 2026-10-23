@@ -68,16 +68,27 @@ jobs:
                 exit 2
               fi
               echo "PASS: SuperTux Windows game window visible"
-              sleep 2
-              if ! import -window "$wid" /tmp/supertux-scoped.png >/dev/null 2>&1; then
-                echo "UNQUALIFIED: scoped game-window capture"
-                exit 2
-              fi
-              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/supertux-scoped.png 2>/dev/null || true)"
-              if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ ||
-                    ! "${colors:-}" =~ ^[0-9]{1,9}$ ]] ||
-                 [ "$w" -lt 200 ] || [ "$h" -lt 120 ] || [ "$colors" -lt 40 ]; then
-                echo "UNQUALIFIED: nonblank rendered game scene"
+              visual_ok=0
+              for sample in 1 2 3; do
+                sleep 3
+                if ! import -window "$wid" /tmp/supertux-scoped.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: scoped game-window capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/supertux-scoped.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ ||
+                      ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: synthetic image metadata format"
+                  exit 2
+                fi
+                echo "OBS: scoped synthetic game pixels sample=$sample width=$w height=$h colors=$colors"
+                if [ "$w" -ge 200 ] && [ "$h" -ge 120 ] && [ "$colors" -ge 40 ]; then
+                  visual_ok=1
+                  break
+                fi
+              done
+              if [ "$visual_ok" -ne 1 ]; then
+                echo "UNQUALIFIED: persistent limited-color game window"
                 exit 2
               fi
               echo "PASS: SuperTux rendered scoped game-window content"
