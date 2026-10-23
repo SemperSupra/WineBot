@@ -82,25 +82,30 @@ jobs:
           docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
           docker build -f docker/cpu-renderers.Dockerfile \
             --build-arg BASE_IMAGE=winebot:rdte-slim -t winebot:rdte-cpu .
-      - name: WGL create/draw/swap under Wine+LLVMpipe; fail closed
-        timeout-minutes: 3
+      - name: WGL bounded complexity and resolution sweep under Wine+LLVMpipe
+        timeout-minutes: 5
         run: |
-          echo 'BEGIN: Wine CPU-only WGL render'
-          if timeout -k 10s 110s docker run --rm --init --network none \
-            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-fixture-prefix \
-            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
-            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
-            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
-            python3 /opt/winebot/cpu_renderer.py exec --profile cpu-opengl-llvmpipe -- \
-            wine /fixture.exe > /tmp/winebot-wgl-job-local.log 2>&1; then
-            if grep -q 'WINE_OPENGL_LLVMPIPE_OK' /tmp/winebot-wgl-job-local.log; then
-              echo 'PASS: Wine CPU-only WGL renderer'
-            else
-              echo 'FAIL: Wine fixture success marker absent'
-              exit 1
+          for config in "1 1 320" "20 128 640" "25 1024 960"; do
+            read -r frames triangles width <<< "$config"
+            if ! timeout -k 10s 85s docker run --rm --init --network none \
+              --user 1000:1000 --cpus=2 --memory=3g --pids-limit=256 \
+              -e HOME=/home/winebot -e WINEDEBUG=-all \
+              -e WINEPREFIX=/tmp/winebot-fixture-prefix \
+              -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+              --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+              -a -s '-screen 0 1280x960x24 +extension GLX -nolisten tcp' \
+              python3 /opt/winebot/cpu_renderer.py exec \
+              --profile cpu-opengl-llvmpipe --threads 4 -- \
+              wine /fixture.exe "$frames" "$triangles" "$width" \
+              > /tmp/winebot-wgl-job-local.log 2>&1; then
+                echo 'UNQUALIFIED: Windows/WGL bounded draw failed'
+                exit 2
             fi
-          else
-            echo 'FAIL: bounded Wine WGL fixture execution'
-            exit 1
-          fi
-          # Deliberately do not upload/cat raw Wine logs or private-shaped diagnostics.
+            if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=$frames triangles=$triangles width=$width" \
+              /tmp/winebot-wgl-job-local.log; then
+                echo 'UNQUALIFIED: Windows/WGL success identity mismatch'
+                exit 2
+            fi
+            echo "PASS: Windows/WGL frames=$frames triangles=$triangles width=$width"
+          done
+          # Raw Wine stdout/stderr remains job-local and is never uploaded.
