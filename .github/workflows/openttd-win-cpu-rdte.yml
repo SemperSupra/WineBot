@@ -66,7 +66,7 @@ jobs:
                   found=1
                   break
                 fi
-                if ! kill -0 "$game_pid" 2>/dev/null; then break; fi
+                # Wine launchers can return before the child X11 window appears.
                 sleep 0.6
               done
               kill "$game_pid" 2>/dev/null || true
