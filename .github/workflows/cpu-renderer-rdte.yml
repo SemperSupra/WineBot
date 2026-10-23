@@ -107,12 +107,12 @@ jobs:
                 echo 'UNQUALIFIED: Windows/WGL success identity mismatch'
                 exit 2
             fi
-            draw_ms="$(grep -Eo 'elapsed_ms=[0-9]{1,10}' /tmp/winebot-wgl-job-local.log | tail -1 | cut -d= -f2)"
-            if [[ ! "$draw_ms" =~ ^[0-9]{1,10}$ ]]; then
+            draw_us="$(grep -Eo 'elapsed_us=[0-9]{1,10}' /tmp/winebot-wgl-job-local.log | tail -1 | cut -d= -f2)"
+            if [[ ! "$draw_us" =~ ^[0-9]{1,10}$ ]]; then
               echo 'UNQUALIFIED: Windows/WGL elapsed timing unavailable'
               exit 2
             fi
-            echo "PASS: Windows/WGL threads=$threads frames=$frames triangles=$triangles width=$width elapsed_ms=$draw_ms"
+            echo "PASS: Windows/WGL threads=$threads frames=$frames triangles=$triangles width=$width elapsed_us=$draw_us"
             done
           done
           # Raw Wine stdout/stderr remains job-local and is never uploaded.
