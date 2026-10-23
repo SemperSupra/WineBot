@@ -48,6 +48,13 @@ class CpuRendererTests(unittest.TestCase):
             self.assertEqual(result["VK_DRIVER_FILES"], str(fake2.resolve()))
             self.assertEqual(result["VK_ICD_FILENAMES"], str(fake2.resolve()))
 
+    def test_debian_trixie_unqualified_lvp_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            icd = Path(tmp) / "lvp_icd.json"
+            icd.write_text("{}", encoding="utf-8")
+            output = cr.environment("cpu-vulkan-lavapipe", icd=str(icd), environ={})
+            self.assertEqual(output["VK_DRIVER_FILES"], str(icd.resolve()))
+
     def test_swiftshader_requires_explicit_icd(self):
         with patch.dict(os.environ, {"WINEBOT_SWIFTSHADER_ICD": "/nonexistent/swiftshader_icd.json"}):
             with self.assertRaises(cr.RendererUnavailable):
