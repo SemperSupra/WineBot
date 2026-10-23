@@ -115,9 +115,9 @@ def test_public_workflows_do_not_publish_raw_conformance_data(workflow_path: str
 def test_quiet_pytest_console_does_not_echo_assertion_response(tmp_path: Path) -> None:
     fixture = tmp_path / "test_probe_private_payload.py"
     fixture.write_text(
-        'def test_probe():\\n'
-        '    payload = {"value": "SYNTHETIC-UNPUBLISHED-MARKER"}\\n'
-        '    assert "count" in payload\\n',
+        'def test_probe():\n'
+        '    payload = {"value": "SYNTHETIC-UNPUBLISHED-MARKER"}\n'
+        '    assert "count" in payload\n',
         encoding="utf-8",
     )
     process = subprocess.run(
