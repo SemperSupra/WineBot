@@ -1,0 +1,45 @@
+name: CPU Software Renderer RDTE (synthetic)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/cpu_renderer.py
+      - tests/test_cpu_renderer.py
+      - docker/cpu-renderers.Dockerfile
+      - .github/workflows/cpu-renderer-rdte.yml
+permissions:
+  contents: read
+concurrency:
+  group: cpu-rdte-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-software-rendering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Pure synthetic unit tests
+        run: python3 -m unittest discover -s tests -p 'test_cpu_renderer.py' -v
+      - name: Build isolated Debian Mesa image (no WineBot base or private assets)
+        run: docker build -f docker/cpu-renderers.Dockerfile -t winebot-cpu-rdte:synthetic .
+      - name: LLVMpipe GLX probe and bounded smoke benchmark
+        run: |
+          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-opengl-llvmpipe
+          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX' \
+            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-opengl-llvmpipe --seconds 7
+      - name: Lavapipe Vulkan probe and bounded draw test
+        run: |
+          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-vulkan-lavapipe
+          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX' \
+            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-vulkan-lavapipe --frames 20 --timeout 45
+      # SwiftShader is deliberately NOT silently substituted or fetched from
+      # a floating release. A separately pinned, licensed ICD is needed.
+      # No artifact upload: keep public evidence generic and bounded.
