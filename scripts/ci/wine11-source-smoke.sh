@@ -32,12 +32,12 @@ xdotool getdisplaygeometry --shell >/dev/null 2>&1 || fail 'xvfb'
 if ! timeout 90s wineboot -u >/dev/null 2>&1; then fail 'wineboot'; fi
 printf 'PASS: fresh_prefix\n'
 
-if ! timeout 45s wine 'C:\windows\syswow64\\cmd.exe' /c exit 0 >/dev/null 2>&1; then
+if ! timeout 45s wine 'C:\windows\syswow64\cmd.exe' /c exit 0 >/dev/null 2>&1; then
   fail 'wow64_32bit_cmd'
 fi
 printf 'PASS: wow64_32bit_cmd\n'
 
-wine 'C:\windows\system32\\notepad.exe' >/dev/null 2>&1 &
+wine 'C:\windows\system32\notepad.exe' >/dev/null 2>&1 &
 for _ in $(seq 1 20); do
   if xdotool search --onlyvisible --name '[Nn]otepad' >/dev/null 2>&1; then
     printf 'PASS: 64bit_notepad_x11_window\n'
