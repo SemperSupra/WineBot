@@ -6,6 +6,7 @@ on:
       - scripts/cpu_renderer.py
       - tests/test_cpu_renderer.py
       - docker/cpu-renderers.Dockerfile
+      - tests/fixtures/cpu_gl_smoke.c
       - .github/workflows/cpu-renderer-rdte.yml
 permissions:
   contents: read
@@ -59,3 +60,46 @@ jobs:
       # SwiftShader is deliberately NOT silently substituted or fetched from
       # a floating release. A separately pinned, licensed ICD is needed.
       # No artifact upload: keep public evidence generic and bounded.
+
+  synthetic-wine-opengl:
+    name: Derived WineBot Win32 WGL smoke (synthetic)
+    needs: synthetic-software-rendering
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Compile tiny Win32 OpenGL fixture on public runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 >/dev/null
+          x86_64-w64-mingw32-gcc -O2 -o /tmp/winebot-cpu-gl-smoke.exe \
+            tests/fixtures/cpu_gl_smoke.c -lopengl32 -lgdi32 -luser32
+      - name: Build qualified WineBot candidate and opt-in CPU rendering layer
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
+          docker build -f docker/cpu-renderers.Dockerfile \
+            --build-arg BASE_IMAGE=winebot:rdte-slim -t winebot:rdte-cpu .
+      - name: WGL create/draw/swap under Wine+LLVMpipe; fail closed
+        timeout-minutes: 3
+        run: |
+          echo 'BEGIN: Wine CPU-only WGL render'
+          if timeout -k 10s 110s docker run --rm --init --network none \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-fixture-prefix \
+            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py exec --profile cpu-opengl-llvmpipe -- \
+            wine /fixture.exe > /tmp/winebot-wgl-job-local.log 2>&1; then
+            if grep -q 'WINE_OPENGL_LLVMPIPE_OK' /tmp/winebot-wgl-job-local.log; then
+              echo 'PASS: Wine CPU-only WGL renderer'
+            else
+              echo 'FAIL: Wine fixture success marker absent'
+              exit 1
+            fi
+          else
+            echo 'FAIL: bounded Wine WGL fixture execution'
+            exit 1
+          fi
+          # Deliberately do not upload/cat raw Wine logs or private-shaped diagnostics.
