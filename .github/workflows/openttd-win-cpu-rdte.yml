@@ -1,0 +1,81 @@
+name: OpenTTD Windows Game CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/openttd-win-cpu-rdte.yml
+permissions:
+  contents: read
+concurrency:
+  group: openttd-win-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openttd-win64-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Fetch officially checksummed game and free graphics assets
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$RUNNER_TEMP/win-game" "$RUNNER_TEMP/opengfx"
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            https://cdn.openttd.org/openttd-releases/15.3/openttd-15.3-windows-win64.zip \
+            -o "$RUNNER_TEMP/openttd.zip"
+          echo "61c0a6a43d81008c7ff4330fb56351bbf66a980cdad041f1d0e08b51f2eeb34c  $RUNNER_TEMP/openttd.zip" | sha256sum -c --status
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            https://cdn.openttd.org/opengfx-releases/8.0/opengfx-8.0-all.zip \
+            -o "$RUNNER_TEMP/opengfx.zip"
+          echo "43a0c1dabf39cb865394f3a6cc36d4da5c10ecfaaf55652043104806810903be  $RUNNER_TEMP/opengfx.zip" | sha256sum -c --status
+          unzip -qq "$RUNNER_TEMP/openttd.zip" -d "$RUNNER_TEMP/win-game"
+          unzip -qq "$RUNNER_TEMP/opengfx.zip" -d "$RUNNER_TEMP/opengfx"
+          game="$(find "$RUNNER_TEMP/win-game" -type f -iname openttd.exe -print -quit)"
+          test -n "$game"
+          basedir="$(dirname "$game")/baseset"
+          mkdir -p "$basedir"
+          find "$RUNNER_TEMP/opengfx" -type f \( -iname '*.tar' -o -iname '*.obg' -o -iname '*.grf' \) -exec cp -n '{}' "$basedir" \;
+          test "$(find "$basedir" -type f | wc -l)" -ge 1
+          echo 'PASS: official game and free base graphics integrity and staging'
+      - name: Build WineBot experiment image without publication
+        timeout-minutes: 13
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:openttd-rdte .
+      - name: Launch actual Windows OpenTTD through Wine and confirm visible game window
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 155s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 --user 1000:1000 \
+            -e HOME=/home/winebot -e WINEPREFIX=/tmp/winebot-openttd-fixture \
+            -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-rdte \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -iname openttd.exe -print -quit)"
+              test -n "$exe"
+              cd "$(dirname "$exe")"
+              wine "$exe" -m null -s null >/tmp/wine-game-local.log 2>&1 &
+              game_pid=$!
+              found=0
+              for i in $(seq 1 100); do
+                if xdotool search --onlyvisible --name OpenTTD >/dev/null 2>&1; then
+                  found=1
+                  break
+                fi
+                if ! kill -0 "$game_pid" 2>/dev/null; then break; fi
+                sleep 0.6
+              done
+              kill "$game_pid" 2>/dev/null || true
+              wineserver -k >/dev/null 2>&1 || true
+              if [ "$found" -ne 1 ]; then
+                echo "UNQUALIFIED: Windows game window not visible"
+                exit 2
+              fi
+              echo "PASS: Windows OpenTTD game window visible under Wine"
+            '
+      # No screenshots, raw Wine logs, VNC listeners, game saves, secrets,
+      # machine identifiers, or artifacts uploaded by this RDTE.
