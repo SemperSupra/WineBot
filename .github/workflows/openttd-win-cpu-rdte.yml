@@ -57,14 +57,37 @@ jobs:
             --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
             -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
             /bin/bash -euo pipefail -c '
+              # Qualify this very Xvfb/Wine context before blaming the game.
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: LLVMpipe renderer unavailable inside game cell"
+                exit 2
+              fi
+              echo "PASS: game-cell software GLX"
+              wine notepad.exe >/tmp/wine-builtin-local.log 2>&1 &
+              baseline=0
+              for i in $(seq 1 60); do
+                if xdotool search --onlyvisible --name Notepad >/dev/null 2>&1; then
+                  baseline=1
+                  break
+                fi
+                sleep 0.5
+              done
+              wineserver -k >/dev/null 2>&1 || true
+              if [ "$baseline" -ne 1 ]; then
+                echo "UNQUALIFIED: Wine built-in X11 window control"
+                exit 2
+              fi
+              echo "PASS: Wine built-in X11 window control"
               exe="$(find /game -type f -iname openttd.exe -print -quit)"
               test -n "$exe"
               cd "$(dirname "$exe")"
-              wine "$exe" -m null -s null >/tmp/wine-game-local.log 2>&1 &
+              # Select the documented Win32 video driver for a GDI baseline.
+              wine "$exe" -v win32 -m null -s null -x >/tmp/wine-game-local.log 2>&1 &
               game_pid=$!
               found=0
               for i in $(seq 1 100); do
-                if xdotool search --onlyvisible --name OpenTTD >/dev/null 2>&1; then
+                if xdotool search --onlyvisible --name OpenTTD >/dev/null 2>&1 || \
+                   xdotool search --onlyvisible --class openttd >/dev/null 2>&1; then
                   found=1
                   break
                 fi
@@ -74,7 +97,7 @@ jobs:
               kill "$game_pid" 2>/dev/null || true
               wineserver -k >/dev/null 2>&1 || true
               if [ "$found" -ne 1 ]; then
-                echo "UNQUALIFIED: Windows game window not visible"
+                echo "UNQUALIFIED: Windows game window not visible after qualified Wine/X11 control"
                 exit 2
               fi
               echo "PASS: Windows OpenTTD game window visible under Wine"
