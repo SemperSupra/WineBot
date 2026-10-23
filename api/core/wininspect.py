@@ -191,6 +191,7 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
                     "--ipv4",
                     "--port", str(port()),
                     "--no-discovery",
+                    "--no-mdns",
                     "--headless",
                     "--read-only",
                 ],
