@@ -143,8 +143,9 @@ def main(argv=None):
     p.add_argument("--seconds", type=int, default=7)
     p.add_argument("--frames", type=int, default=60)
     p.add_argument("--timeout", type=int, default=45)
-    p.add_argument("command", nargs=argparse.REMAINDER)
-    args = p.parse_args(argv)
+    args, command = p.parse_known_args(argv)
+    if args.action != "exec" and command:
+        p.error("unexpected arguments")
     if args.action == "profiles":
         print(json.dumps({"profiles": sorted(PROFILES)}))
         return 0
@@ -155,7 +156,7 @@ def main(argv=None):
     try:
         env = environment(args.profile, args.icd, args.threads)
         if args.action == "exec":
-            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            command = command[1:] if command[:1] == ["--"] else command
             if not command:
                 p.error("exec requires -- command [args...]")
             if shutil.which(command[0], path=env.get("PATH")) is None:
