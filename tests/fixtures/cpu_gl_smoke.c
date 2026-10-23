@@ -53,7 +53,9 @@ int main(int argc, char **argv) {
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
-    DWORD start = GetTickCount();
+    LARGE_INTEGER frequency, start, stop;
+    if (!QueryPerformanceFrequency(&frequency) || !frequency.QuadPart) return 21;
+    if (!QueryPerformanceCounter(&start)) return 21;
     for (int f = 0; f < frames; ++f) {
         glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -71,9 +73,11 @@ int main(int argc, char **argv) {
         if (glGetError() != GL_NO_ERROR) return 17;
         if (!SwapBuffers(dc)) return 16;
     }
-    DWORD elapsed = GetTickCount() - start;
-    printf("WINE_OPENGL_LLVMPIPE_OK frames=%d triangles=%d width=%d elapsed_ms=%lu\n",
-           frames, triangles, width, (unsigned long)elapsed);
+    if (!QueryPerformanceCounter(&stop)) return 21;
+    unsigned long elapsed_us = (unsigned long)(1000000.0 *
+        (double)(stop.QuadPart - start.QuadPart) / (double)frequency.QuadPart);
+    printf("WINE_OPENGL_LLVMPIPE_OK frames=%d triangles=%d width=%d elapsed_us=%lu\n",
+           frames, triangles, width, elapsed_us);
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(context);
     ReleaseDC(window, dc);
