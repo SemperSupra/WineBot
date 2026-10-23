@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 BUILD_ACTION = "uses: docker/build-push-action@"
 WORKFLOW_GUARD = "\nenv:\n  DOCKER_BUILD_RECORD_UPLOAD: 'false'\n"
