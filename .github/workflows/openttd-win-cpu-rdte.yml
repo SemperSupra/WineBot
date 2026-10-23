@@ -94,8 +94,6 @@ jobs:
                 # Wine launchers can return before the child X11 window appears.
                 sleep 0.6
               done
-              kill "$game_pid" 2>/dev/null || true
-              wineserver -k >/dev/null 2>&1 || true
               if [ "$found" -ne 1 ]; then
                 echo "UNQUALIFIED: Windows game window not visible after qualified Wine/X11 control"
                 exit 2
@@ -125,6 +123,8 @@ jobs:
                 exit 2
               fi
               echo "PASS: OpenTTD scoped color-content smoke"
+              kill "$game_pid" 2>/dev/null || true
+              wineserver -k >/dev/null 2>&1 || true
               # PNG is deleted with the disposable container; never uploaded.
             '
       # No screenshots, raw Wine logs, VNC listeners, game saves, secrets,
