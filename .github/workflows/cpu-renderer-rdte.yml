@@ -15,7 +15,7 @@ concurrency:
 jobs:
   synthetic-software-rendering:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     env:
       DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
@@ -24,22 +24,38 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_cpu_renderer.py' -v
       - name: Build isolated Debian Mesa image (no WineBot base or private assets)
         run: docker build -f docker/cpu-renderers.Dockerfile -t winebot-cpu-rdte:synthetic .
-      - name: LLVMpipe GLX probe and bounded smoke benchmark
+      - name: LLVMpipe GLX probe (bounded)
+        timeout-minutes: 2
         run: |
-          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
-            -a -s '-screen 0 640x480x24 +extension GLX' \
-            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-opengl-llvmpipe
-          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
-            -a -s '-screen 0 640x480x24 +extension GLX' \
-            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-opengl-llvmpipe --seconds 7
-      - name: Lavapipe Vulkan probe and bounded draw test
+          echo 'BEGIN: CPU OpenGL renderer identity'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-opengl-llvmpipe --timeout 20
+          echo 'PASS: CPU OpenGL renderer identity'
+      - name: LLVMpipe GLX draw smoke (bounded)
+        timeout-minutes: 2
         run: |
-          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
-            -a -s '-screen 0 640x480x24 +extension GLX' \
-            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-vulkan-lavapipe
-          docker run --rm --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
-            -a -s '-screen 0 640x480x24 +extension GLX' \
+          echo 'BEGIN: CPU OpenGL draw'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-opengl-llvmpipe --seconds 7 --timeout 20
+          echo 'PASS: CPU OpenGL draw'
+      - name: Lavapipe Vulkan probe (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU Vulkan renderer identity'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-vulkan-lavapipe --timeout 20
+          echo 'PASS: CPU Vulkan renderer identity'
+      - name: Lavapipe Vulkan draw smoke (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU Vulkan draw'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
             python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-vulkan-lavapipe --frames 20 --timeout 45
+          echo 'PASS: CPU Vulkan draw'
       # SwiftShader is deliberately NOT silently substituted or fetched from
       # a floating release. A separately pinned, licensed ICD is needed.
       # No artifact upload: keep public evidence generic and bounded.
