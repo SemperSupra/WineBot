@@ -81,13 +81,31 @@ def check(path):
 xc,xd=check("/windows")
 cc,cd=check("/wininspect/capabilities")
 wc,wd=check("/wininspect/windows")
+# Diagnosis remains bounded to allowlisted Boolean component readiness.
+try:
+    import sys
+    sys.path.insert(0, "/")
+    from api.core import wininspect as wi
+    st=wi.ensure_daemon(start=False)
+    native={
+      "enabled":bool(wi.enabled()),
+      "installed":bool(wi.installed()),
+      "daemon_exe_present":bool(wi.daemon_exe().is_file()),
+      "cli_exe_present":bool(wi.cli_exe().is_file()),
+      "gui_exe_present":bool(wi.gui_exe().is_file()),
+      "tcp_ready":bool(wi._tcp_ready()),
+      "process_running":bool(wi._process_running())
+    }
+except Exception:
+    native={"diagnostic_import_failed": True}
 count=wd.get("count") if isinstance(wd,dict) else None
 cls=("unavailable" if type(count) is not int else
     "zero" if count==0 else "one" if count==1 else "two-plus")
 print(json.dumps({"x11_windows_api_ok": xc==200,
  "wininspect_capabilities_ok": cc==200,
  "wininspect_windows_ok": wc==200,
- "wininspect_window_count_class": cls}))
+ "wininspect_window_count_class": cls,
+ "daemon_inventory": native}))
 PY
       then
         echo '{"x11_windows_api_ok":false,"wininspect_capabilities_ok":false,"wininspect_windows_ok":false,"wininspect_window_count_class":"unavailable"}' > artifacts/public-wine-gui/semantic.tmp
