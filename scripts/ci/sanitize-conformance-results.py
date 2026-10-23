@@ -15,7 +15,7 @@ from pathlib import Path
 MAX_RAW_BYTES = 1_048_576
 COUNT_FIELDS = ("total", "passed", "failed", "skipped", "xfailed", "xpassed", "errors")
 SAFE_TEST_ID = re.compile(
-    r"(?:contracts/)?tests/conformance/test_[A-Za-z0-9_]+\.py"
+    r"(?:(?:contracts/)?tests/conformance/)?test_[A-Za-z0-9_]+\.py"
     r"(?:::\w+)*::test_[A-Za-z0-9_]+"
 )
 
