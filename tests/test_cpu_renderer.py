@@ -69,5 +69,14 @@ class CpuRendererTests(unittest.TestCase):
             self.assertEqual(result["probe"], "passed")
 
 
+    def test_cli_options_after_action_are_not_swallowed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        with patch.object(cr, "environment", return_value={}), \
+             patch.object(cr, "probe", return_value={"probe": "passed"}), \
+             redirect_stdout(StringIO()) as output:
+            self.assertEqual(cr.main(["probe", "--profile", "cpu-opengl-llvmpipe"]), 0)
+        self.assertIn('"passed"', output.getvalue())
+
 if __name__ == "__main__":
     unittest.main()
