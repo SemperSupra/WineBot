@@ -101,6 +101,31 @@ jobs:
                 exit 2
               fi
               echo "PASS: Windows OpenTTD game window visible under Wine"
+              # Window-scoped local-only capture; publish only dimensions and color diversity.
+              wid="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+              if [ -z "$wid" ]; then
+                wid="$(xdotool search --onlyvisible --class openttd 2>/dev/null | head -1 || true)"
+              fi
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: game window id selection"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/wine-openttd-scoped.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: scoped window capture"
+                exit 2
+              fi
+              read -r image_w image_h image_colors <<< "$(identify -format "%w %h %k" /tmp/wine-openttd-scoped.png 2>/dev/null || true)"
+              if [[ ! "${image_w:-}" =~ ^[0-9]{1,4}$ ||
+                    ! "${image_h:-}" =~ ^[0-9]{1,4}$ ||
+                    ! "${image_colors:-}" =~ ^[0-9]{1,9}$ ]] ||
+                 [ "$image_w" -lt 200 ] || [ "$image_h" -lt 120 ] ||
+                 [ "$image_colors" -lt 40 ]; then
+                echo "UNQUALIFIED: window content variety/dimensions"
+                exit 2
+              fi
+              echo "PASS: OpenTTD scoped color-content smoke"
+              # PNG is deleted with the disposable container; never uploaded.
             '
       # No screenshots, raw Wine logs, VNC listeners, game saves, secrets,
       # machine identifiers, or artifacts uploaded by this RDTE.
