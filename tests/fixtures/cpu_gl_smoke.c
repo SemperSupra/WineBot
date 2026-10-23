@@ -18,7 +18,9 @@ int main(int argc, char **argv) {
     int frames = bounded(argc > 1 ? argv[1] : NULL, 1, 120, 1);
     int triangles = bounded(argc > 2 ? argv[2] : NULL, 1, 2048, 1);
     int width = bounded(argc > 3 ? argv[3] : NULL, 160, 1280, 320);
-    if (frames < 0 || triangles < 0 || width < 0) return 20;
+    int fill = bounded(argc > 4 ? argv[4] : NULL, 0, 1, 0);
+    if (frames < 0 || triangles < 0 || width < 0 || fill < 0) return 20;
+    if (fill && frames * triangles > 256) return 22;
     int height = width * 3 / 4;
 
     HINSTANCE instance = GetModuleHandleA(NULL);
@@ -64,9 +66,16 @@ int main(int argc, char **argv) {
             float x = (float)((t % 31) - 15) / 16.0f;
             float y = (float)(((t / 31) % 23) - 11) / 12.0f;
             glColor3f(0.7f, 0.3f, 0.5f);
-            glVertex2f(x, y);
-            glVertex2f(x + 0.015f, y);
-            glVertex2f(x, y + 0.015f);
+            if (fill) {
+                float offset = (float)(t % 5) * 0.01f;
+                glVertex2f(-1.0f + offset, -1.0f);
+                glVertex2f(1.0f, -1.0f + offset);
+                glVertex2f(-1.0f, 1.0f);
+            } else {
+                glVertex2f(x, y);
+                glVertex2f(x + 0.015f, y);
+                glVertex2f(x, y + 0.015f);
+            }
         }
         glEnd();
         glFinish();
@@ -76,8 +85,8 @@ int main(int argc, char **argv) {
     if (!QueryPerformanceCounter(&stop)) return 21;
     unsigned long elapsed_us = (unsigned long)(1000000.0 *
         (double)(stop.QuadPart - start.QuadPart) / (double)frequency.QuadPart);
-    printf("WINE_OPENGL_LLVMPIPE_OK frames=%d triangles=%d width=%d elapsed_us=%lu\n",
-           frames, triangles, width, elapsed_us);
+    printf("WINE_OPENGL_LLVMPIPE_OK frames=%d triangles=%d width=%d fill=%d elapsed_us=%lu\n",
+           frames, triangles, width, fill, elapsed_us);
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(context);
     ReleaseDC(window, dc);
