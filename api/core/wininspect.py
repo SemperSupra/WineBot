@@ -15,6 +15,8 @@ from api.utils.process import find_processes, manage_process
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1985
 DEFAULT_TIMEOUT_SECONDS = 3.0
+# WinInspect v0.4.4 release uses the v0.3.0 wire protocol (types.hpp).
+WININSPECT_PROTOCOL_VERSION = "0.3.0"
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
     "daemon.health",
@@ -298,8 +300,8 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.4.0",
             **(params or {}),
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
         },
     }
     with socket.create_connection((host(), port()), timeout=timeout_seconds()) as sock:

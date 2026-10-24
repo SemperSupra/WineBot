@@ -24,4 +24,5 @@ pytest \
   tests/test_ui_dashboard.py \
   tests/test_ui_accessibility.py \
   tests/test_wininspect_portable_layout.py \
-  tests/test_wininspect_loopback.py
+  tests/test_wininspect_loopback.py \
+  tests/test_wininspect_rpc_version.py
