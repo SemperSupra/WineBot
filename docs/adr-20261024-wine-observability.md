@@ -66,9 +66,11 @@ complete accessibility tree from a window title or WinEvent callback.
 ## Evidence boundaries and next DAG
 
 1. **RUNNING:** complete Actions 40045850159 for native Wine 11 event callbacks.
-2. **RUNNING:** complete Actions 40047245106 for live Debian Wine callback stream
-   consumed by the bounded session-local adapter; capture only allowlisted
-   status/class receipts; ephemeral stream remains inside the test container.
+2. **RED:** run 40047245106 confirmed synthetic Wine callback receipt and
+   strict source-schema validation, but the live adapter reported
+   `bridge_missing_event`. Preserve as an unqualified cursor/integration test.
+   Isolated diagnostic rerun 40047495264 discriminates missing source-kind
+   versus projection divergence without raw event publication; status pending.
 3. **READY AFTER 1+2:** compare exact Wine versions and immutable base digests;
    read-only capability negotiation, missing event detection, overflow policy,
    stream authorization and session isolation.
