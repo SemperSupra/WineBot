@@ -92,6 +92,17 @@ jobs:
                 exit 2
               fi
               echo "PASS: SuperTux rendered scoped game-window content"
+              # All three screenshots are local-only synthetic test observations.
+              # Idle-window motion is the negative control for action-induced pixels.
+              if ! import -window "$wid" /tmp/supertux-pre-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: baseline image capture"
+                exit 2
+              fi
+              sleep 1
+              if ! import -window "$wid" /tmp/supertux-pre-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: idle image capture"
+                exit 2
+              fi
               # Direct X11 primitive only; not WineBot broker/API input conformance.
               if ! timeout -k 1s 5s xdotool windowfocus "$wid"; then
                 echo "UNQUALIFIED: direct X11 window focus"
@@ -106,6 +117,29 @@ jobs:
                 exit 2
               fi
               echo "PASS: direct X11 focus and key submission with game window present"
+              sleep 1
+              if ! import -window "$wid" /tmp/supertux-after.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: post-input image capture"
+                exit 2
+              fi
+              # ImageMagick compare returns 1 for expected differing images.
+              compare -metric AE /tmp/supertux-pre-a.png /tmp/supertux-pre-b.png \
+                null: >/dev/null 2>/tmp/supertux-idle-ae.txt || true
+              compare -metric AE /tmp/supertux-pre-b.png /tmp/supertux-after.png \
+                null: >/dev/null 2>/tmp/supertux-action-ae.txt || true
+              idle_ae="$(cat /tmp/supertux-idle-ae.txt)"
+              action_ae="$(cat /tmp/supertux-action-ae.txt)"
+              if [[ ! "$idle_ae" =~ ^[0-9]{1,9}$ || ! "$action_ae" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: image-difference metric"
+                exit 2
+              fi
+              # Report only generic pixel counts and a classification. No images.
+              echo "OBS: idle_changed_pixels=$idle_ae action_changed_pixels=$action_ae"
+              if [ "$action_ae" -gt $((idle_ae + 1000)) ]; then
+                echo "OBS: input-associated pixel change exceeds idle baseline"
+              else
+                echo "OBS: no reliable action-specific change versus idle control"
+              fi
               kill "$child" 2>/dev/null || true
               wineserver -k >/dev/null 2>&1 || true
             '
