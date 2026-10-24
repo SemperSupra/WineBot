@@ -51,7 +51,15 @@ int main(int argc, char **argv) {
     const char *renderer = (const char *)glGetString(GL_RENDERER);
     if (!renderer || !strstr(renderer, "llvmpipe")) return 15;
 
-    glViewport(0, 0, width, height);
+    /* Win32 CreateWindow dimensions include nonclient borders. The
+     * framebuffer is only the client rectangle, including on Wine/X11.
+     */
+    RECT client = {0};
+    if (!GetClientRect(window, &client)) return 25;
+    int client_width = client.right - client.left;
+    int client_height = client.bottom - client.top;
+    if (client_width < 4 || client_height < 4) return 25;
+    glViewport(0, 0, client_width, client_height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
@@ -85,7 +93,7 @@ int main(int argc, char **argv) {
          */
         GLubyte pixel[3] = {0, 0, 0};
         glReadBuffer(GL_BACK);
-        glReadPixels(width - 2, height - 2, 1, 1, GL_RGB,
+        glReadPixels(client_width - 2, client_height - 2, 1, 1, GL_RGB,
                      GL_UNSIGNED_BYTE, pixel);
         if (glGetError() != GL_NO_ERROR) return 17;
         if (pixel[0] < 20 || pixel[0] > 33 ||
