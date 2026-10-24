@@ -144,11 +144,32 @@ jobs:
                 exit 2
               fi
               echo "PASS: unprivileged identity and writable home/tmp"
-              if ! timeout -k 5s 60s wineboot -u >/tmp/wineboot-job-local.log 2>&1; then
-                echo "UNQUALIFIED: nonroot Wine prefix initialization"
+              if ! command -v wineboot >/dev/null 2>&1 ||
+                 ! wine --version >/dev/null 2>&1; then
+                echo "UNQUALIFIED: nonroot Wine binary/launcher unavailable"
                 exit 2
               fi
-              echo "PASS: unprivileged Wine prefix initialization"
+              tmp_rc=0
+              timeout -k 5s 45s wineboot -u >/tmp/wineboot-job-local.log 2>&1 || tmp_rc=$?
+              if [ "$tmp_rc" -ne 0 ]; then
+                echo "OBS: nonroot tmpfs Wine prefix initialization failed rc=$tmp_rc"
+                export WINEPREFIX="$HOME/.winebot-nonroot-fixture"
+                home_rc=0
+                timeout -k 5s 45s wineboot -u >/tmp/wineboot-home-local.log 2>&1 || home_rc=$?
+                if [ "$home_rc" -ne 0 ]; then
+                  failure_class=unknown
+                  if grep -Eiq 'permission denied|access denied' /tmp/wineboot-home-local.log; then
+                    failure_class=permission
+                  elif grep -Eiq 'not found|failed to load|cannot open' /tmp/wineboot-home-local.log; then
+                    failure_class=loader
+                  fi
+                  echo "UNQUALIFIED: nonroot Wine prefix tmp_rc=$tmp_rc home_rc=$home_rc class=$failure_class"
+                  exit 2
+                fi
+                echo "PASS: nonroot Wine prefix under writable home"
+              else
+                echo "PASS: nonroot Wine prefix on isolated tmpfs"
+              fi
               wine notepad.exe >/tmp/notepad-job-local.log 2>&1 &
               found=0
               for i in $(seq 1 60); do
