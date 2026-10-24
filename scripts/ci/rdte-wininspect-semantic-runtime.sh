@@ -69,6 +69,34 @@ x_status,windows=get("/windows")
 c_status,capabilities=get("/wininspect/capabilities")
 w_status,semantic=get("/wininspect/windows?include_info=false")
 h_status,health=get("/health/wininspect")
+print("WININSPECT_CAPABILITIES_HTTP_STATUS="+str(c_status))
+print("WININSPECT_WINDOWS_HTTP_STATUS="+str(w_status))
+# Only whitelisted diagnostic categories cross the public boundary. Never
+# emit raw response JSON, WinInspect hello fields, window titles or exception text.
+def rpc_diagnostic():
+    try:
+        wi.request("daemon.capabilities")
+        return "rpc_success"
+    except Exception as exc:
+        message=str(exc).lower()
+        if "e_protocol_version" in message or "expected 0.3.0" in message:
+            return "protocol_version_rejected"
+        if "authentication required" in message or "unauthorized" in message:
+            return "rpc_unauthorized"
+        if "bad method" in message or "method not implemented" in message:
+            return "method_unsupported"
+        if "unexpected wininspect response id" in message:
+            return "response_id_mismatch"
+        if "invalid wininspect json" in message or "frame too large" in message:
+            return "response_framing"
+        if "connection closed while reading frame" in message:
+            return "connection_closed"
+        if "timed out" in message or "timeout" in message:
+            return "timeout"
+        if "read-only mode" in message:
+            return "read_only_refusal"
+        return "other_redacted"
+print("WININSPECT_RPC_DIAGNOSTIC="+rpc_diagnostic())
 def klass(items):
     if not isinstance(items,list):return "unavailable"
     if len(items)==0:return "zero"
