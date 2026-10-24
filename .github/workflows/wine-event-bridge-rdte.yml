@@ -1,0 +1,35 @@
+name: WineBot read-only event bridge qualification
+
+on:
+  push:
+    branches:
+      - qualification/wine-event-bridge-20261024
+    paths:
+      - .github/workflows/wine-event-bridge-rdte.yml
+      - rdte/wine11/event_bridge.py
+      - rdte/wine11/test_event_bridge.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Fail-closed bounded event journal test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q rdte/wine11/event_bridge.py rdte/wine11/test_event_bridge.py
+          python3 -m unittest discover -s rdte/wine11 -p 'test_event_bridge.py' -v
+      - name: Report admission boundary
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' 'Local-only event bridge; no network adapter, broker integration, UIA claim or Wine patch.' \
+            'No persistent records, app identifiers, model data or artifact uploads.'
