@@ -22,4 +22,5 @@ pytest \
   tests/test_diag_bundle.py \
   tests/test_auto_view.py \
   tests/test_ui_dashboard.py \
-  tests/test_ui_accessibility.py
+  tests/test_ui_accessibility.py \
+  tests/test_compatibility_comparator.py
