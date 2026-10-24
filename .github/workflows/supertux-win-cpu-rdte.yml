@@ -1,0 +1,147 @@
+name: SuperTux Windows CPU Graphics RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/supertux-win-cpu-rdte.yml
+      - docker/supertux-software-gl.Dockerfile
+permissions:
+  contents: read
+concurrency:
+  group: supertux-cpu-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supertux-win64-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Download checksum-verified upstream Windows portable game
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$RUNNER_TEMP/win-game"
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 180 \
+            https://github.com/SuperTux/supertux/releases/download/v0.7.0/SuperTux-v0.7.0-win64-portable.zip \
+            -o "$RUNNER_TEMP/supertux.zip"
+          echo "d637f79e8a77fc4d42982cfea40f74f812d5050b9d6d53309b287dae734e1970  $RUNNER_TEMP/supertux.zip" | sha256sum -c --status
+          unzip -qq "$RUNNER_TEMP/supertux.zip" -d "$RUNNER_TEMP/win-game"
+          test -n "$(find "$RUNNER_TEMP/win-game" -type f -iname 'supertux*.exe' -print -quit)"
+          echo 'PASS: upstream SuperTux Windows portable archive'
+      - name: Build WineBot and isolated Mesa LLVMpipe child image
+        timeout-minutes: 13
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:supertux-rdte .
+          docker build -f docker/supertux-software-gl.Dockerfile -t winebot:supertux-cpu .
+      - name: Launch game, confirm CPU OpenGL and scoped rendered window
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 155s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEPREFIX=/tmp/winebot-supertux-fixture -e WINEDEBUG=-all \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:supertux-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: CPU OpenGL renderer not selected"
+                exit 2
+              fi
+              echo "PASS: CPU OpenGL renderer ready"
+              exe="$(find /game -type f -iname "supertux*.exe" -print -quit)"
+              test -n "$exe"
+              cd "$(dirname "$exe")"
+              wine "$exe" >/tmp/supertux-job-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name SuperTux 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: SuperTux visible Windows game window"
+                kill "$child" 2>/dev/null || true
+                exit 2
+              fi
+              echo "PASS: SuperTux Windows game window visible"
+              visual_ok=0
+              for sample in 1 2 3; do
+                sleep 3
+                if ! import -window "$wid" /tmp/supertux-scoped.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: scoped game-window capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/supertux-scoped.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ ||
+                      ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: synthetic image metadata format"
+                  exit 2
+                fi
+                echo "OBS: scoped synthetic game pixels sample=$sample width=$w height=$h colors=$colors"
+                if [ "$w" -ge 200 ] && [ "$h" -ge 120 ] && [ "$colors" -ge 40 ]; then
+                  visual_ok=1
+                  break
+                fi
+              done
+              if [ "$visual_ok" -ne 1 ]; then
+                echo "UNQUALIFIED: persistent limited-color game window"
+                exit 2
+              fi
+              echo "PASS: SuperTux rendered scoped game-window content"
+              # All three screenshots are local-only synthetic test observations.
+              # Idle-window motion is the negative control for action-induced pixels.
+              if ! import -window "$wid" /tmp/supertux-pre-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: baseline image capture"
+                exit 2
+              fi
+              sleep 1
+              if ! import -window "$wid" /tmp/supertux-pre-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: idle image capture"
+                exit 2
+              fi
+              # Direct X11 primitive only; not WineBot broker/API input conformance.
+              if ! timeout -k 1s 5s xdotool windowfocus "$wid"; then
+                echo "UNQUALIFIED: direct X11 window focus"
+                exit 2
+              fi
+              if ! timeout -k 1s 5s xdotool key --clearmodifiers Down; then
+                echo "UNQUALIFIED: direct X11 keyboard event submission"
+                exit 2
+              fi
+              if ! xdotool search --onlyvisible --name SuperTux >/dev/null 2>&1; then
+                echo "UNQUALIFIED: Windows game window lost after X11 key"
+                exit 2
+              fi
+              echo "PASS: direct X11 focus and key submission with game window present"
+              sleep 1
+              if ! import -window "$wid" /tmp/supertux-after.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: post-input image capture"
+                exit 2
+              fi
+              # ImageMagick compare returns 1 for expected differing images.
+              compare -metric AE /tmp/supertux-pre-a.png /tmp/supertux-pre-b.png \
+                null: >/dev/null 2>/tmp/supertux-idle-ae.txt || true
+              compare -metric AE /tmp/supertux-pre-b.png /tmp/supertux-after.png \
+                null: >/dev/null 2>/tmp/supertux-action-ae.txt || true
+              idle_ae="$(cat /tmp/supertux-idle-ae.txt)"
+              action_ae="$(cat /tmp/supertux-action-ae.txt)"
+              if [[ ! "$idle_ae" =~ ^[0-9]{1,9}$ || ! "$action_ae" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: image-difference metric"
+                exit 2
+              fi
+              # Report only generic pixel counts and a classification. No images.
+              echo "OBS: idle_changed_pixels=$idle_ae action_changed_pixels=$action_ae"
+              if [ "$action_ae" -gt $((idle_ae + 1000)) ]; then
+                echo "OBS: input-associated pixel change exceeds idle baseline"
+              else
+                echo "OBS: no reliable action-specific change versus idle control"
+              fi
+              kill "$child" 2>/dev/null || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # No raw Wine logs, window IDs, screenshots, gamesaves, or host identity
+      # reach published output. All untrusted captures remain ephemeral.
