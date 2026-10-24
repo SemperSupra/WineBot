@@ -222,9 +222,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wine", required=True, type=Path)
     parser.add_argument("--public-report", required=True, type=Path)
     args = parser.parse_args(argv)
-    # Never leave a stale publishable report following an invalid subsequent invocation.
+    # Refuse existing output (including symlinks): comparison must never delete an
+    # input, overwrite a prior receipt, or clobber a path supplied by an actor.
     try:
-        args.public_report.unlink(missing_ok=True)
+        if args.public_report.exists() or args.public_report.is_symlink():
+            _invalid()
         report = compare(load_observation(args.windows), load_observation(args.wine))
         payload = json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n"
         # Exclusive creation forbids replacing a symlink into another file.
