@@ -1,0 +1,82 @@
+name: RDTE corrected WinInspect source under WineBot (no release artifact)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/rdte-wininspect-correlated-source-wine.yml
+      - scripts/ci/rdte-wininspect-semantic-runtime.sh
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+jobs:
+  source-correlated-daemon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout exact WineBot experimental composition
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Checkout pinned public WinInspect v0.4.4 source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SemperSupra/WinInspect
+          ref: b2d07ae3ff1df53a62c27ec3fa27f1452ff5926a
+          path: wininspect-source
+          persist-credentials: false
+      - name: Apply the existing qualified upstream response-correlation correction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("wininspect-source/source/core/src/core.cpp")
+          old="  after_dispatch:\n    auto end_time = std::chrono::steady_clock::now();\n"
+          new=("  after_dispatch:\n"
+               "    // Preserve RPC correlation when dispatch handlers replace the response.\n"
+               "    resp.id = req.id;\n"
+               "    auto end_time = std::chrono::steady_clock::now();\n")
+          s=p.read_text()
+          if s.count(old)!=1:
+              raise SystemExit("PINNED_SOURCE_PATCH_GATE=FAIL")
+          p.write_text(s.replace(old,new))
+          print("PINNED_SOURCE_PATCH_GATE=PASS")
+          print("UPSTREAM_CORRELATION_ISSUE=18")
+          PY
+      - name: Install disposable public MinGW cross-compiler
+        shell: bash
+        run: |
+          sudo apt-get update -qq >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 ninja-build >/dev/null
+          echo "SOURCE_CROSSCOMPILER_PRESENT=true"
+      - name: Compile exact-source corrected WinInspect daemon (job-local only)
+        shell: bash
+        run: |
+          if ! cmake -S wininspect-source/source -B wininspect-source/build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF \
+            > /tmp/wininspect-cmake-config.log 2>&1; then
+            echo "WININSPECT_PATCHED_CMAKE=FAIL"
+            exit 1
+          fi
+          echo "WININSPECT_PATCHED_CMAKE=PASS"
+          if ! cmake --build wininspect-source/build --target wininspectd --parallel 2 \
+            > /tmp/wininspect-cmake-build.log 2>&1; then
+            echo "WININSPECT_PATCHED_BUILD=FAIL"
+            exit 1
+          fi
+          test -s wininspect-source/build/wininspectd.exe
+          echo "WININSPECT_PATCHED_BUILD=PASS"
+      - name: Test corrected daemon in actual WineBot with synthetic Notepad
+        shell: bash
+        env:
+          WININSPECT_TEST_DAEMON_PATH: wininspect-source/build/wininspectd.exe
+        run: bash scripts/ci/rdte-wininspect-semantic-runtime.sh
