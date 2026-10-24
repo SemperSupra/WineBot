@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # Synthetic Win32 event observer vs X11 window presence. No raw-event publication.
 set -euo pipefail
-export DISPLAY=:99 WINEARCH=wow64 WINEDEBUG=-all
+export DISPLAY=:99 WINEARCH="${WINEARCH:-wow64}" WINEDEBUG=-all
 export WINEDLLOVERRIDES='mscoree,mshtml='
 export WINEPREFIX="$(mktemp -d /tmp/wine11-events.XXXXXX)"
 export XDG_RUNTIME_DIR="$(mktemp -d /tmp/wine11-xdg.XXXXXX)"
