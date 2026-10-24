@@ -1,0 +1,56 @@
+name: Wine 10 baseline WinEvent differential RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine10-event-null-20261024
+    paths:
+      - .github/workflows/wine10-event-null-rdte.yml
+      - docker/wine10-event-null.Dockerfile
+      - rdte/wine11/**
+      - scripts/ci/verify-wine11-events.py
+      - scripts/ci/wine11-event-smoke.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine10-event-null-static
+  cancel-in-progress: true
+
+jobs:
+  baseline-event-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build isolated Debian Wine baseline probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --file docker/wine10-event-null.Dockerfile \
+            --tag winebot-wine10-event:null \
+            .
+      - name: Baseline Wine read-only event vs visible X11 fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none \
+            --cpus=2 \
+            --memory=4g \
+            --pids-limit=256 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            winebot-wine10-event:null
+      - name: Scope
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' 'Nonpublishing synthetic Wine baseline differential only.' \
+            'No image push, credential exposure, screenshots or event uploads.' \
+            'Runtime event result must be established from the actual test step.'
