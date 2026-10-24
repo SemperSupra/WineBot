@@ -11,6 +11,8 @@ on:
       - rdte/wine11/**
       - scripts/ci/verify-wine11-events.py
       - scripts/ci/wine11-event-smoke.sh
+      - scripts/ci/verify-wine-event-roundtrip.py
+      - scripts/ci/test_verify_wine_event_roundtrip.py
       - docs/rdte-wine11-ui-observation-20261024.md
       - scripts/ci/wine11-source-smoke.sh
       - .github/workflows/wine11-source-rdte.yml
@@ -31,6 +33,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+      - name: Reject truncated observer adapter streams before Wine source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p 'test_verify_wine_event_roundtrip.py' -v
       - name: Prepare disposable disk capacity
         shell: bash
         run: |
