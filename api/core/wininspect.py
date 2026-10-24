@@ -15,6 +15,8 @@ from api.utils.process import find_processes, manage_process
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1985
 DEFAULT_TIMEOUT_SECONDS = 3.0
+# WinInspect v0.4.4 release uses the v0.3.0 wire protocol (types.hpp).
+WININSPECT_PROTOCOL_VERSION = "0.3.0"
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
     "daemon.health",
@@ -83,11 +85,23 @@ def timeout_seconds() -> float:
     return max(0.1, min(value, 30.0))
 
 
+WININSPECT_DEFAULT_DIR = "/opt/winebot/windows-tools/WinSpy"
+WININSPECT_REQUIRED_FILES = ("wininspectd.exe", "wininspect.exe")
+
+
 def tool_dir() -> Path:
-    return Path(
-        os.getenv("WINEBOT_WININSPECT_DIR", "/opt/winebot/windows-tools/WinSpy").strip()
-        or "/opt/winebot/windows-tools/WinSpy"
-    )
+    """Locate a complete WinInspect installation without mixing layouts.
+
+    WinInspect Portable v0.4.4 stages its binaries under App/WinInspect,
+    whereas older installations use a flat directory. An explicit
+    WINEBOT_WININSPECT_DIR may point to either layout. Fail closed if neither
+    contains both required executables; never scan other installed programs.
+    """
+    root = Path(os.getenv("WINEBOT_WININSPECT_DIR", "").strip() or WININSPECT_DEFAULT_DIR)
+    for candidate in (root, root / "App" / "WinInspect"):
+        if all((candidate / name).is_file() for name in WININSPECT_REQUIRED_FILES):
+            return candidate
+    return root
 
 
 def daemon_exe() -> Path:
@@ -172,7 +186,17 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
         log_file = open(_log_path(), "ab")
         try:
             proc = subprocess.Popen(
-                ["wine", str(daemon_exe())],
+                [
+                    "wine", str(daemon_exe()),
+                    "--no-config",
+                    "--bind", DEFAULT_HOST,
+                    "--ipv4",
+                    "--port", str(port()),
+                    "--no-discovery",
+                    "--no-mdns",
+                    "--headless",
+                    "--read-only",
+                ],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -276,8 +300,8 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.4.0",
             **(params or {}),
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
         },
     }
     with socket.create_connection((host(), port()), timeout=timeout_seconds()) as sock:
