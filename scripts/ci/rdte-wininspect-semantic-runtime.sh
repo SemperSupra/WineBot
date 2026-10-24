@@ -31,6 +31,20 @@ for _ in $(seq 1 100); do
 done
 echo "WINEBOT_SERVICE_HEALTH=$health"
 test "$health" = healthy || exit 1
+# Optional exact-source build substitution in THIS throwaway WineBot container only.
+# This is never part of Dockerfile, a release or a reusable installed package.
+if [ "${WININSPECT_TEST_DAEMON_PATH:-}" = "wininspect-source/build/wininspectd.exe" ]; then
+  test -f "$WININSPECT_TEST_DAEMON_PATH"
+  docker cp "$WININSPECT_TEST_DAEMON_PATH"     "$cid:/opt/winebot/windows-tools/WinSpy/App/WinInspect/wininspectd.exe"
+  actual="$(docker exec "$cid" sha256sum     /opt/winebot/windows-tools/WinSpy/App/WinInspect/wininspectd.exe | cut -d ' ' -f 1)"
+  expected="$(sha256sum "$WININSPECT_TEST_DAEMON_PATH" | cut -d ' ' -f 1)"
+  test "$actual" = "$expected" || { echo "WININSPECT_PATCHED_BINARY_INTEGRITY=FAIL"; exit 1; }
+  echo "WININSPECT_PATCHED_BINARY_INTEGRITY=PASS"
+  echo "WININSPECT_BOUNDED_SOURCE_SHA=b2d07ae3ff1df53a62c27ec3fa27f1452ff5926a"
+elif [ -n "${WININSPECT_TEST_DAEMON_PATH:-}" ]; then
+  echo "WININSPECT_PATCHED_BINARY_OVERRIDE=REFUSED"
+  exit 2
+fi
 docker exec -u winebot "$cid" sh -lc \
   'mkdir -p /tmp/winebot-wininspect-qual; printf "%s\n" "WinInspect synthetic Notepad fixture" > /tmp/winebot-wininspect-qual/fixture.txt'
 docker exec -d -u winebot -e DISPLAY=:99 -e WINEDEBUG=-all "$cid" \
