@@ -79,7 +79,18 @@ int main(int argc, char **argv) {
         }
         glEnd();
         glFinish();
+        /* Sample an intentionally untouched upper-right pixel in the back
+         * buffer. A successful swap alone does not prove raster output.
+         * Clear RGB 0.1, 0.2, 0.3 should quantize near 26, 51, 77.
+         */
+        GLubyte pixel[3] = {0, 0, 0};
+        glReadBuffer(GL_BACK);
+        glReadPixels(width - 2, height - 2, 1, 1, GL_RGB,
+                     GL_UNSIGNED_BYTE, pixel);
         if (glGetError() != GL_NO_ERROR) return 17;
+        if (pixel[0] < 20 || pixel[0] > 33 ||
+            pixel[1] < 45 || pixel[1] > 58 ||
+            pixel[2] < 70 || pixel[2] > 84) return 24;
         if (!SwapBuffers(dc)) return 16;
     }
     if (!QueryPerformanceCounter(&stop)) return 21;
