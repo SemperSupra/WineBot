@@ -1,0 +1,238 @@
+name: OpenTTD Windows Game CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/openttd-win-cpu-rdte.yml
+      - docker/openttd-software-gl.Dockerfile
+permissions:
+  contents: read
+concurrency:
+  group: openttd-win-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openttd-win64-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Fetch officially checksummed game and free graphics assets
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$RUNNER_TEMP/win-game" "$RUNNER_TEMP/opengfx"
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            https://cdn.openttd.org/openttd-releases/15.3/openttd-15.3-windows-win64.zip \
+            -o "$RUNNER_TEMP/openttd.zip"
+          echo "61c0a6a43d81008c7ff4330fb56351bbf66a980cdad041f1d0e08b51f2eeb34c  $RUNNER_TEMP/openttd.zip" | sha256sum -c --status
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            https://cdn.openttd.org/opengfx-releases/8.0/opengfx-8.0-all.zip \
+            -o "$RUNNER_TEMP/opengfx.zip"
+          echo "43a0c1dabf39cb865394f3a6cc36d4da5c10ecfaaf55652043104806810903be  $RUNNER_TEMP/opengfx.zip" | sha256sum -c --status
+          unzip -qq "$RUNNER_TEMP/openttd.zip" -d "$RUNNER_TEMP/win-game"
+          unzip -qq "$RUNNER_TEMP/opengfx.zip" -d "$RUNNER_TEMP/opengfx"
+          game="$(find "$RUNNER_TEMP/win-game" -type f -iname openttd.exe -print -quit)"
+          test -n "$game"
+          basedir="$(dirname "$game")/baseset"
+          mkdir -p "$basedir"
+          find "$RUNNER_TEMP/opengfx" -type f \( -iname '*.tar' -o -iname '*.obg' -o -iname '*.grf' \) -exec cp -n '{}' "$basedir" \;
+          test "$(find "$basedir" -type f | wc -l)" -ge 1
+          echo 'PASS: official game and free base graphics integrity and staging'
+      - name: Build WineBot experiment image without publication
+        timeout-minutes: 13
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:openttd-rdte .
+          docker build -f docker/openttd-software-gl.Dockerfile -t winebot:openttd-cpu .
+      - name: Launch actual Windows OpenTTD through Wine and confirm visible game window
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 155s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEPREFIX=/tmp/winebot-openttd-fixture \
+            -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              # Qualify this very Xvfb/Wine context before blaming the game.
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: LLVMpipe renderer unavailable inside game cell"
+                exit 2
+              fi
+              echo "PASS: game-cell software GLX"
+              wine notepad.exe >/tmp/wine-builtin-local.log 2>&1 &
+              baseline=0
+              for i in $(seq 1 60); do
+                if xdotool search --onlyvisible --name Notepad >/dev/null 2>&1; then
+                  baseline=1
+                  break
+                fi
+                sleep 0.5
+              done
+              wineserver -k >/dev/null 2>&1 || true
+              if [ "$baseline" -ne 1 ]; then
+                echo "UNQUALIFIED: Wine built-in X11 window control"
+                exit 2
+              fi
+              echo "PASS: Wine built-in X11 window control"
+              exe="$(find /game -type f -iname openttd.exe -print -quit)"
+              test -n "$exe"
+              cd "$(dirname "$exe")"
+              # Select the documented Win32 video driver for a GDI baseline.
+              wine "$exe" -v win32 -m null -s null -x >/tmp/wine-game-local.log 2>&1 &
+              game_pid=$!
+              found=0
+              for i in $(seq 1 100); do
+                if xdotool search --onlyvisible --name OpenTTD >/dev/null 2>&1 || \
+                   xdotool search --onlyvisible --class openttd >/dev/null 2>&1; then
+                  found=1
+                  break
+                fi
+                # Wine launchers can return before the child X11 window appears.
+                sleep 0.6
+              done
+              if [ "$found" -ne 1 ]; then
+                echo "UNQUALIFIED: Windows game window not visible after qualified Wine/X11 control"
+                exit 2
+              fi
+              echo "PASS: Windows OpenTTD game window visible under Wine"
+              # Window-scoped local-only capture; publish only dimensions and color diversity.
+              wid="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+              if [ -z "$wid" ]; then
+                wid="$(xdotool search --onlyvisible --class openttd 2>/dev/null | head -1 || true)"
+              fi
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: game window id selection"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/wine-openttd-scoped.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: scoped window capture"
+                exit 2
+              fi
+              read -r image_w image_h image_colors <<< "$(identify -format "%w %h %k" /tmp/wine-openttd-scoped.png 2>/dev/null || true)"
+              if [[ ! "${image_w:-}" =~ ^[0-9]{1,4}$ ||
+                    ! "${image_h:-}" =~ ^[0-9]{1,4}$ ||
+                    ! "${image_colors:-}" =~ ^[0-9]{1,9}$ ]] ||
+                 [ "$image_w" -lt 200 ] || [ "$image_h" -lt 120 ] ||
+                 [ "$image_colors" -lt 40 ]; then
+                echo "UNQUALIFIED: window content variety/dimensions"
+                exit 2
+              fi
+              echo "PASS: OpenTTD scoped color-content smoke"
+              kill "$game_pid" 2>/dev/null || true
+              wineserver -k >/dev/null 2>&1 || true
+              # PNG is deleted with the disposable container; never uploaded.
+            '
+      - name: Qualify unprivileged Wine home and X11 controls independently
+        timeout-minutes: 3
+        run: |
+          echo 'BEGIN: unprivileged synthetic Wine X11 control'
+          timeout -k 10s 160s docker run --rm --init --network none \
+            --user 1000:1000 --cpus=2 --memory=3g --pids-limit=256 \
+            --tmpfs /tmp:rw,exec,nosuid,size=512m,mode=1777 \
+            -e HOME=/home/winebot -e WINEPREFIX=/tmp/winebot-nonroot-fixture \
+            -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if [ "$(id -u)" -ne 1000 ] || [ ! -w "$HOME" ] || [ ! -w /tmp ]; then
+                echo "UNQUALIFIED: nonroot identity or writable home/tmp"
+                exit 2
+              fi
+              echo "PASS: unprivileged identity and writable home/tmp"
+              if ! command -v wineboot >/dev/null 2>&1 ||
+                 ! wine --version >/dev/null 2>&1; then
+                echo "UNQUALIFIED: nonroot Wine binary/launcher unavailable"
+                exit 2
+              fi
+              tmp_rc=0
+              timeout -k 5s 45s wineboot -u >/tmp/wineboot-job-local.log 2>&1 || tmp_rc=$?
+              if [ "$tmp_rc" -ne 0 ]; then
+                echo "OBS: nonroot tmpfs Wine prefix initialization failed rc=$tmp_rc"
+                export WINEPREFIX="$HOME/.winebot-nonroot-fixture"
+                home_rc=0
+                timeout -k 5s 45s wineboot -u >/tmp/wineboot-home-local.log 2>&1 || home_rc=$?
+                if [ "$home_rc" -ne 0 ]; then
+                  echo "UNQUALIFIED: nonroot Wine prefix tmp_rc=$tmp_rc home_rc=$home_rc"
+                  exit 2
+                fi
+                echo "PASS: nonroot Wine prefix under writable home"
+              else
+                echo "PASS: nonroot Wine prefix on isolated tmpfs"
+              fi
+              wine notepad.exe >/tmp/notepad-job-local.log 2>&1 &
+              found=0
+              for i in $(seq 1 60); do
+                if xdotool search --onlyvisible --name Notepad >/dev/null 2>&1; then
+                  found=1
+                  break
+                fi
+                sleep 0.5
+              done
+              wineserver -k >/dev/null 2>&1 || true
+              if [ "$found" -ne 1 ]; then
+                echo "UNQUALIFIED: unprivileged Wine X11 visible window"
+                exit 2
+              fi
+              echo "PASS: unprivileged Wine X11 visible window"
+            '
+      - name: Start real Windows OpenTTD with verified unprivileged HOME prefix
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 160s docker run --rm --init --network none \
+            --user 1000:1000 --cpus=2 --memory=3g --pids-limit=256 \
+            --tmpfs /tmp:rw,exec,nosuid,size=512m,mode=1777 \
+            -e HOME=/home/winebot -e WINEDEBUG=-all \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if [ "$(id -u)" -ne 1000 ] || [ ! -w "$HOME" ]; then
+                echo "UNQUALIFIED: nonroot writable HOME"
+                exit 2
+              fi
+              export WINEPREFIX="$HOME/.winebot-game-fixture"
+              if ! timeout -k 5s 65s wineboot -u >/tmp/wineboot-game-local.log 2>&1; then
+                echo "UNQUALIFIED: nonroot HOME prefix initialization"
+                exit 2
+              fi
+              exe="$(find /game -type f -iname openttd.exe -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: verified Windows executable missing"
+                exit 2
+              fi
+              cd "$(dirname "$exe")"
+              wine "$exe" -v win32 -m null -s null -x >/tmp/wine-game-nonroot-local.log 2>&1 &
+              proc=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.4
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: nonroot Windows game window"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/wine-nonroot-scoped.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: nonroot window capture"
+                exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/wine-nonroot-scoped.png 2>/dev/null || true)"
+              if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ || ! "${colors:-}" =~ ^[0-9]{1,9}$ ]] ||
+                 [ "$w" -lt 200 ] || [ "$h" -lt 120 ] || [ "$colors" -lt 40 ]; then
+                echo "UNQUALIFIED: nonroot game framebuffer"
+                exit 2
+              fi
+              echo "PASS: real Windows game visual frame under UID1000 HOME-owned Wine prefix"
+              kill "$proc" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # No screenshots, raw Wine logs, VNC listeners, game saves, secrets,
+      # machine identifiers, or artifacts uploaded by this RDTE.
