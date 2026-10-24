@@ -88,7 +88,7 @@ jobs:
           for threads in 1 2 4; do
             for config in "1 1 320 0" "20 128 640 0" "25 1024 960 0" "8 8 640 1" "4 32 960 1"; do
             read -r frames triangles width fill <<< "$config"
-            if ! timeout -k 10s 85s docker run --rm --init --network none \
+            if timeout -k 10s 85s docker run --rm --init --network none \
               --cpus=2 --memory=3g --pids-limit=256 \
               -e WINEDEBUG=-all \
               -e WINEPREFIX=/tmp/winebot-fixture-prefix \
@@ -99,7 +99,10 @@ jobs:
               --profile cpu-opengl-llvmpipe --threads "$threads" -- \
               wine /fixture.exe "$frames" "$triangles" "$width" "$fill" \
               > /tmp/winebot-wgl-job-local.log 2>&1; then
-                echo 'UNQUALIFIED: Windows/WGL bounded draw failed'
+                :
+            else
+                rc=$?
+                echo "UNQUALIFIED: Windows/WGL draw exit_class=$rc"
                 exit 2
             fi
             if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=$frames triangles=$triangles width=$width fill=$fill" \
