@@ -194,7 +194,7 @@ def test_cli_no_stale_or_sensitive_output_on_invalid_input(tmp_path: Path, capsy
     assert main(["--windows", str(n), "--wine", str(w), "--public-report", str(report)]) == 3
     combined = capsys.readouterr()
     assert "SECRET" not in combined.err + combined.out
-    assert not report.exists()
+    assert report.read_text(encoding="utf-8") == "OLD"  # never clobber stale evidence
 
 
 def test_required_capabilities_cannot_duplicate():
@@ -234,3 +234,28 @@ def test_result_values_are_fixed_whitelist():
     result = compare(windows, wine)
     assert result["reason_code"] in REASONS
     assert result["verdict"] in VERDICTS
+
+
+def test_cli_report_cannot_clobber_input(tmp_path: Path):
+    windows, wine = _pair()
+    n = tmp_path / "windows.json"
+    w = tmp_path / "wine.json"
+    n.write_text(json.dumps(windows), encoding="utf-8")
+    w.write_text(json.dumps(wine), encoding="utf-8")
+    original = n.read_bytes()
+    assert main(["--windows", str(n), "--wine", str(w), "--public-report", str(n)]) == 3
+    assert n.read_bytes() == original
+
+
+def test_cli_report_cannot_replace_existing_symlink(tmp_path: Path):
+    windows, wine = _pair()
+    n = tmp_path / "windows.json"
+    w = tmp_path / "wine.json"
+    n.write_text(json.dumps(windows), encoding="utf-8")
+    w.write_text(json.dumps(wine), encoding="utf-8")
+    target = tmp_path / "do-not-modify.txt"
+    target.write_text("preserve", encoding="utf-8")
+    output = tmp_path / "report.json"
+    output.symlink_to(target)
+    assert main(["--windows", str(n), "--wine", str(w), "--public-report", str(output)]) == 3
+    assert target.read_text(encoding="utf-8") == "preserve"
