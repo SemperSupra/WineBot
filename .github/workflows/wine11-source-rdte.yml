@@ -1,13 +1,17 @@
-name: Wine 11.0 source-build RDTE
+name: Wine 11.0 semantic events RDTE
 
 # Isolated branch push (not pull_request): existing production CI has separate
 # artifact-publication gates. Do not trigger its PR workflows for this probe.
 on:
   push:
     branches:
-      - experiment/wine-11.0-source-20261023
+      - experiment/wine11-ui-observer-20261024
     paths:
       - docker/wine11-source.Dockerfile
+      - rdte/wine11/**
+      - scripts/ci/verify-wine11-events.py
+      - scripts/ci/wine11-event-smoke.sh
+      - docs/rdte-wine11-ui-observation-20261024.md
       - scripts/ci/wine11-source-smoke.sh
       - .github/workflows/wine11-source-rdte.yml
   workflow_dispatch:
@@ -53,10 +57,23 @@ jobs:
             --cap-drop=ALL \
             --security-opt=no-new-privileges \
             winebot-wine11:rdte
+      - name: Qualify Win32 read-only events against X11 synthetic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none \
+            --cpus=2 \
+            --memory=4g \
+            --pids-limit=256 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            winebot-wine11:rdte \
+            /usr/local/bin/wine11-event-smoke
       - name: Report bounded disposition
         if: always()
         shell: bash
         run: |
-          printf '%s\n' 'Wine 11.0 source-build RDTE only.' \
+          printf '%s\n' 'Wine 11.0 source-build and synthetic WinEvent RDTE only.' \
             'No image push, artifact upload, screenshots, credentials or promotion.' \
             'Inspect the exact run/job conclusion; failure is unqualified, not a pass.'
