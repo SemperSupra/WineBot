@@ -75,5 +75,11 @@ COPY scripts/ci/verify-wine11-events.py /usr/local/bin/verify-wine11-events
 COPY scripts/ci/wine11-event-smoke.sh /usr/local/bin/wine11-event-smoke
 RUN chmod 0755 /usr/local/bin/verify-wine11-events /usr/local/bin/wine11-event-smoke \
     && python3 /usr/local/bin/verify-wine11-events --self-test
+# Synthetic-only session-local adapter with byte-bounded readback.
+COPY rdte/wine11/event_bridge.py /usr/local/lib/winebot-rdte/event_bridge.py
+COPY scripts/ci/verify-wine-event-roundtrip.py /usr/local/bin/verify-wine-event-roundtrip
+RUN chmod 0755 /usr/local/bin/verify-wine-event-roundtrip \
+    && python3 -m py_compile /usr/local/lib/winebot-rdte/event_bridge.py /usr/local/bin/verify-wine-event-roundtrip
+ENV PYTHONPATH=/usr/local/lib/winebot-rdte
 USER winebot
 CMD ["/usr/local/bin/wine11-event-smoke"]
