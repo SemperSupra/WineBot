@@ -4,7 +4,6 @@
 Fail closed and emit only fixed public status lines; never echo raw events.
 """
 import json
-import os
 import sys
 from event_bridge import EventBridge
 
@@ -18,13 +17,19 @@ def main() -> int:
     if len(sys.argv) != 2:
         return fail("bridge_usage")
     try:
-        if os.path.getsize(sys.argv[1]) > 24_576:
+        # readlines(131) is a *byte hint*, not a maximum line count. It can
+        # silently omit the show/location records after a valid ready header.
+        # Bound actual bytes independently of file metadata / concurrent writes.
+        with open(sys.argv[1], "rb") as stream:
+            data = stream.read(24_577)
+        if len(data) > 24_576:
             return fail("bridge_input_oversized")
-        with open(sys.argv[1], encoding="utf-8") as stream:
-            lines = stream.readlines(131)
+        if not data.endswith(b"\n"):
+            return fail("bridge_input_incomplete")
+        lines = data.decode("utf-8").splitlines(keepends=True)
     except (OSError, UnicodeError):
         return fail("bridge_input_read")
-    if len(lines) > 130:
+    if not 1 <= len(lines) <= 130:
         return fail("bridge_input_count")
     # Independent fixed-schema source check; print classification only, never data.
     try:
