@@ -11,6 +11,9 @@
 
 #define FIXTURE_CLASS L"WB_RDTE_WINDOW"
 #define MAX_OBSERVATIONS 128
+#ifndef CHILDID_SELF
+#define CHILDID_SELF 0
+#endif
 static unsigned int sequence = 0;
 static int overflow_reported = 0;
 
