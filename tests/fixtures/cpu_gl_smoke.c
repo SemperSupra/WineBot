@@ -7,6 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+static volatile LONG input_down_seen = 0;
+
+static LRESULT CALLBACK input_window_proc(HWND hwnd, UINT message, WPARAM key, LPARAM param) {
+    if (message == WM_KEYDOWN && key == VK_DOWN) {
+        InterlockedExchange(&input_down_seen, 1);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, message, key, param);
+}
+
 static int bounded(const char *s, int min, int max, int fallback) {
     if (!s) return fallback;
     char *end = NULL;
@@ -19,13 +29,14 @@ int main(int argc, char **argv) {
     int triangles = bounded(argc > 2 ? argv[2] : NULL, 1, 2048, 1);
     int width = bounded(argc > 3 ? argv[3] : NULL, 160, 1280, 320);
     int fill = bounded(argc > 4 ? argv[4] : NULL, 0, 1, 0);
-    if (frames < 0 || triangles < 0 || width < 0 || fill < 0) return 20;
+    int input_mode = bounded(argc > 5 ? argv[5] : NULL, 0, 1, 0);
+    if (frames < 0 || triangles < 0 || width < 0 || fill < 0 || input_mode < 0) return 20;
     if (fill && frames * triangles > 256) return 22;
     int height = width * 3 / 4;
 
     HINSTANCE instance = GetModuleHandleA(NULL);
     WNDCLASSA cls = {0};
-    cls.lpfnWndProc = DefWindowProcA;
+    cls.lpfnWndProc = input_window_proc;
     cls.hInstance = instance;
     cls.lpszClassName = "WineBotCpuGlFixture";
     if (!RegisterClassA(&cls)) return 10;
@@ -106,6 +117,33 @@ int main(int argc, char **argv) {
         (double)(stop.QuadPart - start.QuadPart) / (double)frequency.QuadPart);
     printf("WINE_OPENGL_LLVMPIPE_OK frames=%d triangles=%d width=%d fill=%d elapsed_us=%lu\n",
            frames, triangles, width, fill, elapsed_us);
+    if (input_mode) {
+        puts("WINE_SYNTHETIC_INPUT_READY");
+        fflush(stdout);
+        DWORD begin = GetTickCount();
+        MSG message;
+        while (!input_down_seen && GetTickCount() - begin < 15000) {
+            while (PeekMessageA(&message, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message);
+                DispatchMessageA(&message);
+            }
+            Sleep(10);
+        }
+        if (!input_down_seen) return 30;
+        glClearColor(0.0f, 0.6f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glFinish();
+        GLubyte input_pixel[3] = {0, 0, 0};
+        glReadBuffer(GL_BACK);
+        glReadPixels(client_width / 2, client_height / 2, 1, 1,
+                     GL_RGB, GL_UNSIGNED_BYTE, input_pixel);
+        if (glGetError() != GL_NO_ERROR ||
+            input_pixel[0] > 12 || input_pixel[1] < 140 ||
+            input_pixel[2] > 12) return 31;
+        if (!SwapBuffers(dc)) return 32;
+        puts("WINE_SYNTHETIC_INPUT_ACK_RGB_OK");
+        fflush(stdout);
+    }
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(context);
     ReleaseDC(window, dc);
