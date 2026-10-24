@@ -9,6 +9,7 @@ on:
       - docker/wine10-event-null.Dockerfile
       - rdte/wine11/**
       - scripts/ci/verify-wine11-events.py
+      - scripts/ci/verify-wine-event-roundtrip.py
       - scripts/ci/wine11-event-smoke.sh
   workflow_dispatch:
 
