@@ -167,3 +167,42 @@ jobs:
               echo "PASS: Win32 key acknowledgement plus expected OpenGL RGB response"
             '
           # No raw Wine log or screenshot published.
+
+      - name: Repeat same Windows heavy-fill draw with warm-up (bounded)
+        timeout-minutes: 4
+        run: |
+          for threads in 4 1 2; do
+            timeout -k 10s 100s docker run --rm --init --network none \
+              --cpus=2 --memory=3g --pids-limit=256 \
+              -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-repeated-fixture \
+              -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+              --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+              -a -s '-screen 0 1280x960x24 +extension GLX -nolisten tcp' \
+              /bin/bash -euo pipefail -c '
+                render_threads="$1"
+                for rep in 0 1 2 3; do
+                  if ! python3 /opt/winebot/cpu_renderer.py exec \
+                    --profile cpu-opengl-llvmpipe --threads "$render_threads" -- \
+                    wine /fixture.exe 4 32 960 1 \
+                    >/tmp/winebot-repeated-local.log 2>&1; then
+                    echo "UNQUALIFIED: repeated Windows heavy fill"
+                    exit 2
+                  fi
+                  if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=4 triangles=32 width=960 fill=1" \
+                    /tmp/winebot-repeated-local.log; then
+                    echo "UNQUALIFIED: repeated framebuffer oracle"
+                    exit 2
+                  fi
+                  us="$(grep -Eo "elapsed_us=[0-9]{1,10}" /tmp/winebot-repeated-local.log | tail -1 | cut -d= -f2)"
+                  if [[ ! "$us" =~ ^[0-9]{1,10}$ ]] || [ "$us" -eq 0 ]; then
+                    echo "UNQUALIFIED: repeated render numeric sample"
+                    exit 2
+                  fi
+                  if [ "$rep" -gt 0 ]; then
+                    echo "OBS: warm-heavy-fill threads=$render_threads rep=$rep elapsed_us=$us"
+                  fi
+                done
+                echo "PASS: three warm heavy-fill samples threads=$render_threads"
+              ' -- "$threads"
+          done
+          # Only validated numeric timings are emitted; no image or log uploaded.
