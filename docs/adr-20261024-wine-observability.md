@@ -70,19 +70,26 @@ complete accessibility tree from a window title or WinEvent callback.
    strict source-schema validation, but the live adapter reported
    `bridge_missing_event`. Preserve as an unqualified cursor/integration test.
    Isolated diagnostic run 40047495264 established
-   `roundtrip_source_disagrees_with_validator`. Root cause is Python
-   `readlines(131)` interpreting 131 as a byte size hint, so the second
-   validator inspected an incomplete JSONL stream while the first consumed
-   all valid records. Corrected in separate Wine10 control candidate
-   `45556d5ed28ed058a3b7c235fbd603a0bd292487`: bounded raw read,
-   explicit complete-line test, regression coverage; Actions 40075822335
-   pending live result.
-3. **READY AFTER 1+2:** compare exact Wine versions and immutable base digests;
+   `roundtrip_source_disagrees_with_validator`. Root cause was Python
+   `readlines(131)` interpreting 131 as a byte hint. Corrected in
+   `qualification/wine10-event-null-20261024@45556d5ed28ed058a3b7c235fbd603a0bd292487`:
+   byte-capped full read, exact schema and final newline, 8 regression tests.
+   **PASS:** Actions 40075822335 verified all 8 unit tests, X11 fixture,
+   WinEvent stream, strict-schema checks, and live adapter ingest/cursor/close.
+   Zero attached run artifacts. Historical red receipts remain valid.
+3. **RUNNING:** Wine11 source-built callback + EventBridge full roundtrip in
+   isolated Actions 40076089386, head `ab9a36bbddf4f29f4e4a556c4a91a05ae1df046f`.
+   Independent CPU-only regression preflight precedes source compilation;
+   do not claim end-to-end Wine11 success until that run finishes.
+4. **READY AFTER 3:** compare exact Wine versions and immutable base digests;
    read-only capability negotiation, missing event detection, overflow policy,
    stream authorization and session isolation.
-4. **SEPARATE BLOCKER:** independently repair WinInspect RPC response-ID
-   mismatch in its own branch and rerun read-only capabilities/window tests.
-5. **OWNER/REVIEW GATES:** security disclosure authority #515, existing
+5. **SEPARATE BLOCKER:** existing WinInspect upstream PR #18 already supplies
+   a test-qualified proposed response ID preservation fix, but remains
+   unmerged. WineBot draft #136 packaged daemon is still unqualified;
+   verify source/binary provenance and requalify with an independently
+   admitted corrected binary before consuming its snapshots.
+6. **OWNER/REVIEW GATES:** security disclosure authority #515, existing
    red v1 contract conformance, prior WinInspect packaging/merge gates and all
    release/production gates remain unaltered. No PR, publish or merge.
 
