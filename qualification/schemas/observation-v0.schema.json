@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SemperSupra/WineBot/blob/main/qualification/schemas/observation-v0.schema.json",
+  "title": "WineBot native Windows/Wine synthetic qualification observation v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenario", "inputs", "execution", "profile", "capabilities", "assertions"],
+  "properties": {
+    "schema_version": {"const": "compat-observation/v0"},
+    "scenario": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "revision", "sha256", "test_class", "required_capabilities"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "revision": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "test_class": {"$ref": "#/$defs/identifier"},
+        "required_capabilities": {"$ref": "#/$defs/identifiers"}
+      }
+    },
+    "inputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["executable_sha256", "fixture_sha256"],
+      "properties": {
+        "executable_sha256": {"$ref": "#/$defs/sha256"},
+        "fixture_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lane", "run_id", "source_head_sha", "tested_checkout_sha"],
+      "properties": {
+        "lane": {"enum": ["windows", "wine"]},
+        "run_id": {"$ref": "#/$defs/identifier"},
+        "source_head_sha": {"$ref": "#/$defs/sha40"},
+        "tested_checkout_sha": {"$ref": "#/$defs/sha40"}
+      }
+    },
+    "profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["architecture", "locale", "display", "width", "height", "dpi", "renderer"],
+      "properties": {
+        "architecture": {"enum": ["x86", "x86_64", "arm64"]},
+        "locale": {"type": "string", "pattern": "^[a-z]{2}-[A-Z]{2}$"},
+        "display": {"enum": ["headless", "interactive"]},
+        "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+        "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+        "dpi": {"type": "integer", "minimum": 48, "maximum": 768},
+        "renderer": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "capabilities": {"$ref": "#/$defs/identifiers"},
+    "assertions": {
+      "type": "array", "maxItems": 128,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "outcome", "observed_sha256"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "outcome": {"enum": ["PASS", "FAIL", "SKIP", "UNQUALIFIED", "INFRA_ERROR"]},
+          "observed_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+    "identifiers": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "sha40": {"type": "string", "pattern": "^[a-f0-9]{40}$"}
+  }
+}
