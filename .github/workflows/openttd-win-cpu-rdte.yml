@@ -157,13 +157,7 @@ jobs:
                 home_rc=0
                 timeout -k 5s 45s wineboot -u >/tmp/wineboot-home-local.log 2>&1 || home_rc=$?
                 if [ "$home_rc" -ne 0 ]; then
-                  failure_class=unknown
-                  if grep -Eiq 'permission denied|access denied' /tmp/wineboot-home-local.log; then
-                    failure_class=permission
-                  elif grep -Eiq 'not found|failed to load|cannot open' /tmp/wineboot-home-local.log; then
-                    failure_class=loader
-                  fi
-                  echo "UNQUALIFIED: nonroot Wine prefix tmp_rc=$tmp_rc home_rc=$home_rc class=$failure_class"
+                  echo "UNQUALIFIED: nonroot Wine prefix tmp_rc=$tmp_rc home_rc=$home_rc"
                   exit 2
                 fi
                 echo "PASS: nonroot Wine prefix under writable home"
