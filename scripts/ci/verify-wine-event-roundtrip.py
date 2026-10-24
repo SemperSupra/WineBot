@@ -3,6 +3,7 @@
 
 Fail closed and emit only fixed public status lines; never echo raw events.
 """
+import json
 import os
 import sys
 from event_bridge import EventBridge
@@ -25,6 +26,15 @@ def main() -> int:
         return fail("bridge_input_read")
     if len(lines) > 130:
         return fail("bridge_input_count")
+    # Independent fixed-schema source check; print classification only, never data.
+    try:
+        source_records = [json.loads(line) for line in lines]
+        source_kinds = {x["kind"] for x in source_records}
+    except (ValueError, TypeError, KeyError):
+        return fail("roundtrip_invalid_source")
+    if not {"show", "location"}.issubset(source_kinds):
+        return fail("roundtrip_source_disagrees_with_validator")
+    print("PASS: adapter_source_fixture_semantics")
     bridge = EventBridge(capacity=128)
     for line in lines:
         if not bridge.ingest(line):
@@ -44,7 +54,7 @@ def main() -> int:
         return fail("bridge_cursor_loop")
     kinds = {x["kind"] for x in observed}
     if not {"show", "location"}.issubset(kinds):
-        return fail("bridge_missing_event")
+        return fail("bridge_projection_disagrees_with_source")
     if not observed:
         return fail("bridge_empty")
     bridge.close()
