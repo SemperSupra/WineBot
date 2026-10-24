@@ -18,9 +18,13 @@ RUN mkdir -p /opt/winebot-wine/rdte \
        /tmp/win_event_fixture.c -luser32 \
     && rm -f /tmp/win_event_observer.c /tmp/win_event_fixture.c
 COPY scripts/ci/verify-wine11-events.py /usr/local/bin/verify-wine11-events
+COPY rdte/wine11/event_bridge.py /usr/local/lib/winebot-rdte/event_bridge.py
+COPY scripts/ci/verify-wine-event-roundtrip.py /usr/local/bin/verify-wine-event-roundtrip
 COPY scripts/ci/wine11-event-smoke.sh /usr/local/bin/wine-event-smoke
 RUN chmod 0755 /usr/local/bin/verify-wine11-events /usr/local/bin/wine-event-smoke \
+    && chmod 0755 /usr/local/bin/verify-wine-event-roundtrip \
+    && PYTHONPATH=/usr/local/lib/winebot-rdte python3 -m py_compile /usr/local/lib/winebot-rdte/event_bridge.py /usr/local/bin/verify-wine-event-roundtrip \
     && python3 /usr/local/bin/verify-wine11-events --self-test
 USER winebot
-ENV WINEARCH=win64
+ENV WINEARCH=win64 PYTHONPATH=/usr/local/lib/winebot-rdte
 CMD ["/usr/local/bin/wine-event-smoke"]
