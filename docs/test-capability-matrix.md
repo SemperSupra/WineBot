@@ -25,3 +25,4 @@ Rules:
 | Release trust evidence | machine-readable test and diagnostics summary | `scripts/ci/generate-trust-pack.sh` |
 | Standards conformance | OpenAPI/HTTP/OCI/CLI/mDNS contract enforcement | `tests/test_conformance_runtime_policy.py` (WineBot-specific), [winebot-contracts/tests/conformance](https://github.com/mark-e-deyoung/winebot-contracts/tree/main/tests/conformance) (shared) |
 | Invariant enforcement | lifecycle/control/config/runtime invariants are defined and executable | `docs/invariants.md`, `tests/test_invariants.py`, `tests/test_lifecycle_hardened.py`, `tests/test_config_guard.py` |
+| Differential Windows/Wine qualification | Identical admitted executable/fixture identity, qualified Windows oracle, capability and profile gates, fail-closed public projection | `tests/test_compatibility_comparator.py`, `qualification/compare.py`, `qualification/schemas/observation-v0.schema.json`, `qualification/schemas/public-report-v0.schema.json` |
