@@ -10,6 +10,7 @@ on:
       - rdte/wine11/**
       - scripts/ci/verify-wine11-events.py
       - scripts/ci/verify-wine-event-roundtrip.py
+      - scripts/ci/test_verify_wine_event_roundtrip.py
       - scripts/ci/wine11-event-smoke.sh
   workflow_dispatch:
 
@@ -28,6 +29,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+      - name: Validate byte-bounded WinEvent ingest regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p 'test_verify_wine_event_roundtrip.py' -v
       - name: Build isolated Debian Wine baseline probe
         shell: bash
         run: |
