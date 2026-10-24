@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SemperSupra/WineBot/blob/main/qualification/schemas/public-report-v0.schema.json",
+  "title": "WineBot fixed-whitelist differential result v0",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "verdict", "reason_code", "assertion_counts"],
+  "properties": {
+    "schema_version": {"const": "compat-diff-public/v0"},
+    "verdict": {"enum": ["PASS", "FAIL", "UNQUALIFIED", "INFRA_ERROR"]},
+    "reason_code": {
+      "enum": [
+        "MATCHED", "DIFFERENT_OUTCOME", "DIFFERENT_OUTPUT", "WINDOWS_ORACLE_FAILURE",
+        "ASSERTION_UNQUALIFIED", "ASSERTION_INFRA_ERROR", "MISSING_ASSERTION",
+        "MISMATCHED_INPUT", "MISMATCHED_PROFILE", "MISSING_CAPABILITY",
+        "UNSUPPORTED_CLASS", "NO_ASSERTIONS"
+      ]
+    },
+    "assertion_counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["matched", "different", "unqualified"],
+      "properties": {
+        "matched": {"type": "integer", "minimum": 0, "maximum": 128},
+        "different": {"type": "integer", "minimum": 0, "maximum": 128},
+        "unqualified": {"type": "integer", "minimum": 0, "maximum": 256}
+      }
+    }
+  }
+}
