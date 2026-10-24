@@ -1,0 +1,52 @@
+name: Wine 11 UI observer static qualification
+
+on:
+  push:
+    branches:
+      - qualification/wine11-observer-static-20261024
+    paths:
+      - .github/workflows/wine11-observer-static-rdte.yml
+      - rdte/wine11/**
+      - scripts/ci/verify-wine11-events.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-schema:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install x64 Win32 cross-compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 >/dev/null
+      - name: Compile bounded read-only observer and synthetic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/winebot-rdte
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            -o /tmp/winebot-rdte/observer.exe rdte/wine11/win_event_observer.c -luser32
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            -o /tmp/winebot-rdte/fixture.exe rdte/wine11/win_event_fixture.c -luser32
+          x86_64-w64-mingw32-objdump -f /tmp/winebot-rdte/observer.exe | grep -Fq 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -f /tmp/winebot-rdte/fixture.exe | grep -Fq 'pei-x86-64'
+          printf 'PASS: synthetic_pe64_compile\n'
+      - name: Validate minimized event contract with adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/verify-wine11-events.py --self-test
+      - name: Declare scope
+        shell: bash
+        run: |
+          printf '%s\n' 'Static compilation and schema only.' \
+            'No Wine runtime or real UIA/CV behavior proven.' \
+            'No binary, raw event, log bundle or build artifact publication.'
