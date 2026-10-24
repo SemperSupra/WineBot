@@ -54,3 +54,26 @@ RUN chmod 0755 /usr/local/bin/wine11-source-smoke \
 USER winebot
 WORKDIR /home/winebot
 CMD ["/usr/local/bin/wine11-source-smoke"]
+
+# RDTE-only semantic event qualification. Win32 API observer (no Wine patch);
+# synthetic Windows fixture and fail-closed Python schema validator.
+# This image is never published or promoted as a WineBot base.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY rdte/wine11/win_event_observer.c /tmp/win_event_observer.c
+COPY rdte/wine11/win_event_fixture.c /tmp/win_event_fixture.c
+RUN mkdir -p /opt/winebot-wine/rdte \
+    && x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+       -o /opt/winebot-wine/rdte/win_event_observer.exe \
+       /tmp/win_event_observer.c -luser32 \
+    && x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+       -o /opt/winebot-wine/rdte/win_event_fixture.exe \
+       /tmp/win_event_fixture.c -luser32 \
+    && rm -f /tmp/win_event_observer.c /tmp/win_event_fixture.c
+COPY scripts/ci/verify-wine11-events.py /usr/local/bin/verify-wine11-events
+COPY scripts/ci/wine11-event-smoke.sh /usr/local/bin/wine11-event-smoke
+RUN chmod 0755 /usr/local/bin/verify-wine11-events /usr/local/bin/wine11-event-smoke \
+    && python3 /usr/local/bin/verify-wine11-events --self-test
+USER winebot
+CMD ["/usr/local/bin/wine11-event-smoke"]
