@@ -21,9 +21,9 @@ enumeration, WinInspect snapshot integration, and CV sidecars.
 - Built-in WinInspect v0.4.4 qualification is independent and currently
   **UNQUALIFIED** (draft PR #136): daemon and TCP are alive but read-only RPC
   reports response-ID mismatch, HTTP 502. X11 readiness != WinInspect readiness.
-- Source-built Wine 11.0 event probe: run **40045850159** still pending at
-  this decision checkpoint. Its earlier successful build does not prove this
-  observer experiment.
+- Source-built Wine 11.0 event probe: run **40045850159** completed **PASS**;
+  exact job confirms original WoW64/Notepad smoke and new X11+WinEvent
+  synthetic tests. This is not a Windows UIA or full-app claim.
 
 ## Decision
 
@@ -65,12 +65,18 @@ complete accessibility tree from a window title or WinEvent callback.
 
 ## Evidence boundaries and next DAG
 
-1. **RUNNING:** complete Actions 40045850159 for native Wine 11 event callbacks.
+1. **PASSED:** Actions 40045850159 proves native Wine 11 synthetic WinEvent callbacks.
 2. **RED:** run 40047245106 confirmed synthetic Wine callback receipt and
    strict source-schema validation, but the live adapter reported
    `bridge_missing_event`. Preserve as an unqualified cursor/integration test.
-   Isolated diagnostic rerun 40047495264 discriminates missing source-kind
-   versus projection divergence without raw event publication; status pending.
+   Isolated diagnostic run 40047495264 established
+   `roundtrip_source_disagrees_with_validator`. Root cause is Python
+   `readlines(131)` interpreting 131 as a byte size hint, so the second
+   validator inspected an incomplete JSONL stream while the first consumed
+   all valid records. Corrected in separate Wine10 control candidate
+   `45556d5ed28ed058a3b7c235fbd603a0bd292487`: bounded raw read,
+   explicit complete-line test, regression coverage; Actions 40075822335
+   pending live result.
 3. **READY AFTER 1+2:** compare exact Wine versions and immutable base digests;
    read-only capability negotiation, missing event detection, overflow policy,
    stream authorization and session isolation.
