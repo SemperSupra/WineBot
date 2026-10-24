@@ -119,3 +119,51 @@ jobs:
             done
           done
           # Raw Wine stdout/stderr remains job-local and is never uploaded.
+
+      - name: Qualify deterministic Win32 key event and RGB response (synthetic)
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 120s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-input-fixture \
+            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              python3 /opt/winebot/cpu_renderer.py exec \
+                --profile cpu-opengl-llvmpipe --threads 2 -- \
+                wine /fixture.exe 1 1 320 0 1 >/tmp/winebot-input-local.log 2>&1 &
+              child=$!
+              ready=0
+              for i in $(seq 1 150); do
+                if grep -Fq WINE_SYNTHETIC_INPUT_READY /tmp/winebot-input-local.log 2>/dev/null; then
+                  ready=1
+                  break
+                fi
+                sleep 0.2
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: Windows synthetic input readiness"
+                exit 2
+              fi
+              wid="$(xdotool search --onlyvisible --name "Synthetic GL fixture" 2>/dev/null | head -1 || true)"
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: Windows input fixture window"
+                exit 2
+              fi
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1 ||
+                 ! xdotool key --clearmodifiers Down >/dev/null 2>&1; then
+                echo "UNQUALIFIED: X11 focus or key submission"
+                exit 2
+              fi
+              if ! wait "$child"; then
+                echo "UNQUALIFIED: Windows input acknowledgement process"
+                exit 2
+              fi
+              if ! grep -Fq WINE_SYNTHETIC_INPUT_ACK_RGB_OK /tmp/winebot-input-local.log; then
+                echo "UNQUALIFIED: Win32 key plus GL pixel oracle"
+                exit 2
+              fi
+              echo "PASS: Win32 key acknowledgement plus expected OpenGL RGB response"
+            '
+          # No raw Wine log or screenshot published.
