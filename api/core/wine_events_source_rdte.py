@@ -54,7 +54,11 @@ class TrustedLocalEventSource:
         if not isinstance(line, str):
             self.stop()
             return False
-        size = len(line.encode("utf-8"))
+        try:
+            size = len(line.encode("utf-8"))
+        except UnicodeError:
+            self.stop()
+            return False
         if (
             size == 0
             or self._records >= self.MAX_RECORDS
@@ -82,7 +86,7 @@ class TrustedLocalEventSource:
         if self._attached:
             # This one-session source is the only publisher. Clear buffered
             # state on source termination; no stale events remain visible.
-            self._registry.clear()
+            self._registry.clear_if_owner(self._session_id, self._bridge)
 
     @property
     def stopped(self) -> bool:
