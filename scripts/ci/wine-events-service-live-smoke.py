@@ -112,6 +112,16 @@ def main():
                         return 1
                     emit("PASS", "service_token_session_isolation")
 
+                    # Old probe expired at 12s. Remain READY past that bound
+                    # before any fixture activity. This is actual Wine/Xvfb,
+                    # not just a mocked Python lifespan timer.
+                    time.sleep(14)
+                    aged = client.get(path, headers=headers)
+                    if aged.status_code != 200 or aged.json().get("state") != "ready":
+                        emit("FAIL", "service_long_lived_after_12s")
+                        return 1
+                    emit("PASS", "service_long_lived_after_12s")
+
                     fixture = subprocess.Popen(
                         ["wine", FIXTURE], stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
