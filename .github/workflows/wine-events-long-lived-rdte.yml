@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: wine-events-service-lifecycle-rdte
+  group: wine-events-long-lived-rdte
   cancel-in-progress: true
 
 jobs:
@@ -52,9 +52,11 @@ jobs:
           /tmp/winebot-lifecycle-venv/bin/python -m compileall -q \
             api/core/wine_events_service_rdte.py \
             api/core/wine_events_process_rdte.py \
+            tests/test_wine_events_long_lived_rdte.py \
             tests/test_wine_events_service_rdte.py \
             tests/test_wine_events_server_lifespan_rdte.py
           for pattern in \
+            test_wine_events_long_lived_rdte.py \
             test_wine_events_service_rdte.py \
             test_wine_events_server_lifespan_rdte.py \
             test_wine_events_process_rdte.py \
