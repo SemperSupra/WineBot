@@ -118,6 +118,21 @@ def main():
                     time.sleep(14)
                     aged = client.get(path, headers=headers)
                     if aged.status_code != 200 or aged.json().get("state") != "ready":
+                        verdict = service.last_verdict
+                        # Emit only a fixed status identifier, never raw frames,
+                        # application context, exception contents or host info.
+                        reasons = frozenset({
+                            "clean_eof", "nonzero_exit", "timeout", "cancelled",
+                            "missing_ready", "source_rejected", "source_overflow",
+                            "source_launch_or_read_failure", "owner_exception",
+                            "session_handover", "unqualified",
+                        })
+                        if verdict in reasons:
+                            emit("FAIL", "service_early_exit_" + verdict)
+                        elif service._thread is not None and service._thread.is_alive():
+                            emit("FAIL", "service_worker_alive_without_ready")
+                        else:
+                            emit("FAIL", "service_early_exit_unknown")
                         emit("FAIL", "service_long_lived_after_12s")
                         return 1
                     emit("PASS", "service_long_lived_after_12s")
