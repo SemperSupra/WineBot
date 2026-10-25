@@ -9,4 +9,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-vulkan-drivers vulkan-tools libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/cpu_renderer.py /opt/winebot/cpu_renderer.py
+COPY scripts/ci/cpu_api_e2e.py /opt/winebot/cpu_api_e2e.py
 LABEL io.winebot.experimental.cpu_renderers="llvmpipe,lavapipe,swiftshader-external"
