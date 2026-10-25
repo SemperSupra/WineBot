@@ -1,0 +1,104 @@
+name: WineBot long-lived fixture WinEvent observer RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-long-lived-20261025
+    paths:
+      - .github/workflows/wine-events-long-lived-rdte.yml
+      - api/server.py
+      - rdte/wine11/win_event_observer.c
+      - tests/test_wine_events_long_lived_rdte.py
+      - docs/rdte-wine-events-long-lived-20261025.md
+      - api/core/wine_events_process_rdte.py
+      - api/core/wine_events_service_rdte.py
+      - api/core/wine_events_rdte.py
+      - api/core/wine_events_source_rdte.py
+      - rdte/wine11/event_bridge.py
+      - tests/test_wine_events_service_rdte.py
+      - tests/test_wine_events_server_lifespan_rdte.py
+      - tests/test_wine_events_process_rdte.py
+      - docker/wine-events-service-live-rdte.Dockerfile
+      - scripts/ci/wine-events-service-live-smoke.sh
+      - scripts/ci/wine-events-service-live-smoke.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-service-lifecycle-rdte
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned WineBot API runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/winebot-lifecycle-venv
+          /tmp/winebot-lifecycle-venv/bin/python -m pip install --quiet \
+            --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Fail-closed service and real API lifespan qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/winebot-lifecycle-venv/bin/python -m compileall -q \
+            api/core/wine_events_service_rdte.py \
+            api/core/wine_events_process_rdte.py \
+            tests/test_wine_events_service_rdte.py \
+            tests/test_wine_events_server_lifespan_rdte.py
+          for pattern in \
+            test_wine_events_service_rdte.py \
+            test_wine_events_server_lifespan_rdte.py \
+            test_wine_events_process_rdte.py \
+            test_wine_events_source_rdte.py \
+            test_wine_events_rdte.py \
+            test_wine_event_server_mount.py; do
+            /tmp/winebot-lifecycle-venv/bin/python -m unittest discover \
+              -s tests -p "$pattern" -v
+          done
+      - name: Scope
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Disabled-by-default synthetic fixture observer service, not a public API.' \
+            'Extra synthetic adversarial stop, callback-loss, overflow and bounded restart checks.' \
+            'No general CI, endpoint publication, source patch, image push or release.'
+
+  synthetic-wine-runtime:
+    needs: lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build actual WineBot API and fixture-only WinEvent overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-service-live-rdte.Dockerfile \
+            -t winebot-api-owned-observer:rdte .
+      - name: Qualify FastAPI lifecycle against actual Wine Xvfb local observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            winebot-api-owned-observer:rdte
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' \
+            'Experimental FastAPI TestClient observes real Wine after 14 seconds; no port binding.' \
+            'Synthetic fixture class only; no arbitrary windows or raw data capture.' \
+            'No artifacts, image push, HTTP ingress, private minutes or release.'
