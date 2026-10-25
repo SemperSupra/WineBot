@@ -13,7 +13,7 @@ from rdte.wine11.event_bridge import EventBridge
 
 
 class TrustedLocalEventSource:
-    MAX_RECORDS = 129  # ready + 128 synthetic event records
+    MAX_RECORDS = 130  # ready + 128 events + terminal overflow sentinel
     MAX_BYTES = 24_576
 
     def __init__(
@@ -34,6 +34,7 @@ class TrustedLocalEventSource:
         self._bytes = 0
         self._attached = False
         self._stopped = False
+        self._failure_class = None
 
     def _session_valid(self) -> bool:
         try:
@@ -70,6 +71,7 @@ class TrustedLocalEventSource:
         self._records += 1
         self._bytes += size
         if not self._bridge.ingest(line):
+            self._failure_class = self._bridge.observe().get("reason")
             self.stop()
             return False
         if not self._attached:
@@ -87,6 +89,10 @@ class TrustedLocalEventSource:
             # This one-session source is the only publisher. Clear buffered
             # state on source termination; no stale events remain visible.
             self._registry.clear_if_owner(self._session_id, self._bridge)
+
+    @property
+    def failure_class(self) -> str | None:
+        return self._failure_class
 
     @property
     def stopped(self) -> bool:
