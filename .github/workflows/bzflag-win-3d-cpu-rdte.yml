@@ -221,6 +221,59 @@ jobs:
                 exit 2
               fi
               echo "PASS: isolated Windows BZFS loopback TCP listener"
+              # BZFlag client manpage: [callsign@]server[:port] positional join.
+              client="$(find "$WINEPREFIX/drive_c" -type f -iname bzflag.exe -print -quit)"
+              if [ -z "$client" ]; then
+                echo "UNQUALIFIED: local Windows BZFlag client absent"
+                exit 2
+              fi
+              cd "$(dirname "$client")"
+              wine "$client" -window 800x600 -mute -nomotd -nolist \
+                winebotrdte@127.0.0.1:5154 >/tmp/bzflag-join-local.log 2>&1 &
+              gamepid=$!
+              connected=0
+              wid=""
+              for i in $(seq 1 100); do
+                if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                  connected=1
+                fi
+                wid="$(xdotool search --onlyvisible --name BZFlag 2>/dev/null | head -1 || true)"
+                if [ "$connected" -eq 1 ] && [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  break
+                fi
+                sleep 0.5
+              done
+              if [ "$connected" -ne 1 ]; then
+                echo "UNQUALIFIED: local Windows client TCP handshake not observed"
+                exit 2
+              fi
+              echo "PASS: Windows game client established local server TCP"
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: connected game client window"
+                exit 2
+              fi
+              title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+              if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                echo "UNQUALIFIED: connected game client error dialog"
+                exit 2
+              fi
+              sleep 3
+              if ! import -window "$wid" /tmp/bzflag-local-joined-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: connected Windows game frame capture"
+                exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/bzflag-local-joined-a.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ || ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: connected game image statistics"
+                exit 2
+              fi
+              echo "OBS: local client width=$w height=$h colors=$colors"
+              if [ "$w" -lt 250 ] || [ "$h" -lt 180 ] || [ "$colors" -lt 60 ]; then
+                echo "UNQUALIFIED: local client nonblank viewport"
+                exit 2
+              fi
+              echo "PASS: connected Windows game client visible content"
+              kill "$gamepid" >/dev/null 2>&1 || true
               kill "$pid" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
