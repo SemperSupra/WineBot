@@ -81,6 +81,9 @@ class EventBridge:
                 return True
             if sequence != self._source_sequence + 1:
                 return self._reject("source_gap")
+            if kind == "overflow":
+                # Terminal callback loss is a failure, never a normal event.
+                return self._reject("source_overflow")
             if kind not in KINDS:
                 return self._reject("unsupported_event")
             self._source_sequence = sequence
