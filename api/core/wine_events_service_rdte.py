@@ -95,6 +95,8 @@ class ObserverService:
             "stream_oversized", "line_oversized", "invalid_utf8",
             "source_rejected", "source_overflow", "source_launch_or_read_failure",
             "source_missing_stdout", "owner_exception", "invalid_deadline",
+            "win32_lifetime_expired", "win32_control_invalid",
+            "win32_callback_overflow",
         })
         with self._lock:
             if self._owner is owner:
