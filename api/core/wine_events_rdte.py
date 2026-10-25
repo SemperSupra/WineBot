@@ -40,6 +40,16 @@ class SessionObserverRegistry:
                 return {"state": "unavailable", "events": [], "next_cursor": 0}
             return self._bridge.observe(after=after, limit=limit)
 
+    def clear_if_owner(self, session_id: str, bridge: EventBridge) -> bool:
+        """Stale producers cannot erase a replacement session's event bridge."""
+        with self._lock:
+            if self._session_id != session_id or self._bridge is not bridge:
+                return False
+            self._bridge.close()
+            self._bridge = None
+            self._session_id = None
+            return True
+
     def clear(self) -> None:
         with self._lock:
             if self._bridge is not None:
