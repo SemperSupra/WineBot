@@ -64,6 +64,19 @@ jobs:
                 echo "UNQUALIFIED: installed 3D game executable missing"
                 exit 2
               fi
+              # PE Machine field from DOS e_lfanew + 4; only category leaves CI.
+              read -r dos0 dos1 dos2 dos3 <<< "$(od -An -tu1 -j60 -N4 "$game")"
+              pe_offset=$((dos0 + 256*dos1 + 65536*dos2 + 16777216*dos3))
+              if [ "$pe_offset" -ge 64 ] && [ "$pe_offset" -le 10000000 ]; then
+                machine="$(od -An -tu2 -j$((pe_offset+4)) -N2 "$game" | xargs)"
+                case "$machine" in
+                  332) echo "OBS: Windows game PE architecture=x86" ;;
+                  34404) echo "OBS: Windows game PE architecture=x64" ;;
+                  *) echo "OBS: Windows game PE architecture=other" ;;
+                esac
+              else
+                echo "OBS: Windows game PE header unqualified"
+              fi
               cd "$(dirname "$game")"
               wine "$game" -window 800x600 -mute -nomotd -nolist >/tmp/game-local.log 2>&1 &
               child=$!
@@ -123,6 +136,12 @@ jobs:
                 fi
                 if timeout -k 2s 8s wine /dialog-probe.exe >/tmp/win32-classification-local.log 2>&1; then
                   category="$(grep -Eo "WIN32_DIALOG_CATEGORY=(graphics|resources|audio|network|generic_error|no_window|unknown)" /tmp/win32-classification-local.log | head -1 | cut -d= -f2)"
+                  children="$(grep -Eo "WIN32_DIALOG_CHILDREN_PRESENT=[01]" /tmp/win32-classification-local.log | head -1 | cut -d= -f2)"
+                  case "$children" in
+                    0) echo "OBS: dialog exposes no child controls" ;;
+                    1) echo "OBS: dialog exposes child controls" ;;
+                    *) echo "OBS: dialog child visibility unknown" ;;
+                  esac
                   case "$category" in
                     graphics|resources|audio|network|generic_error|no_window|unknown)
                       echo "OBS: Win32 dialog category=$category" ;;
