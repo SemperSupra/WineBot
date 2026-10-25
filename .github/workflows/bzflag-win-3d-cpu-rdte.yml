@@ -122,7 +122,7 @@ jobs:
                   echo "OBS: local game log contains error terminology"
                 fi
                 if timeout -k 2s 8s wine /dialog-probe.exe >/tmp/win32-classification-local.log 2>&1; then
-                  category="$(sed -n -E "s/^WIN32_DIALOG_CATEGORY=(graphics|resources|audio|network|generic_error|no_window|unknown)$/\\1/p" /tmp/win32-classification-local.log | head -1)"
+                  category="$(grep -Eo "WIN32_DIALOG_CATEGORY=(graphics|resources|audio|network|generic_error|no_window|unknown)" /tmp/win32-classification-local.log | head -1 | cut -d= -f2)"
                   case "$category" in
                     graphics|resources|audio|network|generic_error|no_window|unknown)
                       echo "OBS: Win32 dialog category=$category" ;;
