@@ -11,6 +11,7 @@ on:
       - api/server.py
       - rdte/wine11/event_bridge.py
       - tests/test_wine_events_rdte.py
+      - tests/test_wine_event_server_mount.py
       - docker/Dockerfile
   workflow_dispatch:
 
@@ -35,7 +36,7 @@ jobs:
           set -euo pipefail
           python3 -m venv /tmp/winebot-events-venv
           /tmp/winebot-events-venv/bin/python -m pip install --disable-pip-version-check --quiet \
-            fastapi==0.129.0 httpx==0.28.1 pydantic==2.12.5
+            -r requirements/requirements-rel.txt
       - name: Qualify token, session, audience and no-mutation controls
         shell: bash
         run: |
@@ -45,6 +46,12 @@ jobs:
             rdte/wine11/event_bridge.py tests/test_wine_events_rdte.py
           /tmp/winebot-events-venv/bin/python -m unittest discover \
             -s tests -p 'test_wine_events_rdte.py' -v
+      - name: Qualify real API application startup admission in fresh processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/winebot-events-venv/bin/python -m unittest discover \
+            -s tests -p 'test_wine_event_server_mount.py' -v
       - name: Scope and disposition
         if: always()
         shell: bash
