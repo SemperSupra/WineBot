@@ -5,6 +5,7 @@ Must run inside an offline, disposable Xvfb container with a public synthetic
 Win32 fixture. Emits allowlisted stage verdicts only, never captured frames,
 raw diagnostic text, machine identity, window identifiers or tokens.
 """
+import contextlib
 import json
 import os
 import pathlib
@@ -174,10 +175,8 @@ def main():
                     os.killpg(proc.pid, signal.SIGTERM)
                     proc.wait(timeout=4)
                 except (OSError, subprocess.TimeoutExpired):
-                    try:
+                    with contextlib.suppress(OSError):
                         os.killpg(proc.pid, signal.SIGKILL)
-                    except OSError:
-                        pass
         command(["wineserver", "-k"], timeout=5)
 
 
