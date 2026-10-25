@@ -206,7 +206,7 @@ jobs:
                   exit 2
                 fi
                 # Local IPv4 127.0.0.1 and port 5154 in /proc/net/tcp; LISTEN only.
-                if awk "NR>1 && \\$2==\"0100007F:1422\" && \\$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+                if awk "NR>1 && \$2==\"0100007F:1422\" && \$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
                   ready=1
                   break
                 fi
@@ -216,7 +216,7 @@ jobs:
                 echo "UNQUALIFIED: localhost-only BZFS listener not observed"
                 exit 2
               fi
-              if awk "NR>1 && \\$2==\"00000000:1422\" && \\$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+              if awk "NR>1 && \$2==\"00000000:1422\" && \$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
                 echo "UNQUALIFIED: unexpected wildcard BZFS listener"
                 exit 2
               fi
