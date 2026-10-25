@@ -22,6 +22,6 @@ COPY scripts/ci/wine-events-owned-process-smoke.py /scripts/ci/wine-events-owned
 RUN chmod 0755 /usr/local/bin/wine-events-owned-process-smoke \
     && python3 -m compileall -q /api /rdte /scripts/ci/wine-events-owned-process-smoke.py
 USER winebot
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 WINEARCH=win64 WINEDEBUG=-all
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 WINEARCH=win64 WINEDEBUG=-all PYTHONPATH=/
 WORKDIR /
 CMD ["/usr/local/bin/wine-events-owned-process-smoke"]
