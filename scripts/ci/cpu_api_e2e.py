@@ -129,6 +129,13 @@ def main():
         if code != 401:
             raise Unqualified("authentication_not_enforced")
         verdict("PASS: unauthenticated request rejected")
+        denied_code, _ = request(
+            "POST", "/input/key", {"keys": "Down", "backend": "xdotool"},
+            authorized=False,
+        )
+        if denied_code != 401:
+            raise Unqualified("unauthenticated_key_not_rejected")
+        verdict("PASS: unauthenticated key denied")
 
         # Capture through the *actual API endpoint*. Bytes are never printed
         # or uploaded; only their strict PNG header and bounded size are tested.
@@ -166,6 +173,45 @@ def main():
         except subprocess.TimeoutExpired as exc:
             raise Unqualified("fixture_did_not_exit") from exc
         verdict("PASS: API key to Win32 event and expected GL RGB readback")
+
+        # Separate API process, same isolated synthetic session, with
+        # a documented human-only *interactive* policy (headless human-only
+        # is intentionally forbidden by config validation). No mock/bypass.
+        os.killpg(api_proc.pid, signal.SIGTERM)
+        api_proc.wait(timeout=4)
+        api_proc = None
+        restricted = env.copy()
+        restricted.update({
+            "MODE": "interactive",
+            "WINEBOT_INSTANCE_CONTROL_MODE": "human-only",
+            "WINEBOT_SESSION_CONTROL_MODE": "human-only",
+        })
+        with api_log.open("w") as output:
+            api_proc = subprocess.Popen(
+                [sys.executable, "-m", "uvicorn", "api.server:app",
+                 "--host", "127.0.0.1", "--port", "8765", "--no-access-log"],
+                env=restricted, cwd="/", stdout=output, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        for _ in range(100):
+            if api_proc.poll() is not None:
+                raise Unqualified("human_only_api_start_failed")
+            try:
+                status, _ = request("GET", "/health")
+                if status == 200:
+                    break
+            except Unqualified:
+                pass
+            time.sleep(0.15)
+        else:
+            raise Unqualified("human_only_api_unavailable")
+        verdict("PASS: human-only API startup")
+        code, _ = request(
+            "POST", "/input/key", {"keys": "Down", "backend": "xdotool"}
+        )
+        if code != 423:
+            raise Unqualified("human_only_policy_not_enforced")
+        verdict("PASS: human-only policy denied authenticated key")
         return 0
     except Unqualified as exc:
         verdict("UNQUALIFIED: " + str(exc))
