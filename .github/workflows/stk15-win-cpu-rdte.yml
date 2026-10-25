@@ -235,6 +235,102 @@ jobs:
               kill "$child" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Causal keyboard pause candidate (bounded visual A/B probe)
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 130s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-key \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: keyboard game executable"
+                exit 2
+              fi
+              cd "$(dirname "$exe")"
+              wine "$exe" --race-now --use-keyboard=0 >/tmp/stk-key-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 90); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: keyboard race window"
+                exit 2
+              fi
+              if ! xdotool windowactivate --sync "$wid" >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard window focus"
+                exit 2
+              fi
+              echo "PASS: candidate keyboard race window focused"
+              sleep 4
+              if ! import -window "$wid" /tmp/key-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard control first frame"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/key-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard control second frame"
+                exit 2
+              fi
+              # Before versus after a single documented pause action.
+              # No inference of semantic gameplay state from xdotool alone.
+              if ! xdotool key --clearmodifiers Escape >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard synthetic Escape delivery"
+                exit 2
+              fi
+              echo "PASS: candidate keyboard Escape submitted"
+              sleep 1
+              if ! import -window "$wid" /tmp/key-c.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard response capture"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/key-d.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard followup capture"
+                exit 2
+              fi
+              stats="$(identify -format "%w %h %k" /tmp/key-c.png 2>/dev/null || true)"
+              read -r w h colors <<< "$stats"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: keyboard response image statistics"
+                exit 2
+              fi
+              ae() {
+                compare -metric AE "$1" "$2" null: 2>/tmp/stk-key-delta-local.log || true
+                grep -Eo "^[0-9]+" /tmp/stk-key-delta-local.log | head -1 || true
+              }
+              neutral="$(ae /tmp/key-a.png /tmp/key-b.png)"
+              response="$(ae /tmp/key-b.png /tmp/key-c.png)"
+              later="$(ae /tmp/key-c.png /tmp/key-d.png)"
+              convert /tmp/key-b.png -crop 640x360+320+180 +repage /tmp/key-center-before.png
+              convert /tmp/key-c.png -crop 640x360+320+180 +repage /tmp/key-center-after.png
+              center="$(ae /tmp/key-center-before.png /tmp/key-center-after.png)"
+              for value in "$neutral" "$response" "$later" "$center"; do
+                if [[ ! "$value" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: keyboard response delta statistics"
+                  exit 2
+                fi
+              done
+              echo "OBS: keyboard width=$w height=$h colors=$colors no_input_delta=$neutral escape_delta=$response post_escape_delta=$later central_escape_delta=$center"
+              if [ "$w" -ne 1280 ] || [ "$h" -ne 720 ] ||
+                 [ "$response" -lt 25000 ] || [ "$response" -lt "$((2*(neutral+1)))" ] ||
+                 [ "$center" -lt 3000 ]; then
+                echo "UNQUALIFIED: input-correlated visual transition"
+                exit 2
+              fi
+              echo "PASS: input-correlated pause-candidate visual transition"
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # The pause-candidate contrast is a visual input response, not kart motion proof.
       # The race-requested frame oracle is not proof of race semantics or causal input.
       # All binaries, assets, PNGs and raw process logs remain ephemeral.
       # A menu pixel pass does not constitute real 3D gameplay qualification.
