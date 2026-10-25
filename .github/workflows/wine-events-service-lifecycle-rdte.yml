@@ -15,6 +15,9 @@ on:
       - tests/test_wine_events_service_rdte.py
       - tests/test_wine_events_server_lifespan_rdte.py
       - tests/test_wine_events_process_rdte.py
+      - docker/wine-events-service-live-rdte.Dockerfile
+      - scripts/ci/wine-events-service-live-smoke.sh
+      - scripts/ci/wine-events-service-live-smoke.py
   workflow_dispatch:
 
 permissions:
@@ -66,3 +69,33 @@ jobs:
             'Disabled-by-default synthetic fixture observer service, not a public API.' \
             'No real Wine process in this bounded Python lifecycle qualification.' \
             'No general CI, endpoint publication, source patch, image push or release.'
+
+  synthetic-wine-runtime:
+    needs: lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build actual WineBot API and fixture-only WinEvent overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-service-live-rdte.Dockerfile \
+            -t winebot-api-owned-observer:rdte .
+      - name: Qualify FastAPI lifecycle against actual Wine Xvfb local observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            winebot-api-owned-observer:rdte
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' \
+            'Experimental in-process FastAPI TestClient, no port binding.' \
+            'Synthetic fixture class only; no arbitrary windows or raw data capture.' \
+            'No artifacts, image push, HTTP ingress, private minutes or release.'
