@@ -23,3 +23,4 @@ done
 xdotool getdisplaygeometry --shell >/dev/null 2>&1 || fail 'xvfb_start'
 timeout 90s wineboot -u >/dev/null 2>&1 || fail 'wineboot'
 python3 /scripts/ci/wine-events-service-live-smoke.py || fail 'service_wine_observer'
+python3 /scripts/ci/wine-events-overflow-live-smoke.py || fail 'burst_wine_observer'
