@@ -7,6 +7,7 @@ on:
       - tests/test_cpu_renderer.py
       - docker/cpu-renderers.Dockerfile
       - tests/fixtures/cpu_gl_smoke.c
+      - scripts/ci/cpu_api_e2e.py
       - .github/workflows/cpu-renderer-rdte.yml
 permissions:
   contents: read
