@@ -28,7 +28,7 @@ jobs:
             -o "$RUNNER_TEMP/stk15-win.zip"
           echo "9df7e2d67e8562127a3bb633030f1bd4ee77fa9e7f0ae110897473025af8acdc  $RUNNER_TEMP/stk15-win.zip" | sha256sum -c --status
           unzip -qq "$RUNNER_TEMP/stk15-win.zip" -d "$RUNNER_TEMP/stk-game"
-          test -n "$(find "$RUNNER_TEMP/stk-game" -type f -iname supertuxkart.exe -print -quit)"
+          test -n "$(find "$RUNNER_TEMP/stk-game" -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
           echo "PASS: verified official Windows SuperTuxKart 1.5 portable archive"
       - name: Build isolated WineBot and CPU-only Mesa overlay
         timeout-minutes: 12
@@ -51,12 +51,13 @@ jobs:
                 exit 2
               fi
               echo "PASS: software GLX control"
-              exe="$(find /game -type f -iname supertuxkart.exe -print -quit)"
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
               if [ -z "$exe" ]; then
                 echo "UNQUALIFIED: Win64 game binary unavailable"
                 exit 2
               fi
               # Static PE Machine categorization; do not publish executable paths.
+              arch_ok=0
               if read -r dos0 dos1 dos2 dos3 <<< "$(od -An -tu1 -j60 -N4 "$exe" 2>/dev/null)" &&
                  [[ "${dos0:-}" =~ ^[0-9]+$ && "${dos1:-}" =~ ^[0-9]+$ &&
                     "${dos2:-}" =~ ^[0-9]+$ && "${dos3:-}" =~ ^[0-9]+$ ]]; then
@@ -65,7 +66,7 @@ jobs:
                   machine="$(od -An -tu2 -j$((pe_offset+4)) -N2 "$exe" 2>/dev/null | xargs)"
                   case "$machine" in
                     332) echo "OBS: Windows game PE architecture=x86" ;;
-                    34404) echo "OBS: Windows game PE architecture=x64" ;;
+                    34404) echo "OBS: Windows game PE architecture=x64"; arch_ok=1 ;;
                     *) echo "OBS: Windows game PE architecture=other" ;;
                   esac
                 else
@@ -73,6 +74,10 @@ jobs:
                 fi
               else
                 echo "OBS: Windows game PE architecture=unknown"
+              fi
+              if [ "$arch_ok" -ne 1 ]; then
+                echo "UNQUALIFIED: selected Windows game executable is not x64 PE"
+                exit 2
               fi
               if [ -n "$(find /game -maxdepth 5 -type d -iname data -print -quit)" ]; then
                 echo "OBS: portable game data directory=present"
