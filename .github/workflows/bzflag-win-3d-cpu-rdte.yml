@@ -174,4 +174,55 @@ jobs:
               kill "$child" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Bound official BZFS loopback-only local-world readiness
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 140s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-bzflag-server \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! timeout -k 3s 45s wine /installer.exe /S >/tmp/bzfs-install-local.log 2>&1; then
+                echo "UNQUALIFIED: local server source installer"
+                exit 2
+              fi
+              server="$(find "$WINEPREFIX/drive_c" -type f -iname bzfs.exe -print -quit)"
+              if [ -z "$server" ]; then
+                echo "UNQUALIFIED: official local BZFS executable absent"
+                exit 2
+              fi
+              echo "PASS: official Windows BZFS executable available"
+              cd "$(dirname "$server")"
+              # Explicit localhost bind, no public listing and no master ban download.
+              wine "$server" -i 127.0.0.1 -p 5154 -noMasterBanlist >/tmp/bzfs-runtime-local.log 2>&1 &
+              pid=$!
+              ready=0
+              for i in $(seq 1 50); do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                  echo "UNQUALIFIED: local BZFS exited before readiness"
+                  exit 2
+                fi
+                # Local IPv4 127.0.0.1 and port 5154 in /proc/net/tcp; LISTEN only.
+                if awk "NR>1 && \\$2==\"0100007F:1422\" && \\$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+                  ready=1
+                  break
+                fi
+                sleep 0.3
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: localhost-only BZFS listener not observed"
+                exit 2
+              fi
+              if awk "NR>1 && \\$2==\"00000000:1422\" && \\$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+                echo "UNQUALIFIED: unexpected wildcard BZFS listener"
+                exit 2
+              fi
+              echo "PASS: isolated Windows BZFS loopback TCP listener"
+              kill "$pid" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # Loopback server readiness is not a connected client or game-world pass.
       # All images and process output remain inside disposable offline runner.
