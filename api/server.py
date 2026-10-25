@@ -60,7 +60,7 @@ def _load_version():
 VERSION = _load_version()
 
 
-async def resource_monitor_task():
+async def resource_monitor_task(observer_service=None):
     """Background task to reap zombies and monitor disk usage."""
     cleanup_counter = 0
     logger.info("Resource monitor task started.")
@@ -69,6 +69,11 @@ async def resource_monitor_task():
     while True:
         # Reap completed detached children under lock.
         reap_finished_tracked_processes()
+
+        # Opt-in fixture-only read observer; never starts an arbitrary app.
+        # Service guards token, two flags, exact binary and session/broker.
+        if observer_service is not None:
+            observer_service.start_if_admitted()
 
         # Periodic session cleanup (every 60 seconds)
         cleanup_counter += monitor_interval
@@ -123,8 +128,20 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.warning(f"Discovery initialization failed: {e}")
 
+    # Optional RDTE-only fixture observer: disabled by default and always
+    # constrained by the same instance-token and session/broker admission.
+    observer_service = None
+    if (
+        os.getenv("WINEBOT_WINE_EVENTS_RDTE_ENABLED", "0") == "1"
+        and os.getenv("WINEBOT_WINE_EVENTS_PROCESS_RDTE_ENABLED", "0") == "1"
+        and (os.getenv("API_TOKEN") or config.API_TOKEN or "").strip()
+    ):
+        from api.core.wine_events_service_rdte import service as observer_service
+
+        observer_service.start_if_admitted()
+
     # Start background monitor
-    monitor = asyncio.create_task(resource_monitor_task())
+    monitor = asyncio.create_task(resource_monitor_task(observer_service))
     inactivity_monitor = asyncio.create_task(inactivity_monitor_task())
 
     try:
@@ -133,6 +150,8 @@ async def lifespan(_app: FastAPI):
         write_instance_state("stopping", reason="api_lifespan_stop")
         monitor.cancel()
         inactivity_monitor.cancel()
+        if observer_service is not None and not observer_service.shutdown():
+            logger.warning("Experimental Wine event source did not stop within bounded grace")
         discovery_manager.stop()
         session_dir = read_session_dir()
         append_lifecycle_event(
