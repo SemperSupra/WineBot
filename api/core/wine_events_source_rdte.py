@@ -7,6 +7,7 @@ and Input Broker identity can own the live, read-only stream. No raw frames are
 logged, recorded to disk, or uploaded.
 """
 from collections.abc import Callable
+import json
 
 from api.core.wine_events_rdte import SessionObserverRegistry
 from rdte.wine11.event_bridge import EventBridge
@@ -68,6 +69,20 @@ class TrustedLocalEventSource:
         ):
             self.stop()
             return False
+        if self._records == self.MAX_RECORDS - 1:
+            # Record 130 is reserved exclusively for an explicit terminal
+            # overflow sentinel; never admit an unreported 129th callback.
+            try:
+                terminal = json.loads(line)
+            except (TypeError, ValueError):
+                terminal = None
+            if terminal != {
+                "schema": "winebot.wine.event.v1",
+                "kind": "overflow",
+                "sequence": 129,
+            }:
+                self.stop()
+                return False
         self._records += 1
         self._bytes += size
         if not self._bridge.ingest(line):
