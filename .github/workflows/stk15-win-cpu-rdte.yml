@@ -56,6 +56,29 @@ jobs:
                 echo "UNQUALIFIED: Win64 game binary unavailable"
                 exit 2
               fi
+              # Static PE Machine categorization; do not publish executable paths.
+              if read -r dos0 dos1 dos2 dos3 <<< "$(od -An -tu1 -j60 -N4 "$exe" 2>/dev/null)" &&
+                 [[ "${dos0:-}" =~ ^[0-9]+$ && "${dos1:-}" =~ ^[0-9]+$ &&
+                    "${dos2:-}" =~ ^[0-9]+$ && "${dos3:-}" =~ ^[0-9]+$ ]]; then
+                pe_offset=$((dos0 + 256*dos1 + 65536*dos2 + 16777216*dos3))
+                if [ "$pe_offset" -ge 64 ] && [ "$pe_offset" -le 10000000 ]; then
+                  machine="$(od -An -tu2 -j$((pe_offset+4)) -N2 "$exe" 2>/dev/null | xargs)"
+                  case "$machine" in
+                    332) echo "OBS: Windows game PE architecture=x86" ;;
+                    34404) echo "OBS: Windows game PE architecture=x64" ;;
+                    *) echo "OBS: Windows game PE architecture=other" ;;
+                  esac
+                else
+                  echo "OBS: Windows game PE architecture=unknown"
+                fi
+              else
+                echo "OBS: Windows game PE architecture=unknown"
+              fi
+              if [ -n "$(find /game -maxdepth 5 -type d -iname data -print -quit)" ]; then
+                echo "OBS: portable game data directory=present"
+              else
+                echo "OBS: portable game data directory=not_found"
+              fi
               cd "$(dirname "$exe")"
               wine "$exe" >/tmp/stk15-game-local.log 2>&1 &
               child=$!
@@ -66,6 +89,46 @@ jobs:
                 sleep 0.5
               done
               if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                # First-failure evidence only: no arbitrary window titles,
+                # executable paths, Wine messages or images enter public CI.
+                if kill -0 "$child" 2>/dev/null; then
+                  echo "OBS: Windows launch process=present"
+                else
+                  echo "OBS: Windows launch process=exited"
+                fi
+                visible="$(xdotool search --onlyvisible --maxdepth 2 --name ".*" 2>/dev/null || true)"
+                count="$(printf "%s\n" "$visible" | grep -Ec "^[0-9]{1,16}$" || true)"
+                if [[ "$count" =~ ^[0-9]{1,4}$ ]]; then
+                  echo "OBS: visible window count=$count"
+                else
+                  echo "OBS: visible window count=unqualified"
+                fi
+                other="$(printf "%s\n" "$visible" | grep -E "^[0-9]{1,16}$" | head -1 || true)"
+                if [[ "$other" =~ ^[0-9]{1,16}$ ]] &&
+                   import -window "$other" /tmp/stk15-diagnostic-local.png >/dev/null 2>&1; then
+                  read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/stk15-diagnostic-local.png 2>/dev/null || true)"
+                  if [[ "${w:-}" =~ ^[0-9]{1,4}$ && "${h:-}" =~ ^[0-9]{1,4}$ &&
+                        "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                    echo "OBS: alternate window width=$w height=$h colors=$colors"
+                  else
+                    echo "OBS: alternate window dimensions=unqualified"
+                  fi
+                  title="$(xdotool getwindowname "$other" 2>/dev/null || true)"
+                  if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                    echo "OBS: alternate window title category=error"
+                  else
+                    echo "OBS: alternate window title category=other"
+                  fi
+                fi
+                if grep -Eiq "import_dll|c0000135|module.*not found|library.*not found" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=loader_dependency"
+                fi
+                if grep -Eiq "OpenGL|GLX|wgl|FBConfig|Vulkan|shader" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=graphics"
+                fi
+                if grep -Eiq "fatal|error|failed|unable|cannot" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=generic_error"
+                fi
                 echo "UNQUALIFIED: Windows 3D game window"
                 exit 2
               fi
