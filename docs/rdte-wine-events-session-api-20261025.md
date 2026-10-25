@@ -88,3 +88,35 @@ MCP ingestion, user scripts or telemetry.
    portable v1 contract red gate, security/disclosure authority
    \`SemperSupra/agent-dispatch-private#515\`, and all production
    merge/release gates.
+
+
+## Next bounded local-producer boundary (implemented, not yet process-backed)
+
+\`api/core/wine_events_source_rdte.py\` provides
+\`TrustedLocalEventSource.feed_internal\` for a WineBot-owned **in-process**
+consumer of a pre-existing locally qualified event stream. The method:
+
+- checks that both active filesystem session and Input Broker session match
+  its fixed creation-time session before consuming *each* record;
+- accepts only complete UTF-8 JSONL records, with existing exact-schema,
+  strictly sequenced EventBridge validation;
+- enforces 129 records maximum (ready + 128 events) and 24,576 total bytes,
+  with no title, HWND, coordinates, text or other extra fields;
+- attaches the source to the in-memory registry only after a valid ready@0
+  handshake, without external input or HTTP writes;
+- closes, scrubs and denies further feed when a source fails or session
+  changes; a replaced/stale source uses \`clear_if_owner\` and cannot erase a
+  newer session's bridge;
+- is tested against session and broker mismatch, callbacks raising errors,
+  malformed input, gaps, byte/count limits, source close and replacement.
+
+This component **does not launch Wine, Xvfb, WinInspect or an application**.
+It also does not implement background process lifecycle, OS pipe permissions,
+external identity/actor grants, replay or visual annotation. A qualified
+Wine source process owner remains the next separate node, not a hidden
+assumption of success.
+
+The additional regression stage lives in
+\`.github/workflows/wine-events-session-api-rdte.yml\`. Require actual
+passing Actions result and exact source SHA before considering this producer
+boundary qualified; continue to preserve early red/negative evidence.
