@@ -264,7 +264,7 @@ jobs:
                 echo "UNQUALIFIED: keyboard race window"
                 exit 2
               fi
-              if ! xdotool windowactivate --sync "$wid" >/dev/null 2>&1; then
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1; then
                 echo "UNQUALIFIED: keyboard window focus"
                 exit 2
               fi
