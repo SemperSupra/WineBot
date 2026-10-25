@@ -176,10 +176,18 @@ class OwnedWineEventProcess:
                         reason = "truncated_event"
                     elif not ready:
                         reason = "missing_ready"
-                    elif process.wait(timeout=min(1, max(0.01, deadline - time.monotonic()))) != 0:
-                        reason = "nonzero_exit"
                     else:
-                        reason = "clean_eof"
+                        exit_code = process.wait(
+                            timeout=min(1, max(0.01, deadline - time.monotonic()))
+                        )
+                        # Fixed RDTE Win32 exit classes only; no raw process
+                        # identity, arbitrary status payload or Wine debug logs.
+                        reason = {
+                            0: "clean_eof",
+                            3: "win32_lifetime_expired",
+                            4: "win32_control_invalid",
+                            6: "win32_callback_overflow",
+                        }.get(exit_code, "nonzero_exit")
                     break
                 total += len(chunk)
                 if total > TrustedLocalEventSource.MAX_BYTES:
