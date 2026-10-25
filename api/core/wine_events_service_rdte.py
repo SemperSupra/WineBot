@@ -7,6 +7,7 @@ Only one bounded observer start per session is admitted in this RDTE.
 """
 import os
 import threading
+import time
 from collections.abc import Callable
 
 from api.core.wine_events_process_rdte import OwnedWineEventProcess
@@ -27,7 +28,9 @@ class ObserverService:
         self._broker_session = broker_session
         self._owner_factory = owner_factory
         self._lock = threading.RLock()
-        self._last_started_session = None
+        self._lease_session = None
+        self._starts_this_session = 0
+        self._last_start_at = 0.0
         self._owner = None
         self._thread = None
         self._stopped = False
@@ -57,9 +60,18 @@ class ObserverService:
             if self._stopped:
                 return False
             session = self._admitted()
-            if not session or session == self._last_started_session:
+            if not session:
                 return False
             if self._thread is not None and self._thread.is_alive():
+                return False
+            if session != self._lease_session:
+                self._lease_session = session
+                self._starts_this_session = 0
+                self._last_start_at = 0.0
+            # At most two bounded leases per session; no unbounded crash loop.
+            if self._starts_this_session >= 2 or (
+                self._starts_this_session and time.monotonic() - self._last_start_at < 1.0
+            ):
                 return False
             try:
                 owner = self._owner_factory(
@@ -71,7 +83,8 @@ class ObserverService:
             except (TypeError, ValueError, OSError):
                 return False
             self._owner = owner
-            self._last_started_session = session
+            self._starts_this_session += 1
+            self._last_start_at = time.monotonic()
             self._thread = threading.Thread(
                 target=self._run_bounded_owner, args=(owner,),
                 name="wine-events-rdte",
@@ -83,7 +96,7 @@ class ObserverService:
     @staticmethod
     def _run_bounded_owner(owner) -> None:
         try:
-            owner.run(deadline_seconds=18.0)
+            owner.run(deadline_seconds=110.0)
         except Exception:
             # No exception string or raw application data in service logs.
             owner.source.stop()
