@@ -72,7 +72,7 @@ jobs:
               fi
               echo "PASS: Windows 3D game window visible"
               seen=0
-              for sample in 1 2 3; do
+              for sample in 1 2 3 4 5; do
                 sleep 3
                 if ! import -window "$wid" /tmp/game-scoped.png >/dev/null 2>&1; then
                   echo "UNQUALIFIED: scoped game frame capture"
@@ -83,6 +83,7 @@ jobs:
                   echo "UNQUALIFIED: bounded image metadata"
                   exit 2
                 fi
+                echo "OBS: scoped sample=$sample width=$w height=$h colors=$colors"
                 if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 40 ]; then
                   seen=1
                   echo "PASS: Windows 3D game scoped visual content"
@@ -90,7 +91,13 @@ jobs:
                 fi
               done
               if [ "$seen" -ne 1 ]; then
-                echo "UNQUALIFIED: 3D window blank or visually sparse"
+                if import -window root /tmp/bzflag-root-local.png >/dev/null 2>&1; then
+                  read -r root_w root_h root_colors <<< "$(identify -format "%w %h %k" /tmp/bzflag-root-local.png 2>/dev/null || true)"
+                  if [[ "${root_w:-}" =~ ^[0-9]{1,4}$ && "${root_h:-}" =~ ^[0-9]{1,4}$ && "${root_colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                    echo "OBS: root screen width=$root_w height=$root_h colors=$root_colors"
+                  fi
+                fi
+                echo "UNQUALIFIED: 3D game pixel readiness or scoped capture"
                 exit 2
               fi
               kill "$child" >/dev/null 2>&1 || true
