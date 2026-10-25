@@ -1,0 +1,52 @@
+name: WineBot session observer derived-image RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-session-api-20261025
+    paths:
+      - .github/workflows/wine-events-session-image-rdte.yml
+      - docker/wine-events-session-rdte.Dockerfile
+      - api/core/wine_events_rdte.py
+      - api/routers/wine_events_rdte.py
+      - api/server.py
+      - rdte/wine11/event_bridge.py
+      - tests/test_wine_event_server_mount.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-session-image-rdte
+  cancel-in-progress: true
+
+jobs:
+  disposable-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build synthetic overlay from public WineBot base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file docker/wine-events-session-rdte.Dockerfile \
+            --tag winebot-session-api:rdte .
+      - name: Verify default-off, absent-token and GET-only opt-in startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none \
+            --cpus=2 --memory=2g --pids-limit=128 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --read-only --tmpfs /tmp:rw,nosuid,noexec,size=32m \
+            winebot-session-api:rdte
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' 'Derived public-base synthetic API startup image only.' \
+            'No general WineBot image build or production sidecar deployment.' \
+            'No artifact/image push, raw event emission, secrets or network at runtime.'
