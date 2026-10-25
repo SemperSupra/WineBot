@@ -244,6 +244,31 @@ jobs:
                 sleep 0.5
               done
               if [ "$connected" -ne 1 ]; then
+                if kill -0 "$gamepid" 2>/dev/null; then
+                  echo "OBS: direct-connect game process=present"
+                else
+                  echo "OBS: direct-connect game process=exited"
+                fi
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  echo "OBS: direct-connect game window=visible"
+                  title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+                  if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                    echo "OBS: direct-connect window class=error"
+                  else
+                    echo "OBS: direct-connect window class=other"
+                  fi
+                else
+                  echo "OBS: direct-connect game window=absent"
+                fi
+                if grep -Eiq "reject|denied|refused|banned" /tmp/bzfs-runtime-local.log; then
+                  echo "OBS: BZFS local log class=server_rejection_keyword"
+                fi
+                if grep -Eiq "connect|login|join|server" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local log class=connection_keyword"
+                fi
+                if grep -Eiq "fatal|error|fail|unable|cannot" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local log class=error_keyword"
+                fi
                 echo "UNQUALIFIED: local Windows client TCP handshake not observed"
                 exit 2
               fi
