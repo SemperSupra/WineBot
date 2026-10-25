@@ -269,6 +269,12 @@ jobs:
                 exit 2
               fi
               echo "PASS: candidate keyboard race window focused"
+              focused="$(xdotool getwindowfocus 2>/dev/null || true)"
+              if [ "$focused" = "$wid" ]; then
+                echo "OBS: X11 focus identity=game_window"
+              else
+                echo "OBS: X11 focus identity=other_or_child"
+              fi
               sleep 4
               if ! import -window "$wid" /tmp/key-a.png >/dev/null 2>&1; then
                 echo "UNQUALIFIED: keyboard control first frame"
@@ -286,6 +292,12 @@ jobs:
                 exit 2
               fi
               echo "PASS: candidate keyboard Escape submitted"
+              focused_after="$(xdotool getwindowfocus 2>/dev/null || true)"
+              if [ "$focused_after" = "$wid" ]; then
+                echo "OBS: X11 after-key focus identity=game_window"
+              else
+                echo "OBS: X11 after-key focus identity=other_or_child"
+              fi
               sleep 1
               if ! import -window "$wid" /tmp/key-c.png >/dev/null 2>&1; then
                 echo "UNQUALIFIED: keyboard response capture"
@@ -295,6 +307,16 @@ jobs:
               if ! import -window "$wid" /tmp/key-d.png >/dev/null 2>&1; then
                 echo "UNQUALIFIED: keyboard followup capture"
                 exit 2
+              fi
+              if kill -0 "$child" 2>/dev/null; then
+                echo "OBS: keyboard Wine launch process=present"
+              else
+                echo "OBS: keyboard Wine launch process=exited"
+              fi
+              if grep -Eiq "fatal|error|failed|unable|cannot" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local Wine game log=generic_error_category"
+              else
+                echo "OBS: keyboard local Wine game log=no_generic_error_category"
               fi
               stats="$(identify -format "%w %h %k" /tmp/key-c.png 2>/dev/null || true)"
               read -r w h colors <<< "$stats"
