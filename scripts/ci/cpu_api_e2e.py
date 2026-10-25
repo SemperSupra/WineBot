@@ -70,11 +70,13 @@ def main():
     SESSION.mkdir(parents=True, exist_ok=True)
     (SESSION / "logs").mkdir(exist_ok=True)
     (SESSION / "scripts").mkdir(exist_ok=True)
+    sys.path.insert(0, "/")  # /api is present in the WineBot runtime image.
     from api.utils.files import write_session_dir
     write_session_dir(str(SESSION))
     env = os.environ.copy()
     env.update({
         "API_TOKEN": TOKEN,
+        "PYTHONPATH": "/",
         "MODE": "headless",
         "WINEBOT_INSTANCE_CONTROL_MODE": "agent-only",
         "WINEBOT_SESSION_CONTROL_MODE": "agent-only",
@@ -167,6 +169,10 @@ def main():
         return 0
     except Unqualified as exc:
         verdict("UNQUALIFIED: " + str(exc))
+        return 2
+    except Exception:
+        # Do not leak raw host/process diagnostics to public Actions logs.
+        verdict("UNQUALIFIED: unexpected_harness_exception")
         return 2
     finally:
         for proc in (api_proc, wine_proc):
