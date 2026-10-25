@@ -126,6 +126,8 @@ def main():
                             "missing_ready", "source_rejected", "source_overflow",
                             "source_launch_or_read_failure", "owner_exception",
                             "session_handover", "unqualified",
+                            "win32_lifetime_expired", "win32_control_invalid",
+                            "win32_callback_overflow",
                         })
                         if verdict in reasons:
                             emit("FAIL", "service_early_exit_" + verdict)
