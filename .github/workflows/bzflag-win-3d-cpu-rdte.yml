@@ -58,7 +58,7 @@ jobs:
                 exit 2
               fi
               cd "$(dirname "$game")"
-              wine "$game" >/tmp/game-local.log 2>&1 &
+              wine "$game" -window 800x600 >/tmp/game-local.log 2>&1 &
               child=$!
               wid=""
               for i in $(seq 1 100); do
