@@ -23,4 +23,5 @@ pytest \
   tests/test_auto_view.py \
   tests/test_ui_dashboard.py \
   tests/test_ui_accessibility.py \
-  tests/test_compatibility_comparator.py
+  tests/test_compatibility_comparator.py \
+  tests/test_roundtrip_observer.py
