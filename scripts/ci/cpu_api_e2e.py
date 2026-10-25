@@ -177,8 +177,25 @@ def main():
         # Separate API process, same isolated synthetic session, with
         # a documented human-only *interactive* policy (headless human-only
         # is intentionally forbidden by config validation). No mock/bypass.
-        os.killpg(api_proc.pid, signal.SIGTERM)
-        api_proc.wait(timeout=4)
+        # A slow uvicorn SIGTERM is a teardown diagnostic, not a policy result.
+        # Bound graceful shutdown, then kill only this disposable process group.
+        if api_proc.poll() is not None:
+            raise Unqualified("prior_api_exited_before_restart")
+        try:
+            os.killpg(api_proc.pid, signal.SIGTERM)
+        except ProcessLookupError as exc:
+            raise Unqualified("prior_api_signal_failed") from exc
+        try:
+            api_proc.wait(timeout=12)
+            verdict("PASS: prior API graceful termination")
+        except subprocess.TimeoutExpired:
+            verdict("OBS: prior API graceful termination timed out")
+            try:
+                os.killpg(api_proc.pid, signal.SIGKILL)
+                api_proc.wait(timeout=4)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise Unqualified("prior_api_force_stop_failed") from exc
+            verdict("PASS: prior API forced termination")
         api_proc = None
         restricted = env.copy()
         restricted.update({
@@ -206,6 +223,15 @@ def main():
         else:
             raise Unqualified("human_only_api_unavailable")
         verdict("PASS: human-only API startup")
+        denied_code, _ = request(
+            "POST", "/input/key", {"keys": "Down", "backend": "xdotool"},
+            authorized=False,
+        )
+        if denied_code != 401:
+            raise Unqualified("human_only_unauthenticated_key_not_rejected")
+        verdict("PASS: human-only unauthenticated key denied")
+        if api_proc.poll() is not None:
+            raise Unqualified("human_only_api_exited_before_policy_check")
         code, _ = request(
             "POST", "/input/key", {"keys": "Down", "backend": "xdotool"}
         )
