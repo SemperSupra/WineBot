@@ -97,7 +97,24 @@ jobs:
                     echo "OBS: root screen width=$root_w height=$root_h colors=$root_colors"
                   fi
                 fi
-                echo "UNQUALIFIED: 3D game pixel readiness or scoped capture"
+                title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+                if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                  echo "OBS: application error-titled dialog"
+                else
+                  echo "OBS: application window title category unknown"
+                fi
+                if kill -0 "$child" 2>/dev/null; then
+                  echo "OBS: game launch process still present"
+                else
+                  echo "OBS: game launch process exited"
+                fi
+                if grep -Eiq "OpenGL|GLX|wgl|FBConfig" /tmp/game-local.log; then
+                  echo "OBS: local game log contains graphics terminology"
+                fi
+                if grep -Eiq "fatal|failed|unable|cannot|error" /tmp/game-local.log; then
+                  echo "OBS: local game log contains error terminology"
+                fi
+                echo "UNQUALIFIED: 3D game viewport absent"
                 exit 2
               fi
               kill "$child" >/dev/null 2>&1 || true
