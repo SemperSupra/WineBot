@@ -1,0 +1,56 @@
+name: WineBot read-only session observer API RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-session-api-20261025
+    paths:
+      - .github/workflows/wine-events-session-api-rdte.yml
+      - api/core/wine_events_rdte.py
+      - api/routers/wine_events_rdte.py
+      - api/server.py
+      - rdte/wine11/event_bridge.py
+      - tests/test_wine_events_rdte.py
+      - docker/Dockerfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-session-api-rdte
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install only pinned API contract test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/winebot-events-venv
+          /tmp/winebot-events-venv/bin/python -m pip install --disable-pip-version-check --quiet \
+            fastapi==0.129.0 httpx==0.28.1 pydantic==2.12.5
+      - name: Qualify token, session, audience and no-mutation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/winebot-events-venv/bin/python -m compileall -q \
+            api/core/wine_events_rdte.py api/routers/wine_events_rdte.py \
+            rdte/wine11/event_bridge.py tests/test_wine_events_rdte.py
+          /tmp/winebot-events-venv/bin/python -m unittest discover \
+            -s tests -p 'test_wine_events_rdte.py' -v
+      - name: Scope and disposition
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Experimental read-only route; disabled at startup absent opt-in and token.' \
+            'No real observer process, no production release, no incoming events over HTTP.' \
+            'Synthetic session, shared-token, client and handover test evidence only.' \
+            'No logs, event streams, binaries or artifacts uploaded.'
