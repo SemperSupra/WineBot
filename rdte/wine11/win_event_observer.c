@@ -12,7 +12,27 @@
 #define FIXTURE_CLASS L"WB_RDTE_WINDOW"
 #define MAX_OBSERVATIONS 128
 #define MAX_LIFETIME_MS 120000UL
-#define CONTROL_POLL_MS 100
+#define LIFETIME_POLL_MS 500
+#define CONTROL_STOP_MESSAGE (WM_APP + 17)
+
+struct control_context {
+    HANDLE input;
+    DWORD owner_thread;
+};
+
+/* Only private stdin from the fixed-owner Wine process. This separate
+ * blocking reader avoids dependence on PeekNamedPipe on Wine. All event
+ * hooks and dispatch remain on the Win32 message-pump thread.
+ */
+static DWORD WINAPI control_reader(LPVOID param) {
+    const struct control_context *control = (const struct control_context *)param;
+    char command = 0;
+    DWORD received = 0;
+    BOOL ok = ReadFile(control->input, &command, 1, &received, NULL);
+    DWORD invalid = (ok && received == 1 && command == 'Q') ? 0 : 1;
+    PostThreadMessageW(control->owner_thread, CONTROL_STOP_MESSAGE, invalid, 0);
+    return 0;
+}
 #ifndef CHILDID_SELF
 #define CHILDID_SELF 0
 #endif
@@ -66,8 +86,10 @@ int main(void) {
     HWINEVENTHOOK foreground_hook;
     MSG message;
     BOOL message_result;
-    UINT_PTR timer_id;
+    UINT_PTR timer_id = 0;
     HANDLE control = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE reader = NULL;
+    struct control_context reader_context;
     DWORD started = GetTickCount();
     int rc = 0;
 
@@ -89,7 +111,17 @@ int main(void) {
         rc = 4;
         goto done;
     }
-    timer_id = SetTimer(NULL, 0, CONTROL_POLL_MS, NULL);
+    /* Materialize the message queue before a possible immediate EOF. */
+    PeekMessageW(&message, NULL, WM_APP, WM_APP, PM_NOREMOVE);
+    reader_context.input = control;
+    reader_context.owner_thread = GetCurrentThreadId();
+    reader = CreateThread(NULL, 0, control_reader, &reader_context, 0, NULL);
+    if (!reader) {
+        emit("unsupported", 0);
+        rc = 4;
+        goto done;
+    }
+    timer_id = SetTimer(NULL, 0, LIFETIME_POLL_MS, NULL);
     if (!timer_id) {
         emit("unsupported", 0);
         rc = 4;
@@ -97,25 +129,13 @@ int main(void) {
     }
     emit("ready", 0);
     while ((message_result = GetMessageW(&message, NULL, 0, 0)) > 0) {
+        if (message.message == CONTROL_STOP_MESSAGE) {
+            rc = message.wParam ? 4 : 0;
+            break;
+        }
         if (message.message == WM_TIMER && message.wParam == timer_id) {
-            DWORD available = 0;
-            char command = 0;
-            DWORD received = 0;
             if ((DWORD)(GetTickCount() - started) >= MAX_LIFETIME_MS) {
                 rc = 3; /* Expiration is not ordinary EOF. */
-                break;
-            }
-            if (!PeekNamedPipe(control, NULL, 0, NULL, &available, NULL)) {
-                /* A closed owning process pipe is a terminal stop. */
-                DWORD why = GetLastError();
-                rc = (why == ERROR_BROKEN_PIPE || why == ERROR_PIPE_NOT_CONNECTED) ? 0 : 4;
-                break;
-            }
-            if (available > 0) {
-                if (!ReadFile(control, &command, 1, &received, NULL)
-                    || received != 1 || command != 'Q') {
-                    rc = 4;
-                }
                 break;
             }
             continue;
@@ -127,8 +147,11 @@ int main(void) {
         rc = 4;
     if (overflow_reported)
         rc = 6;
-    KillTimer(NULL, timer_id);
 done:
+    if (timer_id)
+        KillTimer(NULL, timer_id);
+    if (reader)
+        CloseHandle(reader);
     if (foreground_hook)
         UnhookWinEvent(foreground_hook);
     if (events_hook)
