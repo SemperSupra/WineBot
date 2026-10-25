@@ -72,7 +72,7 @@ def test_normalization_windows_crlf_and_linux_lf():
 
 @pytest.mark.parametrize(
     ("exit_code", "out", "err"),
-    [(1, EXPECTED_OUTPUT, b""), (0, b"other", b""), (0, EXPECTED_OUTPUT, b"warning")],
+    [(41, EXPECTED_OUTPUT, b""), (0, b"other", b"")],
 )
 def test_error_output_cannot_pass(exit_code: int, out: bytes, err: bytes):
     assert outcome(exit_code, out, err) == ("FAIL", None)
@@ -177,3 +177,13 @@ def test_source_fixture_matches_observer_bytes_and_expected_marker():
             "requirements": ["file-roundtrip"],
         }, sort_keys=True, separators=(",", ":")).encode("ascii")
     ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "out", "err"),
+    [(1, EXPECTED_OUTPUT, b""), (-9, b"", b""), (0, EXPECTED_OUTPUT, b"warning")],
+)
+def test_loader_or_stderr_ambiguity_is_infra_not_compatibility(
+    exit_code: int, out: bytes, err: bytes,
+):
+    assert outcome(exit_code, out, err) == ("INFRA_ERROR", None)
