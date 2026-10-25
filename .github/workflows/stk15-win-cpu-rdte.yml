@@ -1,0 +1,99 @@
+name: SuperTuxKart Windows 3D CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/stk15-win-cpu-rdte.yml
+      - docker/stk15-software-gl.Dockerfile
+permissions:
+  contents: read
+concurrency:
+  group: stk15-cpu-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win64-opengl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Acquire pinned official SuperTuxKart 1.5 Windows game archive
+        timeout-minutes: 7
+        run: |
+          mkdir -p "$RUNNER_TEMP/stk-game"
+          curl -fsSL --retry 1 --connect-timeout 15 --max-time 300 \
+            https://github.com/supertuxkart/stk-code/releases/download/1.5/SuperTuxKart-1.5-win.zip \
+            -o "$RUNNER_TEMP/stk15-win.zip"
+          echo "9df7e2d67e8562127a3bb633030f1bd4ee77fa9e7f0ae110897473025af8acdc  $RUNNER_TEMP/stk15-win.zip" | sha256sum -c --status
+          unzip -qq "$RUNNER_TEMP/stk15-win.zip" -d "$RUNNER_TEMP/stk-game"
+          test -n "$(find "$RUNNER_TEMP/stk-game" -type f -iname supertuxkart.exe -print -quit)"
+          echo "PASS: verified official Windows SuperTuxKart 1.5 portable archive"
+      - name: Build isolated WineBot and CPU-only Mesa overlay
+        timeout-minutes: 12
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:stk15-rdte .
+          docker build -f docker/stk15-software-gl.Dockerfile -t winebot:stk15-cpu .
+      - name: Probe actual Windows 3D renderer startup and scoped pixels
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 215s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-fixture \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: CPU OpenGL device"
+                exit 2
+              fi
+              echo "PASS: software GLX control"
+              exe="$(find /game -type f -iname supertuxkart.exe -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: Win64 game binary unavailable"
+                exit 2
+              fi
+              cd "$(dirname "$exe")"
+              wine "$exe" >/tmp/stk15-game-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 110); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: Windows 3D game window"
+                exit 2
+              fi
+              echo "PASS: Windows 3D game window visible"
+              ready=0
+              for sample in 1 2 3 4; do
+                sleep 4
+                if ! import -window "$wid" /tmp/stk15-scoped-local.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: window scoped capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/stk15-scoped-local.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ || ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: image statistics parsing"
+                  exit 2
+                fi
+                if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 60 ]; then
+                  ready=1
+                  echo "PASS: 3D game window has varied pixels at sample=$sample"
+                  break
+                fi
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: 3D game visual readiness"
+                exit 2
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # All binaries, assets, PNGs and raw process logs remain ephemeral.
+      # A menu pixel pass does not constitute real 3D gameplay qualification.
