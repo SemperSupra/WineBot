@@ -65,6 +65,7 @@ int main(void) {
     HWINEVENTHOOK events_hook;
     HWINEVENTHOOK foreground_hook;
     MSG message;
+    BOOL message_result;
     UINT_PTR timer_id;
     HANDLE control = GetStdHandle(STD_INPUT_HANDLE);
     DWORD started = GetTickCount();
@@ -95,7 +96,7 @@ int main(void) {
         goto done;
     }
     emit("ready", 0);
-    while (GetMessageW(&message, NULL, 0, 0) > 0) {
+    while ((message_result = GetMessageW(&message, NULL, 0, 0)) > 0) {
         if (message.message == WM_TIMER && message.wParam == timer_id) {
             DWORD available = 0;
             char command = 0;
@@ -106,7 +107,8 @@ int main(void) {
             }
             if (!PeekNamedPipe(control, NULL, 0, NULL, &available, NULL)) {
                 /* A closed owning process pipe is a terminal stop. */
-                rc = 0;
+                DWORD why = GetLastError();
+                rc = (why == ERROR_BROKEN_PIPE || why == ERROR_PIPE_NOT_CONNECTED) ? 0 : 4;
                 break;
             }
             if (available > 0) {
@@ -121,6 +123,8 @@ int main(void) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    if (message_result < 0)
+        rc = 4;
     if (overflow_reported)
         rc = 6;
     KillTimer(NULL, timer_id);
