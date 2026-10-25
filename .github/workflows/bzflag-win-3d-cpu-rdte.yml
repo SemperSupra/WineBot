@@ -6,6 +6,7 @@ on:
       - .github/workflows/bzflag-win-3d-cpu-rdte.yml
       - docker/bzflag-software-gl.Dockerfile
       - tests/fixtures/win32_dialog_category.c
+      - tests/fixtures/wine32_gl_smoke.c
 permissions:
   contents: read
 concurrency:
@@ -37,6 +38,11 @@ jobs:
             -v "$PWD/tests/fixtures/win32_dialog_category.c:/src.c:ro" \
             -v "$RUNNER_TEMP:/out" winebot:bzflag-mingw \
             -O2 -o /out/bzflag-dialog-probe.exe /src.c -luser32
+          docker run --rm --network none --entrypoint i686-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/wine32_gl_smoke.c:/src32.c:ro" \
+            -v "$RUNNER_TEMP:/out" winebot:bzflag-mingw \
+            -O2 -o /out/wine32-gl-smoke.exe /src32.c \
+            -lopengl32 -lgdi32 -luser32
       - name: Install and launch Windows 3D game without network
         timeout-minutes: 4
         run: |
@@ -46,6 +52,7 @@ jobs:
             -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
             -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
             -v "$RUNNER_TEMP/bzflag-dialog-probe.exe:/dialog-probe.exe:ro" \
+            -v "$RUNNER_TEMP/wine32-gl-smoke.exe:/wine32-gl-smoke.exe:ro" \
             --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
             -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
             /bin/bash -euo pipefail -c '
@@ -54,6 +61,17 @@ jobs:
                 exit 2
               fi
               echo "PASS: CPU OpenGL renderer selected"
+              if ! timeout -k 5s 30s wine /wine32-gl-smoke.exe 1 1 320 0 \
+                    >/tmp/wine32-gl-local.log 2>&1; then
+                echo "UNQUALIFIED: x86 Win32 WGL software rendering probe"
+                exit 2
+              fi
+              if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=1 triangles=1 width=320" \
+                    /tmp/wine32-gl-local.log; then
+                echo "UNQUALIFIED: x86 Win32 WGL framebuffer mismatch"
+                exit 2
+              fi
+              echo "PASS: x86 Windows WGL LLVMpipe framebuffer probe"
               if ! timeout -k 5s 65s wine /installer.exe /S >/tmp/installer-local.log 2>&1; then
                 echo "UNQUALIFIED: silent Windows 3D installer"
                 exit 2
