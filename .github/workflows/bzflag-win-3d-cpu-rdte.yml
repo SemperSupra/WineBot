@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/bzflag-win-3d-cpu-rdte.yml
       - docker/bzflag-software-gl.Dockerfile
+      - tests/fixtures/win32_dialog_category.c
 permissions:
   contents: read
 concurrency:
@@ -31,6 +32,11 @@ jobs:
         run: |
           docker build -f docker/Dockerfile --target intent-slim -t winebot:bzflag-rdte .
           docker build -f docker/bzflag-software-gl.Dockerfile -t winebot:bzflag-cpu .
+          docker build -f docker/Dockerfile --target hook-dll-builder -t winebot:bzflag-mingw .
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/win32_dialog_category.c:/src.c:ro" \
+            -v "$RUNNER_TEMP:/out" winebot:bzflag-mingw \
+            -O2 -o /out/bzflag-dialog-probe.exe /src.c -luser32
       - name: Install and launch Windows 3D game without network
         timeout-minutes: 4
         run: |
@@ -39,6 +45,7 @@ jobs:
             -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-bzflag-fixture \
             -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
             -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
+            -v "$RUNNER_TEMP/bzflag-dialog-probe.exe:/dialog-probe.exe:ro" \
             --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
             -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
             /bin/bash -euo pipefail -c '
@@ -113,6 +120,16 @@ jobs:
                 fi
                 if grep -Eiq "fatal|failed|unable|cannot|error" /tmp/game-local.log; then
                   echo "OBS: local game log contains error terminology"
+                fi
+                if timeout -k 2s 8s wine /dialog-probe.exe >/tmp/win32-classification-local.log 2>&1; then
+                  category="$(sed -n -E "s/^WIN32_DIALOG_CATEGORY=(graphics|resources|audio|network|generic_error|no_window|unknown)$/\\1/p" /tmp/win32-classification-local.log | head -1)"
+                  case "$category" in
+                    graphics|resources|audio|network|generic_error|no_window|unknown)
+                      echo "OBS: Win32 dialog category=$category" ;;
+                    *) echo "OBS: Win32 dialog probe unknown" ;;
+                  esac
+                else
+                  echo "OBS: Win32 dialog classifier unavailable"
                 fi
                 echo "UNQUALIFIED: 3D game viewport absent"
                 exit 2
