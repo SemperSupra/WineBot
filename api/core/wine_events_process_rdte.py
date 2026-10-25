@@ -10,6 +10,7 @@ import os
 import selectors
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 
@@ -51,6 +52,7 @@ class OwnedWineEventProcess:
         self._display = display
         self._started = False
         self._process = None
+        self._stop_requested = threading.Event()
 
     def _alive_session(self) -> bool:
         try:
@@ -87,6 +89,10 @@ class OwnedWineEventProcess:
         except (OSError, ValueError):
             pass
 
+    def request_stop(self) -> None:
+        """Cooperative shutdown for a service-owned thread (bounded poll loop)."""
+        self._stop_requested.set()
+
     def run(self, *, deadline_seconds: float = 18.0) -> str:
         """Return a fixed verdict. Never include raw source bytes or process IDs."""
         if self._started:
@@ -98,6 +104,9 @@ class OwnedWineEventProcess:
         ):
             self.source.stop()
             return "invalid_deadline"
+        if self._stop_requested.is_set():
+            self.source.stop()
+            return "cancelled"
         if not self._alive_session():
             self.source.stop()
             return "session_handover"
@@ -136,6 +145,9 @@ class OwnedWineEventProcess:
             selector = selectors.DefaultSelector()
             selector.register(process.stdout, selectors.EVENT_READ)
             while True:
+                if self._stop_requested.is_set():
+                    reason = "cancelled"
+                    break
                 if not self._alive_session():
                     reason = "session_handover"
                     break
