@@ -260,6 +260,17 @@ app.include_router(control.router)
 app.include_router(control.instance_router)
 app.include_router(automation.router)
 
+# Experimental opt-in only: require an actual API token before mounting the
+# session-bound Wine event observer. No HTTP source/ingest/mutation routes.
+# Existing WineBot production starts with this capability absent.
+if (
+    os.getenv("WINEBOT_WINE_EVENTS_RDTE_ENABLED", "0") == "1"
+    and (os.getenv("API_TOKEN") or config.API_TOKEN or "").strip()
+):
+    from api.routers import wine_events_rdte
+
+    app.include_router(wine_events_rdte.router)
+
 
 @app.get("/version")
 def get_version():
