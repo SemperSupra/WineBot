@@ -92,6 +92,8 @@ FROM base-core AS base-logic
 COPY automation /automation
 COPY scripts /scripts
 COPY api /api
+# Experimental read-only event bridge; opt-in API route is disabled by default.
+COPY rdte/wine11/event_bridge.py /rdte/wine11/event_bridge.py
 COPY docker/entrypoint.sh /entrypoint.sh
 
 # Optimize caching: Copy frequent changes last
