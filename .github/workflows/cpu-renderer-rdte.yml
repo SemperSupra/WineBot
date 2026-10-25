@@ -207,3 +207,14 @@ jobs:
               ' -- "$threads"
           done
           # Only validated numeric timings are emitted; no image or log uploaded.
+
+      - name: Qualify WineBot API keyboard and framebuffer on CPU
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 145s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e WINEDEBUG=-all \
+            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_api_e2e.py
