@@ -1,0 +1,99 @@
+name: BZFlag Windows 3D CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/bzflag-win-3d-cpu-rdte.yml
+      - docker/bzflag-software-gl.Dockerfile
+permissions:
+  contents: read
+concurrency:
+  group: bzflag-3d-rdte-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-3d-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Acquire official Windows BZFlag 2.4.30 with publisher checksum
+        timeout-minutes: 4
+        run: |
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 150 \
+            https://download.bzflag.org/bzflag/windows/2.4.30/bzflag-2.4.30.exe \
+            -o "$RUNNER_TEMP/bzflag-installer.exe"
+          echo "ffaed59ed35902ed50959a0c21eab2a68144d02427c0e1cd7ee07eb47c758999  $RUNNER_TEMP/bzflag-installer.exe" | sha256sum -c --status
+          echo 'PASS: official Windows BZFlag installer integrity'
+      - name: Build WineBot and isolated CPU OpenGL child image
+        timeout-minutes: 13
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:bzflag-rdte .
+          docker build -f docker/bzflag-software-gl.Dockerfile -t winebot:bzflag-cpu .
+      - name: Install and launch Windows 3D game without network
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 210s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-bzflag-fixture \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: CPU OpenGL renderer"
+                exit 2
+              fi
+              echo "PASS: CPU OpenGL renderer selected"
+              if ! timeout -k 5s 65s wine /installer.exe /S >/tmp/installer-local.log 2>&1; then
+                echo "UNQUALIFIED: silent Windows 3D installer"
+                exit 2
+              fi
+              echo "PASS: Windows game installer completed"
+              game="$(find "$WINEPREFIX/drive_c" -type f -iname bzflag.exe -print -quit)"
+              if [ -z "$game" ]; then
+                echo "UNQUALIFIED: installed 3D game executable missing"
+                exit 2
+              fi
+              cd "$(dirname "$game")"
+              wine "$game" >/tmp/game-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name BZFlag 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: visible Windows 3D game"
+                exit 2
+              fi
+              echo "PASS: Windows 3D game window visible"
+              seen=0
+              for sample in 1 2 3; do
+                sleep 3
+                if ! import -window "$wid" /tmp/game-scoped.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: scoped game frame capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/game-scoped.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ || ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: bounded image metadata"
+                  exit 2
+                fi
+                if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 40 ]; then
+                  seen=1
+                  echo "PASS: Windows 3D game scoped visual content"
+                  break
+                fi
+              done
+              if [ "$seen" -ne 1 ]; then
+                echo "UNQUALIFIED: 3D window blank or visually sparse"
+                exit 2
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # All images and process output remain inside disposable offline runner.
