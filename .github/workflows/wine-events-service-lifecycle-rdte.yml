@@ -1,0 +1,68 @@
+name: WineBot opt-in observer service lifecycle RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-service-lifecycle-20261025
+    paths:
+      - .github/workflows/wine-events-service-lifecycle-rdte.yml
+      - api/server.py
+      - api/core/wine_events_process_rdte.py
+      - api/core/wine_events_service_rdte.py
+      - api/core/wine_events_rdte.py
+      - api/core/wine_events_source_rdte.py
+      - rdte/wine11/event_bridge.py
+      - tests/test_wine_events_service_rdte.py
+      - tests/test_wine_events_server_lifespan_rdte.py
+      - tests/test_wine_events_process_rdte.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-service-lifecycle-rdte
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned WineBot API runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/winebot-lifecycle-venv
+          /tmp/winebot-lifecycle-venv/bin/python -m pip install --quiet \
+            --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Fail-closed service and real API lifespan qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/winebot-lifecycle-venv/bin/python -m compileall -q \
+            api/core/wine_events_service_rdte.py \
+            api/core/wine_events_process_rdte.py \
+            tests/test_wine_events_service_rdte.py \
+            tests/test_wine_events_server_lifespan_rdte.py
+          for pattern in \
+            test_wine_events_service_rdte.py \
+            test_wine_events_server_lifespan_rdte.py \
+            test_wine_events_process_rdte.py \
+            test_wine_events_source_rdte.py \
+            test_wine_events_rdte.py \
+            test_wine_event_server_mount.py; do
+            /tmp/winebot-lifecycle-venv/bin/python -m unittest discover \
+              -s tests -p "$pattern" -v
+          done
+      - name: Scope
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Disabled-by-default synthetic fixture observer service, not a public API.' \
+            'No real Wine process in this bounded Python lifecycle qualification.' \
+            'No general CI, endpoint publication, source patch, image push or release.'
