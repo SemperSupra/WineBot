@@ -318,6 +318,22 @@ jobs:
               else
                 echo "OBS: keyboard local Wine game log=no_generic_error_category"
               fi
+              # Log contents stay in the disposable runner; classify only.
+              if grep -Eiq "asset|texture|mesh|resource|model|data/|kart|track" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=asset_or_track_keyword"
+              fi
+              if grep -Eiq "OpenGL|GLX|GLSL|shader|driver|Vulkan|renderer" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=graphics_keyword"
+              fi
+              if grep -Eiq "socket|connect|online|network|http|dns" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=network_keyword"
+              fi
+              if grep -Eiq "start.*race|race.*start|player.*kart|current.*track" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=race_phase_keyword"
+              fi
+              if grep -Eiq "fatal|assert|abort|exception|segfault" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=critical_keyword"
+              fi
               stats="$(identify -format "%w %h %k" /tmp/key-c.png 2>/dev/null || true)"
               read -r w h colors <<< "$stats"
               if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
