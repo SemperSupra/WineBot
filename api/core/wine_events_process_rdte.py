@@ -20,7 +20,7 @@ from api.core.wine_events_source_rdte import TrustedLocalEventSource
 # Hard-coded synthetic fixture-specific binary. No argv supplied by requests.
 _OBSERVER_ARGV = ("wine", "/opt/winebot/rdte/win_event_observer.exe")
 _MAX_LINE_BYTES = 256
-_MAX_WAIT_SECONDS = 22.0
+_MAX_WAIT_SECONDS = 150.0
 
 
 class OwnedWineEventProcess:
@@ -69,6 +69,15 @@ class OwnedWineEventProcess:
             return
         try:
             if process.poll() is None:
+                # Fixed private control byte; never signal a user application.
+                if process.stdin is not None:
+                    try:
+                        process.stdin.write(b"Q")
+                        process.stdin.flush()
+                        process.wait(timeout=0.8)
+                    except (OSError, ValueError, subprocess.TimeoutExpired):
+                        pass
+            if process.poll() is None:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
                 except (OSError, AttributeError):
@@ -84,6 +93,8 @@ class OwnedWineEventProcess:
                         process.wait(timeout=1.0)
                     except subprocess.TimeoutExpired:
                         pass
+            if process.stdin is not None:
+                process.stdin.close()
             if process.stdout is not None:
                 process.stdout.close()
         except (OSError, ValueError):
@@ -93,7 +104,7 @@ class OwnedWineEventProcess:
         """Cooperative shutdown for a service-owned thread (bounded poll loop)."""
         self._stop_requested.set()
 
-    def run(self, *, deadline_seconds: float = 18.0) -> str:
+    def run(self, *, deadline_seconds: float = 110.0) -> str:
         """Return a fixed verdict. Never include raw source bytes or process IDs."""
         if self._started:
             return "already_started"
@@ -134,7 +145,7 @@ class OwnedWineEventProcess:
         reason = "unqualified"
         try:
             process = self._spawn(
-                list(_OBSERVER_ARGV), stdin=subprocess.DEVNULL,
+                list(_OBSERVER_ARGV), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 env=env, close_fds=True, start_new_session=True,
                 bufsize=0,
@@ -190,7 +201,8 @@ class OwnedWineEventProcess:
                         reason = "invalid_utf8"
                         break
                     if not self.source.feed_internal(text):
-                        reason = "source_rejected"
+                        reason = ("source_overflow" if self.source.failure_class == "source_overflow"
+                                  else "source_rejected")
                         break
                     ready = True
                 if reason not in ("unqualified",):
