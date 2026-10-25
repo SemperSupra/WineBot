@@ -74,6 +74,10 @@ def outcome(returncode: int, stdout: bytes, stderr: bytes) -> tuple[str, str | N
     normal = stdout.replace(b"\r\n", b"\n")
     if returncode == 0 and normal == EXPECTED_OUTPUT and not stderr:
         return "PASS", hashlib.sha256(EXPECTED_OUTPUT).hexdigest()
+    # Fixture-owned explicit exit statuses indicate an assertion failure. Wine
+    # loader problems, signals and ambiguous stderr are infrastructure errors.
+    if stderr or returncode not in (0, 41, 42, 43, 44, 45, 46):
+        return "INFRA_ERROR", None
     return "FAIL", None
 
 
