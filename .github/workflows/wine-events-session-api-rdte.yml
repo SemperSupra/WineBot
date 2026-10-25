@@ -7,10 +7,12 @@ on:
     paths:
       - .github/workflows/wine-events-session-api-rdte.yml
       - api/core/wine_events_rdte.py
+      - api/core/wine_events_source_rdte.py
       - api/routers/wine_events_rdte.py
       - api/server.py
       - rdte/wine11/event_bridge.py
       - tests/test_wine_events_rdte.py
+      - tests/test_wine_events_source_rdte.py
       - tests/test_wine_event_server_mount.py
       - docker/Dockerfile
   workflow_dispatch:
@@ -46,6 +48,12 @@ jobs:
             rdte/wine11/event_bridge.py tests/test_wine_events_rdte.py
           /tmp/winebot-events-venv/bin/python -m unittest discover \
             -s tests -p 'test_wine_events_rdte.py' -v
+      - name: Qualify trusted local producer lifetime and ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/winebot-events-venv/bin/python -m unittest discover \
+            -s tests -p 'test_wine_events_source_rdte.py' -v
       - name: Qualify real API application startup admission in fresh processes
         shell: bash
         run: |
