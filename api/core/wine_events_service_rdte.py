@@ -31,6 +31,7 @@ class ObserverService:
         self._owner = None
         self._thread = None
         self._stopped = False
+        self._last_verdict = None
 
     def _admitted(self):
         if (
@@ -71,6 +72,7 @@ class ObserverService:
             except (TypeError, ValueError, OSError):
                 return False
             self._owner = owner
+            self._last_verdict = None
             self._last_started_session = session
             self._thread = threading.Thread(
                 target=self._run_bounded_owner, args=(owner,),
@@ -80,13 +82,29 @@ class ObserverService:
             self._thread.start()
             return True
 
-    @staticmethod
-    def _run_bounded_owner(owner) -> None:
+    def _run_bounded_owner(self, owner) -> None:
         try:
-            owner.run(deadline_seconds=110.0)
+            verdict = owner.run(deadline_seconds=110.0)
         except Exception:
             # No exception string or raw application data in service logs.
             owner.source.stop()
+            verdict = "owner_exception"
+        safe_verdicts = frozenset({
+            "cancelled", "session_handover", "timeout", "truncated_event",
+            "missing_ready", "nonzero_exit", "clean_eof",
+            "stream_oversized", "line_oversized", "invalid_utf8",
+            "source_rejected", "source_overflow", "source_launch_or_read_failure",
+            "source_missing_stdout", "owner_exception", "invalid_deadline",
+        })
+        with self._lock:
+            if self._owner is owner:
+                self._last_verdict = verdict if verdict in safe_verdicts else "unqualified"
+
+    @property
+    def last_verdict(self) -> str | None:
+        """Internal enum only; not an HTTP event source or actor capability."""
+        with self._lock:
+            return self._last_verdict
 
     def shutdown(self) -> bool:
         with self._lock:
