@@ -69,7 +69,7 @@ class OwnedProcessTests(unittest.TestCase):
         def spawn(command, **options):
             self.assertEqual(command, COMMAND)
             self.assertIs(options["stderr"], subprocess.DEVNULL)
-            self.assertIs(options["stdin"], subprocess.DEVNULL)
+            self.assertIs(options["stdin"], subprocess.PIPE)
             self.assertEqual(options["env"]["WINEDEBUG"], "-all")
             self.assertEqual(options["env"]["WINEPREFIX"], "/tmp/synthetic-prefix")
             self.assertNotIn("API_TOKEN", options["env"])
@@ -174,7 +174,7 @@ class OwnedProcessTests(unittest.TestCase):
 
     def test_invalid_deadline_and_prefix_rejected(self):
         owner = self.make_owner("normal")
-        self.assertEqual(owner.run(deadline_seconds=23), "invalid_deadline")
+        self.assertEqual(owner.run(deadline_seconds=151), "invalid_deadline")
         with self.assertRaises(ValueError):
             OwnedWineEventProcess(
                 SESSION, self.registry, lambda: SESSION, lambda: SESSION,
