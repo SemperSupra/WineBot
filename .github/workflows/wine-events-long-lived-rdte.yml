@@ -103,7 +103,7 @@ jobs:
         if: always()
         run: |
           printf '%s\n' \
-            'Experimental FastAPI TestClient observes real Wine after 14 seconds; no port binding.'
+            'Experimental FastAPI TestClient observes real Wine after 14 seconds; no port binding.' \
             'Actual fixed-class Win32 192-event pressure and direct cooperative Q-stop tested.' \
             'Synthetic fixture class only; no arbitrary windows or raw data capture.' \
             'No artifacts, image push, HTTP ingress, private minutes or release.'
