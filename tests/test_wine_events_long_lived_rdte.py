@@ -168,7 +168,7 @@ class SyntheticLifecycleTests(unittest.TestCase):
         self.assertEqual(self.registry.observe("next")["state"], "ready")
         successor.stop()
 
-    def test_service_renews_once_only_then_refuses_unbounded_restarts(self):
+    def test_service_denies_same_session_replay_and_allows_fresh_session(self):
         class FakeOwner:
             def __init__(self, *args, **kwargs):
                 self.exit = threading.Event()
@@ -179,8 +179,9 @@ class SyntheticLifecycleTests(unittest.TestCase):
             def request_stop(self):
                 self.exit.set()
 
+        current = [SESSION]
         svc = ObserverService(
-            lambda: SESSION, lambda: SESSION, owner_factory=FakeOwner,
+            lambda: current[0], lambda: current[0], owner_factory=FakeOwner,
         )
         env = {
             "WINEBOT_WINE_EVENTS_RDTE_ENABLED": "1",
@@ -197,13 +198,12 @@ class SyntheticLifecycleTests(unittest.TestCase):
                 self.assertFalse(svc.start_if_admitted())
                 svc._owner.request_stop()
                 svc._thread.join(timeout=2)
-                self.assertFalse(svc.start_if_admitted())  # cooldown
-                time.sleep(1.05)
+                self.assertFalse(svc.start_if_admitted())  # no epoch-bound cursors
+                current[0] = "new-synthetic-session"
                 self.assertTrue(svc.start_if_admitted())
                 svc._owner.request_stop()
                 svc._thread.join(timeout=2)
-                time.sleep(1.05)
-                self.assertFalse(svc.start_if_admitted())  # exhausted budget
+                self.assertFalse(svc.start_if_admitted())
             finally:
                 self.assertTrue(svc.shutdown())
 
