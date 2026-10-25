@@ -1,0 +1,74 @@
+name: WineBot owned Wine WinEvent process RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-owned-process-20261025
+    paths:
+      - .github/workflows/wine-events-owned-process-rdte.yml
+      - api/core/wine_events_process_rdte.py
+      - api/core/wine_events_source_rdte.py
+      - api/core/wine_events_rdte.py
+      - rdte/wine11/event_bridge.py
+      - rdte/wine11/win_event_observer.c
+      - rdte/wine11/win_event_fixture.c
+      - tests/test_wine_events_process_rdte.py
+      - docker/wine-events-owned-process-rdte.Dockerfile
+      - scripts/ci/wine-events-owned-process-smoke.sh
+      - scripts/ci/wine-events-owned-process-smoke.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-owned-process-rdte
+  cancel-in-progress: true
+
+jobs:
+  static-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Qualify fixed-command observer owner without Wine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q \
+            api/core/wine_events_process_rdte.py api/core/wine_events_source_rdte.py \
+            tests/test_wine_events_process_rdte.py
+          python3 -m unittest discover -s tests \
+            -p 'test_wine_events_process_rdte.py' -v
+  wine-runtime:
+    needs: static-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build bounded synthetic Wine WinEvent process overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-owned-process-rdte.Dockerfile \
+            -t winebot-owned-events:rdte .
+      - name: Qualify real Wine observer process and X11 fixture offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            winebot-owned-events:rdte
+      - name: Declare narrow scope
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Only fixture-class synthetic WinEvent callback source under public Wine.' \
+            'No arbitrary apps, screenshots, input mutations, new HTTP endpoints or logs.' \
+            'No private runner minutes, artifacts, binary image push, merge or release.'
