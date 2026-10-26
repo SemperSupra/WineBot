@@ -29,8 +29,10 @@ COPY scripts/ci/wine-events-owned-process-smoke.sh /tmp/old-smoke.sh
 COPY scripts/ci/wine-events-service-live-smoke.sh /usr/local/bin/wine-events-service-live-smoke
 COPY scripts/ci/wine-events-service-live-smoke.py /scripts/ci/wine-events-service-live-smoke.py
 COPY scripts/ci/wine-events-overflow-live-smoke.py /scripts/ci/wine-events-overflow-live-smoke.py
+COPY scripts/ci/wine_events_soak_bounds.py /scripts/ci/wine_events_soak_bounds.py
+COPY scripts/ci/wine-events-soak-live-smoke.py /scripts/ci/wine-events-soak-live-smoke.py
 RUN chmod 0755 /usr/local/bin/wine-events-service-live-smoke \
-    && python3 -m compileall -q /api /rdte /scripts/ci/wine-events-service-live-smoke.py /scripts/ci/wine-events-overflow-live-smoke.py
+    && python3 -m compileall -q /api /rdte /scripts/ci/wine-events-service-live-smoke.py /scripts/ci/wine-events-overflow-live-smoke.py /scripts/ci/wine_events_soak_bounds.py /scripts/ci/wine-events-soak-live-smoke.py
 ENV PYTHONPATH=/ PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 WINEARCH=win64 WINEDEBUG=-all
 WORKDIR /
 USER winebot
