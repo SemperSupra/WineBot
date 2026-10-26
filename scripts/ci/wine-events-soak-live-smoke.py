@@ -166,8 +166,12 @@ def run_soak():
         thread.join(timeout=5)
         for proc in fixtures:
             stop_fixture(proc)
-        cleanup_ok = not thread.is_alive() and owner.source.stopped and (
-            registry.observe(SESSION)["state"] == "unavailable"
+        cleanup_ok = (
+            not thread.is_alive()
+            and results == ["cancelled"]
+            and owner.source.stopped
+            and owner._process is None
+            and registry.observe(SESSION)["state"] == "unavailable"
         )
         if not cleanup_ok:
             # Do not report a false success if cleanup never settled.
