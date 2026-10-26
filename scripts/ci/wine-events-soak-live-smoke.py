@@ -156,7 +156,7 @@ def run_soak():
             return envelope
         print("PASS: soak_70s_live_event_continuity", flush=True)
         print("PASS: soak_cgroup_v2_resource_envelope", flush=True)
-        return "ok"
+        result = "ok"
     except ResourceUnqualified:
         return "soak_metrics_unavailable"
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -166,14 +166,16 @@ def run_soak():
         thread.join(timeout=5)
         for proc in fixtures:
             stop_fixture(proc)
-        if thread.is_alive() or not owner.source.stopped or (
-            registry.observe(SESSION)["state"] != "unavailable"
-        ):
+        cleanup_ok = not thread.is_alive() and owner.source.stopped and (
+            registry.observe(SESSION)["state"] == "unavailable"
+        )
+        if not cleanup_ok:
             # Do not report a false success if cleanup never settled.
             print("FAIL: soak_cleanup_not_erased", flush=True)
         else:
             print("PASS: soak_owner_stop_and_erase", flush=True)
         registry.clear()
+    return result if cleanup_ok else "soak_cleanup_not_erased"
 
 
 def main():
@@ -190,6 +192,7 @@ def main():
             "soak_memory_growth", "soak_cpu_accounting",
             "soak_insufficient_quiet", "soak_busy_quiet",
             "soak_metrics_unavailable", "soak_process_exception",
+            "soak_cleanup_not_erased",
         })
         print("FAIL: " + (result if result in allowed
                           else "soak_unqualified"), flush=True)
