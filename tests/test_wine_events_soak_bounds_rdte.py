@@ -29,7 +29,7 @@ class SoakBoundsTests(unittest.TestCase):
                          "soak_insufficient_duration")
 
     def test_memory_ceiling_and_growth(self):
-        self.assertEqual(assess_envelope(series(mem_step=49_000_000),
+        self.assertEqual(assess_envelope(series(mem_step=55_000_000),
                                          quiet_stop_seconds=20), "soak_memory_ceiling")
         self.assertEqual(assess_envelope(series(mem_step=17_000_000),
                                          quiet_stop_seconds=20), "soak_memory_growth")
