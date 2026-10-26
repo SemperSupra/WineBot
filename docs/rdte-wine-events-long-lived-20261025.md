@@ -10,7 +10,7 @@ The experimentally qualified upstream is `qualification/wine-events-service-life
 
 This branch remains a **fixed-command, fixture-class-only** observability experiment. No arbitrary application selection, event injection, public HTTP producer endpoint, title/text/geometry/handle exposure, vision inference, secrets, real media, or upstream Wine source patch.
 
-- Win32 `SetWinEventHook` remains restricted to `WB_RDTE_WINDOW`; emits only schema `winebot.wine.event.v1`, synthetic kind and monotonic sequence. Its single private stdin PIPE recognizes only the `Q` stop byte, polled from the Win32 message pump; malformed commands fail; closed pipe stops. An internal hard 120-second lifetime prevents indefinite or orphaned observation. Retain 128 callback events plus one explicit terminal overflow sentinel, which triggers a nonzero exit.
+- Win32 `SetWinEventHook` remains restricted to `WB_RDTE_WINDOW`; emits only schema `winebot.wine.event.v1`, synthetic kind and monotonic sequence. Its private inherited stdin PIPE recognizes only a `Q` stop byte through a dedicated blocking Win32 `ReadFile` control-reader thread, which posts one notification to the existing Win32 message loop. Malformed requests fail closed; closed pipe ends the owner. This replaces the empirically failing Wine `PeekNamedPipe` polling experiment. An internal hard 120-second lifetime prevents indefinite or orphaned observation. Retain 128 callback events plus one explicit terminal overflow sentinel, which triggers a nonzero exit.
 - WineBot retains sole process and group ownership, stripped subprocess environment, `close_fds`, `start_new_session`, nonpublished stdout, deadline at most 150s and default service deadline 110s. On stop it first signals the same fixed process over its private pipe; after bounded grace it signals/kills only that group. Source and cursor state is erased unconditionally.
 - Source and in-memory EventBridge reject an explicit overflow sentinel as `source_overflow`, never as successfully delivered content. Sequence gaps, invalid fields, byte/record/line caps, timeout and process failures fail closed. Source overflow is classified in the owner verdict before erasure. Reads remain nondestructive with independent cursors; older history gaps are explicit, never silently replayed.
 - The existing service retains **one and only one start per session**, even after observer exit. A new admitted session may start after the previous worker terminates, and a stopped service denies admission. Red-team review rejected automatic same-session renewal: sequence numbers reset in each collector, so until the contract carries a generation-bound cursor, renewal could cause silent consumer ambiguity. The hard-bounded 110-second service lease is an experiment, **not continuous availability**.
@@ -28,7 +28,7 @@ The branch-specific, push-triggered workflow runs tests on public `ubuntu-24.04`
 
 ### Known uncertainty and stop rules
 
-- Real Wine `PeekNamedPipe` behavior through inherited stdin is unqualified until the Win32 fixture CI run; a failure must be classified before changing the stop contract.
+- Real Wine `PeekNamedPipe` polling failed the 14-second idle qualification (early nonzero Win32 child exit; public run 40244112096). Replacement blocking `ReadFile` private control reader passed public 40244444884; independent direct `Q` stop, terminal overflow, 57 tests, and clean shutdown subsequently passed exact head `0386d0e9e3b2cecefd7a4dd1693ff5c8fa4ba121`, run 40245086851, zero attached artifacts. This is fixture-only RDTE evidence, not a production guarantee.
 - Existing `base-2026-05-04` image is tag-pinned, **not digest-pinned**; bitwise reproducible comparison is unqualified.
 - Callback delivery under a synthetic fixture is not a full Windows event reliability guarantee. Overflow may be reported as an owner failure and stream unavailable, but a per-actor loss-notification/UI contract requires independent security and consumer admission.
 - This proves neither production continuous service nor memory/RSS statistics from a sustained multi-hour observation; the enforced limits are structural plus container cgroup caps. Restart within the same session remains BLOCKED pending generation-bound cursor semantics. Do not report a time series without measured receipts.
@@ -37,3 +37,8 @@ The branch-specific, push-triggered workflow runs tests on public `ubuntu-24.04`
 ## DLE verification receipt
 
 Record branch exact head, compile/unit/live job IDs, FIRST FAIL stage and fix, artifact enumeration, and next bounded independent qualification at the owning [DLE #1](https://github.com/mark-e-deyoung/winebot-research/issues/1). For failed actual Wine stop-pipe support, retain the previous qualified lifecycle branch unchanged, correct only this isolated branch, and requalify before promoting even experimental assertions.
+
+
+## 2026-10-26 follow-on experiment
+
+The previous observer's last qualified source was `0386d0e9e3b2cecefd7a4dd1693ff5c8fa4ba121`. The independent work is now tracked at `qualification/wine-events-soak-20261026`, documented in `docs/rdte-wine-events-soak-20261026.md`; avoid treating any new soak commit or its results as retroactive proof of the prior source.
