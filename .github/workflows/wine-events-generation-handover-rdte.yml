@@ -1,0 +1,81 @@
+name: WineBot real Wine generation handover RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-generation-handover-20261027
+    paths:
+      - .github/workflows/wine-events-generation-handover-rdte.yml
+      - rdte/wine11/generation_cursor_rdte.py
+      - tests/test_wine_generation_cursor_rdte.py
+      - scripts/ci/wine-events-generation-handover.py
+      - scripts/ci/wine-events-generation-handover.sh
+      - docker/wine-events-generation-handover-rdte.Dockerfile
+      - docs/rdte-wine-generation-handover-20261027.md
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+concurrency:
+  group: wine-events-generation-handover-rdte
+  cancel-in-progress: true
+
+jobs:
+  synthetic-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile fixture-only probe and run hostile cursor tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q \
+            scripts/ci/wine-events-generation-handover.py \
+            rdte/wine11/generation_cursor_rdte.py \
+            tests/test_wine_generation_cursor_rdte.py
+          bash -n scripts/ci/wine-events-generation-handover.sh
+          python3 -m unittest discover \
+            -s tests -p 'test_wine_generation_cursor_rdte.py' -q
+
+  actual-wine:
+    needs: synthetic-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build local-only pinned-source synthetic observer base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-service-live-rdte.Dockerfile \
+            -t winebot-api-owned-observer:rdte .
+      - name: Build disposable cursor experiment overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-generation-handover-rdte.Dockerfile \
+            -t winebot-generation-handover:rdte .
+      - name: Run actual Wine new-session cursor refusal oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 --memory=4g \
+            --pids-limit=256 --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            winebot-generation-handover:rdte
+      - name: Research-only publication scope
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Only synthetic Win32 fixture sessions A and B; no same-session restart.' \
+            'No external listener, credentials, private inputs, screenshots or data uploads.' \
+            'Unmerged RDTE; runtime, security, conformance and release gates unchanged.'
