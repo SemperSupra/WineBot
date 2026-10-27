@@ -1,0 +1,28 @@
+name: WineBot parallel lease and cursor contracts
+on:
+  push:
+    branches:
+      - qualification/parallel-contract-20261027
+permissions:
+  contents: read
+jobs:
+  lease:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_wine_lease_generation_authority_rdte.py' -q
+  cursor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_wine_generation_cursor_rdte.py' -q
