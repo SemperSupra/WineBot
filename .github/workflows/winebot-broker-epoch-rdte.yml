@@ -1,0 +1,23 @@
+name: WineBot broker epoch synthetic qualification
+on:
+  push:
+    branches:
+      - qualification/parallel-contract-20261027
+    paths:
+      - rdte/wine11/epoch_broker_rdte.py
+      - tests/test_wine_epoch_broker_rdte.py
+      - .github/workflows/winebot-broker-epoch-rdte.yml
+permissions:
+  contents: read
+jobs:
+  epoch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          python3 -m compileall -q rdte/wine11/epoch_broker_rdte.py tests/test_wine_epoch_broker_rdte.py
+          python3 -m unittest discover -s tests -p 'test_wine_epoch_broker_rdte.py' -q
