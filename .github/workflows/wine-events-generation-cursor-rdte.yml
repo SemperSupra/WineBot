@@ -1,0 +1,51 @@
+name: WineBot generation-bound cursor synthetic RDTE
+
+on:
+  push:
+    branches:
+      - qualification/wine-events-generation-cursor-20261027
+    paths:
+      - .github/workflows/wine-events-generation-cursor-rdte.yml
+      - rdte/wine11/generation_cursor_rdte.py
+      - rdte/wine11/event_bridge.py
+      - tests/test_wine_generation_cursor_rdte.py
+      - docs/rdte-wine-generation-cursors-20261027.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-events-generation-cursor-rdte
+  cancel-in-progress: true
+
+jobs:
+  synthetic-cursor-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Parse experimental files without execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q \
+            rdte/wine11/generation_cursor_rdte.py \
+            rdte/wine11/event_bridge.py \
+            tests/test_wine_generation_cursor_rdte.py
+      - name: Qualify strictly isolated generation cursor and hostile fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover \
+            -s tests -p 'test_wine_generation_cursor_rdte.py' -q
+      - name: Preserve RDTE scope and zero publication
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'Local-only v1 generation cursor, no production registry or HTTP route.' \
+            'Typed stale-generation, session mismatch, gap, overflow and close checks.' \
+            'Synthetic source and tests only; no binary, CI artifacts, image push or release.'
