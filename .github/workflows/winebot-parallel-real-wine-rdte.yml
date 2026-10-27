@@ -1,0 +1,37 @@
+name: WineBot parallel real Wine handover qualification
+on:
+  push:
+    branches:
+      - qualification/parallel-wine-20261027
+permissions:
+  contents: read
+concurrency:
+  group: winebot-parallel-real-wine
+  cancel-in-progress: true
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_wine_generation_cursor_rdte.py' -q
+          python3 -m unittest discover -s tests -p 'test_wine_lease_generation_authority_rdte.py' -q
+  real-wine:
+    needs: synthetic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          docker build -f docker/wine-events-service-live-rdte.Dockerfile -t winebot-api-owned-observer:rdte .
+          docker build -f docker/wine-events-generation-handover-rdte.Dockerfile -t winebot-generation-handover:rdte .
+          docker run --rm --network=none --cpus=2 --memory=4g --pids-limit=256 --cap-drop=ALL --security-opt=no-new-privileges winebot-generation-handover:rdte
