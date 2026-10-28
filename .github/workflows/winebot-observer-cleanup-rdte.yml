@@ -1,0 +1,16 @@
+name: test_wine_observer_cleanup_oracle_rdte.py
+on:
+  push:
+    branches:
+      - qualification/observer-cleanup-oracle-20261028
+permissions:
+  contents: read
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_observer_cleanup_oracle_rdte.py' -v
