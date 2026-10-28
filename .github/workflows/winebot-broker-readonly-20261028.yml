@@ -26,3 +26,6 @@ jobs:
           PY
       - name: Execute offline admission-gap source oracle
         run: python3 -m unittest discover -s tests -p test_wine_observer_admission_source_rdte.py -v
+
+      - name: Run same-session ABA witness
+        run: python3 -m unittest discover -s tests -p test_wine_observer_aba_witness_rdte.py -v
