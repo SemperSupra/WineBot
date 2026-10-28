@@ -24,3 +24,5 @@ jobs:
           assert "self._broker_session()" in observer
           print("source-seam-present")
           PY
+      - name: Execute offline admission-gap source oracle
+        run: python3 -m unittest discover -s tests -p test_wine_observer_admission_source_rdte.py -v
