@@ -1,0 +1,26 @@
+name: WineBot broker read-only source checks
+on:
+  push:
+    branches:
+      - qualification/observer-broker-contract-20261028
+permissions:
+  contents: read
+jobs:
+  broker-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect source contract without running Wine
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          broker=Path("api/core/broker.py").read_text()
+          observer=Path("api/core/wine_events_service_rdte.py").read_text()
+          assert "model_copy(deep=True)" in broker
+          assert "self._active_session()" in observer
+          assert "self._broker_session()" in observer
+          print("source-seam-present")
+          PY
