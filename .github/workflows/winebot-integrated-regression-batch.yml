@@ -1,0 +1,26 @@
+name: winebot-integrated-regression-batch
+on:
+  push:
+    branches:
+      - qualification/integrated-regression-qualification-batch-20261029
+permissions:
+  contents: read
+jobs:
+  receipt-aware-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_actual_broker_incarnation_rdte.py' -v
+      - run: python3 -m unittest discover -s tests -p 'test_wine_events_source_rdte.py' -v
+      - run: python3 -m unittest discover -s tests -p 'test_wine_events_process_rdte.py' -v
+  registry-read-negative-witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_registry_same_name_read_witness_rdte.py' -v
