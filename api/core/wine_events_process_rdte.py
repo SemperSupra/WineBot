@@ -36,18 +36,23 @@ class OwnedWineEventProcess:
         prefix: str,
         display: str = ":99",
         spawn: Callable = subprocess.Popen,
+        incarnation: str | None = None,
+        validate_incarnation: Callable[[str, str], bool] | None = None,
     ):
         if not isinstance(prefix, str) or not prefix.startswith("/") or not prefix:
             raise ValueError("invalid_prefix")
         if not isinstance(display, str) or not display.startswith(":"):
             raise ValueError("invalid_display")
         self.source = TrustedLocalEventSource(
-            session_id, registry, active_session_id, broker_session_id
+            session_id, registry, active_session_id, broker_session_id,
+            incarnation=incarnation, validate_incarnation=validate_incarnation,
         )
         self._spawn = spawn
         self._active = active_session_id
         self._broker = broker_session_id
         self._session_id = session_id
+        self._incarnation = incarnation
+        self._validate_incarnation = validate_incarnation
         self._prefix = prefix
         self._display = display
         self._started = False
@@ -59,6 +64,9 @@ class OwnedWineEventProcess:
             return (
                 self._active() == self._session_id
                 and self._broker() == self._session_id
+                and self._incarnation is not None
+                and self._validate_incarnation is not None
+                and self._validate_incarnation(self._session_id, self._incarnation)
             )
         except Exception:
             return False
