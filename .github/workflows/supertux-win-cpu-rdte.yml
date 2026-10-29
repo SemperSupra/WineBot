@@ -217,5 +217,56 @@ jobs:
               kill "$child" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Source-backed direct SuperTux level/GameSession launch
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 145s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEPREFIX=/tmp/winebot-supertux-level -e WINEDEBUG=-all \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:supertux-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -iname "supertux*.exe" -print -quit)"
+              level="$(find /game -type f -ipath "*/levels/world1/*.stl" -print | LC_ALL=C sort | head -1)"
+              if [ -z "$exe" ] || [ -z "$level" ]; then
+                echo "UNQUALIFIED: pinned portable game or direct world1 level absent"
+                exit 2
+              fi
+              echo "PASS: packaged world1 level file discovered"
+              cd "$(dirname "$exe")"
+              # Upstream v0.7.0 CommandLineArguments supports [LEVELFILE]
+              # plus --show-pos; Main::launch_game constructs GameSession.
+              wine "$exe" --show-pos "$level" >/tmp/supertux-level-local.log 2>&1 &
+              pid=$!
+              wid=""
+              for i in $(seq 1 80); do
+                wid="$(xdotool search --onlyvisible --name SuperTux 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                if ! kill -0 "$pid" 2>/dev/null; then break; fi
+                sleep 0.4
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: direct-level visible Windows game window"; exit 2
+              fi
+              sleep 5
+              import -window "$wid" /tmp/supertux-level-a.png >/dev/null 2>&1 || {
+                echo "UNQUALIFIED: direct-level scoped image"; exit 2;
+              }
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/supertux-level-a.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: direct-level image statistics"; exit 2
+              fi
+              echo "OBS: direct-level width=$w height=$h colors=$colors"
+              if [ "$w" -lt 200 ] || [ "$h" -lt 120 ] || [ "$colors" -lt 40 ]; then
+                echo "UNQUALIFIED: direct-level visual content"; exit 2
+              fi
+              echo "PASS: source-requested direct-level visible game content"
+              # Native GameSession state/position is not decoded from pixels.
+              kill "$pid" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
       # No raw Wine logs, window IDs, screenshots, gamesaves, or host identity
       # reach published output. All untrusted captures remain ephemeral.
