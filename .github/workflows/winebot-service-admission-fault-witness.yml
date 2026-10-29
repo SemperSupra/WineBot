@@ -1,0 +1,30 @@
+name: winebot-service-admission-fault-witness
+on:
+  push:
+    branches:
+      - qualification/service-authority-failure-witness-20261029
+permissions:
+  contents: read
+jobs:
+  actual-service-fault-witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          python3 -m venv /tmp/winebot-rdte-service-venv
+          /tmp/winebot-rdte-service-venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - run: /tmp/winebot-rdte-service-venv/bin/python -m unittest discover -s tests -p 'test_actual_service_authority_failure_witness_rdte.py' -v
+  corrected-service-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          python3 -m venv /tmp/winebot-rdte-service-venv
+          /tmp/winebot-rdte-service-venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - run: /tmp/winebot-rdte-service-venv/bin/python -m unittest discover -s tests -p 'test_wine_events_service_rdte.py' -v
