@@ -13,7 +13,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s tests -p 'test_wine_events_service_rdte.py' -v
+      - name: Install project-pinned API dependencies in isolated venv
+        run: |
+          python3 -m venv /tmp/winebot-service-rdte-venv
+          /tmp/winebot-service-rdte-venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - run: /tmp/winebot-service-rdte-venv/bin/python -m unittest discover -s tests -p 'test_wine_events_service_rdte.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_actual_broker_incarnation_rdte.py' -v
   source-and-process:
     runs-on: ubuntu-24.04
