@@ -221,6 +221,45 @@ jobs:
                 exit 2
               fi
               echo "PASS: isolated Windows BZFS loopback TCP listener"
+              # Batched differential: official text-only BZAdmin client, same local server.
+              # Probe before the real-game client. No packets, stdout or names uploaded.
+              admin="$(find "$WINEPREFIX/drive_c" -type f -iname bzadmin.exe -print -quit)"
+              if [ -z "$admin" ]; then
+                echo "OBS: official Windows BZAdmin binary=missing"
+              else
+                echo "PASS: official Windows BZAdmin binary present"
+                cd "$(dirname "$admin")"
+                wine "$admin" -ui stdout winebotrdte@127.0.0.1:5154 >/tmp/bzadmin-run-local.log 2>&1 &
+                adminpid=$!
+                admin_link=0
+                for j in $(seq 1 80); do
+                  if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                    admin_link=1
+                    break
+                  fi
+                  if ! kill -0 "$adminpid" 2>/dev/null; then break; fi
+                  sleep 0.2
+                done
+                if [ "$admin_link" -eq 1 ]; then
+                  echo "PASS: BZAdmin Windows protocol-client TCP connected"
+                else
+                  echo "OBS: BZAdmin TCP handshake not observed"
+                fi
+                kill "$adminpid" >/dev/null 2>&1 || true
+                wait "$adminpid" >/dev/null 2>&1 || true
+                # Preserve qualification integrity: do not allow a residual
+                # text client to be mistaken for the later graphical game client.
+                for j in $(seq 1 15); do
+                  if ! awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                    break
+                  fi
+                  sleep 0.2
+                done
+                if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                  echo "UNQUALIFIED: BZAdmin stale socket contaminates game trial"
+                  exit 2
+                fi
+              fi
               # BZFlag client manpage: [callsign@]server[:port] positional join.
               client="$(find "$WINEPREFIX/drive_c" -type f -iname bzflag.exe -print -quit)"
               if [ -z "$client" ]; then
