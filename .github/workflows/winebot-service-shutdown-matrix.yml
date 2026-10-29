@@ -1,0 +1,16 @@
+name: winebot-service-shutdown-matrix
+on:
+  push:
+    branches:
+      - qualification/service-shutdown-batch-20261029
+permissions:
+  contents: read
+jobs:
+  actual-service:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_actual_service_shutdown_batch_rdte.py' -v
