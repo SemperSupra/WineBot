@@ -1,0 +1,9 @@
+# Combined Wine observer regression qualification (test-only, no source promotion)
+
+Base implementation: `qualification/integrated-incarnation-20261029@fdb3b9445f275bea0f181510077660cfe1ef3ca5`. This isolated branch includes only synthetic receipt-aware updates to two legacy test fixtures, one new actual-registry same-name read negative witness, scoped workflows, and test/docs. Existing implementation of broker/source/process/service/registry remains byte-for-byte the base candidate.
+
+**Inputs:** source regression red run `40931510580` (7/10 legacy source failures and 10/13 process failures solely because old fixtures omitted mandatory receipt); separately source fixture PASS `40931861109` (10/10 source + 2/2 broker) and process fixture PASS `40931868335` (13/13); registry witness PASS `40931515061` (3/3). Every run is synthetic only with no artifacts, image publication or Wine execution.
+
+**G2 negative capability:** Same-name `session_changed("s")` does not invalidate the registry's old bridge; a green negative-witness test means vulnerability reproduced, not an atomic-fence pass. `clear_if_owner` object identity correctly retains successor cleanup isolation. This batch does NOT qualify a source-local stop/feed lock, atomic broker+registry mutation/read fence, durable epoch, cross-restart failure policy, real Wine, arbitrary applications, per-actor authorization, or release.
+
+Two parallel public standard CPU jobs: 25 tests comprising broker/source/process current fixtures in one lifecycle batch; three actual-registry negative/positive witness tests in separate job. Do not restart observers automatically, open a network ingress, publish event payloads, attach artifacts, merge, alter protected main, or release. **Next:** owner/security G0 review and a separately authorized G2 atomic-fence implementation, then re-run this unchanged test suite with deterministic revoke-between-check/publish and stale-reader falsifiers.
