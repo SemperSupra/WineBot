@@ -4,7 +4,7 @@ import unittest
 from rdte.wine11.event_bridge import EventBridge
 
 def line(kind,seq):
-    return json.dumps({"schema":"winebot.wine.event.v1","kind":kind,"sequence":seq})+"\\n"
+    return json.dumps({"schema":"winebot.wine.event.v1","kind":kind,"sequence":seq})+"\n"
 
 class EventBridgeAdversarial(unittest.TestCase):
     def test_gap_fails_closed(self):
