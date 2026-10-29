@@ -1,0 +1,16 @@
+name: winebot-source-aba-actual
+on:
+  push:
+    branches:
+      - qualification/source-aba-witness-20261029
+permissions:
+  contents: read
+jobs:
+  actual-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_actual_source_aba_witness_rdte.py' -v
