@@ -7,6 +7,7 @@ synthetic service model. No Wine process, API server, or network.
 import ast
 import pathlib
 import threading
+from collections.abc import Callable
 import unittest
 from unittest.mock import patch
 
@@ -22,7 +23,7 @@ class RegistryProbe:
         self.clear_count+=1
 
 probe=RegistryProbe()
-scope={"threading":threading,"registry":probe,"os":__import__("os"),
+scope={"Callable":Callable,"threading":threading,"registry":probe,"os":__import__("os"),
        "config":type("C",(),{"API_TOKEN":""})(),
        "OwnedWineEventProcess":object}
 exec(compile(module,str(PATH),"exec"),scope)
