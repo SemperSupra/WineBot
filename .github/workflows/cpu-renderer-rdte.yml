@@ -78,6 +78,10 @@ jobs:
             -v "$PWD/tests/fixtures/cpu_gl_smoke.c:/src.c:ro" \
             -v /tmp:/output winebot:rdte-mingw -O2 -o /output/winebot-cpu-gl-smoke.exe \
             /src.c -lopengl32 -lgdi32 -luser32
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/wine_notepad_text_probe.c:/notepad-probe.c:ro" \
+            -v /tmp:/output winebot:rdte-mingw -O2 \
+            -o /output/winebot-notepad-probe.exe /notepad-probe.c -luser32
       - name: Build qualified WineBot candidate and opt-in CPU rendering layer
         run: |
           docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
@@ -208,6 +212,50 @@ jobs:
           done
           # Only validated numeric timings are emitted; no image or log uploaded.
 
+      - name: Wine built-in Notepad source-aware Win32 EDIT text oracle
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 115s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-notepad-native \
+            -v /tmp/winebot-notepad-probe.exe:/probe.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              wine notepad.exe >/tmp/notepad-local.log 2>&1 &
+              pid=$!
+              wid=""
+              for tick in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name Notepad 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.2
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: notepad_native_window"; exit 2
+              fi
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1; then
+                echo "UNQUALIFIED: notepad_native_focus"; exit 2
+              fi
+              if ! xdotool type --clearmodifiers --delay 30 WINEBOTRDTE >/dev/null 2>&1; then
+                echo "UNQUALIFIED: notepad_x11_text_submission"; exit 2
+              fi
+              sleep 1
+              if ! wine /probe.exe >/tmp/notepad-probe-local.log 2>&1; then
+                if grep -Eq "UNQUALIFIED: notepad_native_(top_level|edit_control|gettext_timeout|text_mismatch)" /tmp/notepad-probe-local.log; then
+                  grep -E "UNQUALIFIED: notepad_native_(top_level|edit_control|gettext_timeout|text_mismatch)" /tmp/notepad-probe-local.log | head -1
+                else
+                  echo "UNQUALIFIED: notepad_native_probe_execution"
+                fi
+                exit 2
+              fi
+              if ! grep -Fxq "PASS: Wine Notepad native EDIT text readback after X11 input" /tmp/notepad-probe-local.log; then
+                echo "UNQUALIFIED: notepad_native_text_readback"; exit 2
+              fi
+              echo "PASS: Wine Notepad source-backed native EDIT text after X11 keyboard input"
+              kill "$pid" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+          # Only exact allowlisted outcomes; no editor text or X11 trace uploaded.
       - name: Qualify WineBot API keyboard and framebuffer on CPU
         timeout-minutes: 3
         run: |
