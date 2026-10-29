@@ -235,14 +235,22 @@ jobs:
                 exit 2
               fi
               echo "PASS: packaged world1 level file discovered"
+              # main.cpp WIN32 canonicalizes command-line LEVELFILE as a Windows
+              # filesystem path. Explicitly translate Unix-mount path for Wine.
+              level_win="$(timeout -k 2s 15s winepath -w "$level" 2>/dev/null || true)"
+              if [ -z "$level_win" ]; then
+                echo "UNQUALIFIED: Wine DOS level path conversion"
+                exit 2
+              fi
+              echo "PASS: Wine DOS level path converted"
               cd "$(dirname "$exe")"
               # Upstream v0.7.0 CommandLineArguments supports [LEVELFILE]
               # plus --show-pos; Main::launch_game constructs GameSession.
-              wine "$exe" --show-pos "$level" >/tmp/supertux-level-local.log 2>&1 &
+              wine "$exe" --show-pos "$level_win" >/tmp/supertux-level-local.log 2>&1 &
               pid=$!
               wid=""
               for i in $(seq 1 80); do
-                wid="$(xdotool search --onlyvisible --name SuperTux 2>/dev/null | head -1 || true)"
+                wid="$(timeout -k 1s 3s xdotool search --onlyvisible --name SuperTux 2>/dev/null | head -1 || true)"
                 if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
                 if ! kill -0 "$pid" 2>/dev/null; then break; fi
                 sleep 0.4
