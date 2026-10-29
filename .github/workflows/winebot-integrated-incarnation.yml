@@ -1,0 +1,17 @@
+name: winebot-integrated-incarnation
+on:
+  push:
+    branches:
+      - qualification/integrated-incarnation-20261029
+permissions:
+  contents: read
+jobs:
+  syntax-and-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m py_compile api/core/broker.py api/core/wine_events_source_rdte.py api/core/wine_events_process_rdte.py api/core/wine_events_service_rdte.py
+      - run: python3 -m unittest discover -s tests -p 'test_actual_broker_incarnation_rdte.py' -v
