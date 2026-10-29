@@ -13,7 +13,10 @@ TOKEN = "synthetic-service-token"
 class FakeOwner:
     created = []
 
-    def __init__(self, session, registry, active, broker, *, prefix, display):
+    def __init__(self, session, registry, active, broker, *, prefix, display, incarnation, validate_incarnation):
+        if not validate_incarnation(session, incarnation):
+            raise ValueError("synthetic_fixture_invalid_receipt")
+        self.incarnation = incarnation
         self.session = session
         self.prefix = prefix
         self.display = display
@@ -40,6 +43,11 @@ class ObserverServiceTests(unittest.TestCase):
             lambda: self.active[0],
             lambda: self.broker[0],
             owner_factory=FakeOwner,
+            admit_observer=lambda session: (session, "synthetic-service-incarnation"),
+            validate_incarnation=lambda session, receipt: (
+                session in ("rdte-session", "rdte-next")
+                and receipt == "synthetic-service-incarnation"
+            ),
         )
         self.flags = patch.dict(os.environ, {
             "WINEBOT_WINE_EVENTS_RDTE_ENABLED": "1",
@@ -63,6 +71,7 @@ class ObserverServiceTests(unittest.TestCase):
         self.assertTrue(child.started.wait(2))
         self.assertEqual(child.session, "rdte-session")
         self.assertEqual(child.prefix, "/tmp")
+        self.assertEqual(child.incarnation, "synthetic-service-incarnation")
         self.assertFalse(self.service.start_if_admitted())
         self.assertTrue(self.service.shutdown())
         self.assertTrue(child.stopped.is_set())
