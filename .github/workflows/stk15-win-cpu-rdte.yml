@@ -235,6 +235,86 @@ jobs:
               kill "$child" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Batch explicit packaged-track phase and keyboard visual diagnostic
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 130s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-explicit-track \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: explicit-track x64 binary absent"; exit 2; fi
+              track="$(find /game -type f -ipath "*/data/tracks/lighthouse/track.xml" -print -quit)"
+              if [ -z "$track" ]; then
+                echo "UNQUALIFIED: explicit-track packaged lighthouse asset absent"
+                exit 2
+              fi
+              echo "PASS: source-named lighthouse track packaged"
+              cd "$(dirname "$exe")"
+              wine "$exe" --race-now --use-keyboard=0 --track=lighthouse >/tmp/stk-track-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: explicit-track Windows game window"
+                exit 2
+              fi
+              echo "PASS: explicit-track named Windows window"
+              xdotool windowfocus "$wid" >/dev/null 2>&1 || true
+              sleep 8
+              if ! import -window "$wid" /tmp/track-frame-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track settled first capture"; exit 2
+              fi
+              sleep 5
+              if ! import -window "$wid" /tmp/track-frame-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track settled second capture"; exit 2
+              fi
+              if ! xdotool key --clearmodifiers Escape >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track Escape submission"; exit 2
+              fi
+              sleep 3
+              if ! import -window "$wid" /tmp/track-frame-c.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track post-input capture"; exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/track-frame-b.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: explicit-track image dimensions"; exit 2
+              fi
+              ae() {
+                compare -metric AE "$1" "$2" null: 2>/tmp/track-ae-local.log || true
+                grep -Eo "^[0-9]+" /tmp/track-ae-local.log | head -1 || true
+              }
+              ambient="$(ae /tmp/track-frame-a.png /tmp/track-frame-b.png)"
+              keyresp="$(ae /tmp/track-frame-b.png /tmp/track-frame-c.png)"
+              if [[ ! "$ambient" =~ ^[0-9]{1,9}$ || ! "$keyresp" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: explicit-track AE statistics"; exit 2
+              fi
+              echo "OBS: explicit-track window_width=$w height=$h colors=$colors no_key_delta=$ambient post_key_delta=$keyresp"
+              if grep -Eiq "error|fail|cannot|unable" /tmp/stk-track-local.log; then
+                echo "OBS: explicit-track local game log=generic_error_category"
+              fi
+              if grep -Eiq "track|asset|scene" /tmp/stk-track-local.log; then
+                echo "OBS: explicit-track local game log=track_asset_category"
+              fi
+              if [ "$ambient" -ge 300 ] && [ "$keyresp" -ge 300 ]; then
+                echo "PASS: explicit-track sustained dynamic imagery candidate"
+              else
+                echo "OBS: explicit-track sustained dynamic imagery UNQUALIFIED"
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # Explicit-track fixture is independent and diagnostic; strict causal
+      # keyboard gate below remains unchanged and fail-closed.
       - name: Causal keyboard pause candidate (bounded visual A/B probe)
         timeout-minutes: 3
         run: |
