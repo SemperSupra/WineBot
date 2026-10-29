@@ -17,6 +17,7 @@ from api.utils.files import get_instance_control_mode
 class InputBroker:
     def __init__(self):
         self._lock = threading.RLock()
+        self._observer_incarnation = secrets.token_urlsafe(24)
         self.state = ControlState(
             session_id="unknown",
             interactive=False,
@@ -31,6 +32,22 @@ class InputBroker:
         self.last_agent_activity = 0.0
         self._grant_challenge_token = None
         self._grant_challenge_expiry = 0.0
+
+    def admit_observer(self, session_id: str) -> tuple[str, str] | None:
+        """Issue an internal read-only observer receipt under the broker lock."""
+        with self._lock:
+            if not session_id or self.state.session_id != session_id:
+                return None
+            return (session_id, self._observer_incarnation)
+
+    def validate_observer(self, session_id: str, incarnation: str) -> bool:
+        """Reject receipts from previous sessions, including same-name reuse."""
+        with self._lock:
+            return bool(
+                session_id and incarnation
+                and self.state.session_id == session_id
+                and secrets.compare_digest(self._observer_incarnation, incarnation)
+            )
 
     @property
     def last_activity(self) -> float:
@@ -86,6 +103,7 @@ class InputBroker:
         session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
     ):
         with self._lock:
+            self._observer_incarnation = secrets.token_urlsafe(24)
             self.state.session_id = session_id
             self.state.interactive = interactive
             self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())
