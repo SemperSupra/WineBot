@@ -1,0 +1,33 @@
+name: winebot-actual-service-hung-shutdown
+on:
+  push:
+    branches:
+      - qualification/actual-service-hung-shutdown-20261029
+permissions:
+  contents: read
+concurrency:
+  group: winebot-actual-service-hung-shutdown
+  cancel-in-progress: true
+jobs:
+  service-timeout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned Python API runtime
+        run: |
+          python3 -m venv /tmp/winebot-timeout-venv
+          /tmp/winebot-timeout-venv/bin/pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Batched actual service shutdown negative cases
+        run: |
+          set -euo pipefail
+          for suite in test_wine_actual_service_hung_shutdown_rdte.py test_wine_actual_service_handover_batch_rdte.py test_wine_actual_service_shutdown_gap_rdte.py test_wine_events_service_rdte.py test_wine_events_rdte.py; do
+            /tmp/winebot-timeout-venv/bin/python -m unittest discover -s tests -p "$suite" -v
+          done
+          printf 'PASS: service_timeout_no_foreign_erasure\n'
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' 'Actual service class, deterministic no-spawn worker with explicit timeout.' 'Does not qualify real Wine process-group shutdown or authorize merger.' 'No artifacts, network ingress, release or private runner.'
