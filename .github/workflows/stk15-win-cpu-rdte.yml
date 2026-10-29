@@ -332,7 +332,7 @@ jobs:
                 exit 2
               fi
               cd "$(dirname "$exe")"
-              wine "$exe" --race-now --use-keyboard=0 >/tmp/stk-key-local.log 2>&1 &
+              wine "$exe" --race-now --use-keyboard=0 --track=lighthouse >/tmp/stk-key-local.log 2>&1 &
               child=$!
               wid=""
               for i in $(seq 1 90); do
