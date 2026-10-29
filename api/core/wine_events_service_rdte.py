@@ -22,10 +22,14 @@ class ObserverService:
         active_session: Callable[[], str | None],
         broker_session: Callable[[], str | None],
         owner_factory: Callable = OwnedWineEventProcess,
+        admit_observer: Callable | None = None,
+        validate_incarnation: Callable | None = None,
     ):
         self._active_session = active_session
         self._broker_session = broker_session
         self._owner_factory = owner_factory
+        self._admit_observer = admit_observer
+        self._validate_incarnation = validate_incarnation
         self._lock = threading.RLock()
         self._last_started_session = None
         self._owner = None
@@ -60,6 +64,11 @@ class ObserverService:
             session = self._admitted()
             if not session or session == self._last_started_session:
                 return False
+            if self._admit_observer is None or self._validate_incarnation is None:
+                return False
+            receipt = self._admit_observer(session)
+            if receipt is None or receipt[0] != session:
+                return False
             if self._thread is not None and self._thread.is_alive():
                 return False
             try:
@@ -68,6 +77,8 @@ class ObserverService:
                     self._broker_session,
                     prefix=os.getenv("WINEPREFIX", "/wineprefix"),
                     display=os.getenv("DISPLAY", ":99"),
+                    incarnation=receipt[1],
+                    validate_incarnation=self._validate_incarnation,
                 )
             except (TypeError, ValueError, OSError):
                 return False
@@ -134,4 +145,18 @@ def _broker_session_id() -> str | None:
     return getattr(broker.get_state(), "session_id", None)
 
 
-service = ObserverService(_active_session_id, _broker_session_id)
+def _admit_observer(session_id: str) -> tuple[str, str] | None:
+    from api.core.broker import broker
+    return broker.admit_observer(session_id)
+
+
+def _validate_incarnation(session_id: str, incarnation: str) -> bool:
+    from api.core.broker import broker
+    return broker.validate_observer(session_id, incarnation)
+
+
+service = ObserverService(
+    _active_session_id, _broker_session_id,
+    admit_observer=_admit_observer,
+    validate_incarnation=_validate_incarnation,
+)
