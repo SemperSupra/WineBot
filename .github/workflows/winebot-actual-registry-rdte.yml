@@ -1,0 +1,16 @@
+name: winebot-actual-registry-rdte
+on:
+  push:
+    branches:
+      - qualification/actual-registry-20261029
+permissions:
+  contents: read
+jobs:
+  actual-component:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_registry_actual_rdte.py' -v
