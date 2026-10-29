@@ -1,0 +1,33 @@
+name: winebot-actual-broker-reset-negative
+on:
+  push:
+    branches:
+      - qualification/actual-broker-restart-negative-20261029
+permissions:
+  contents: read
+concurrency:
+  group: winebot-actual-broker-reset-negative
+  cancel-in-progress: true
+jobs:
+  broker-reset:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned Python API runtime
+        run: |
+          python3 -m venv /tmp/winebot-reset-venv
+          /tmp/winebot-reset-venv/bin/pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Batched actual broker restart weakness and green ancestor tests
+        run: |
+          set -euo pipefail
+          for suite in test_wine_actual_broker_restart_negative_rdte.py test_wine_actual_broker_incarnation_batch_rdte.py test_wine_broker_contract_gap_rdte.py; do
+            /tmp/winebot-reset-venv/bin/python -m unittest discover -s tests -p "$suite" -v
+          done
+          printf 'PASS: broker_reset_weakness_witness_only\n'
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' 'In-memory counter is NOT cross-process durable or admissive.' 'No source secrets, Wine spawn, artifacts, deployment, merge or release.'

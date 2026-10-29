@@ -1,0 +1,5 @@
+# Actual broker incarnation reset witness — 2026-10-29
+
+Independent WineBot DLE #1 branch from `qualification/actual-broker-incarnation-batch-20261029@d9af77995a0cfabd83fb8383a32065f9afe84e6a`. No core code change. The previously qualified broker pair is *process-local, non-admitting*. Exact counter values may repeat across a broker recreation and may move backward if a different process reuses a name. This batch imports the **actual** InputBroker to demonstrate the known limitation and re-runs ancestor tests in one public, read-only workflow.
+
+Positive PASS of reset/reuse witnesses is a **negative product capability finding**. No claim about real process crash, filesystem durability, WinBot private #109, cross-process lease, resource fencing, general actor admission or restarted Wine. A proper resource-side record must include unforgeable incarnation + durable monotone epoch and be checked at each mutation boundary; owner review and source custody G0 required. Do not attempt merge or enable same-session automatic restart. Source/security #515 and release gates remain.
