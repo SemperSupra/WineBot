@@ -315,6 +315,74 @@ jobs:
             '
       # Explicit-track fixture is independent and diagnostic; strict causal
       # keyboard gate below remains unchanged and fail-closed.
+      - name: Counterbalanced ABBA source-aware Escape versus no-key trials
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 185s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: ABBA game binary"; exit 2; fi
+              cd "$(dirname "$exe")"
+              ctrl_first=0; ctrl_second=0; act_first=0; act_second=0
+              for trial in 1 2 3 4; do
+                case "$trial" in 1|4) mode=control;; 2|3) mode=escape;; esac
+                export WINEPREFIX="/tmp/stk-abba-trial-$trial"
+                wine "$exe" --race-now --use-keyboard=0 --track=lighthouse \
+                  >/tmp/stk-abba-local.log 2>&1 &
+                pid=$!
+                wid=""
+                for tick in $(seq 1 70); do
+                  wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                  if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                  if ! kill -0 "$pid" 2>/dev/null; then break; fi
+                  sleep 0.3
+                done
+                if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  echo "UNQUALIFIED: ABBA trial named window"; exit 2
+                fi
+                xdotool windowfocus "$wid" >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA trial focus"; exit 2;
+                }
+                sleep 5
+                import -window "$wid" /tmp/abba-before.png >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA baseline frame"; exit 2;
+                }
+                if [ "$mode" = escape ]; then
+                  xdotool key --clearmodifiers Escape >/dev/null 2>&1 || {
+                    echo "UNQUALIFIED: ABBA Escape submission"; exit 2;
+                  }
+                fi
+                sleep 4
+                import -window "$wid" /tmp/abba-after.png >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA outcome frame"; exit 2;
+                }
+                compare -metric AE /tmp/abba-before.png /tmp/abba-after.png null: 2>/tmp/abba-ae-local.log || true
+                changed="$(grep -Eo "^[0-9]+" /tmp/abba-ae-local.log | head -1 || true)"
+                if [[ ! "$changed" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: ABBA numeric response"; exit 2
+                fi
+                echo "OBS: ABBA trial=$trial condition=$mode changed_pixels=$changed"
+                case "$trial" in
+                  1) ctrl_first="$changed";; 2) act_first="$changed";;
+                  3) act_second="$changed";; 4) ctrl_second="$changed";;
+                esac
+                kill "$pid" >/dev/null 2>&1 || true
+                wineserver -k >/dev/null 2>&1 || true
+              done
+              if [ "$act_first" -ge 30000 ] && [ "$act_second" -ge 30000 ] &&
+                 [ "$act_first" -ge "$((3*(ctrl_first+1)))" ] &&
+                 [ "$act_second" -ge "$((3*(ctrl_second+1)))" ]; then
+                echo "OBS: ABBA repeated input-correlated contrast candidate"
+              else
+                echo "OBS: ABBA input-correlated contrast UNQUALIFIED"
+              fi
+              # Native StateManager GAME/menu or World phase remains unknown.
+            '
       - name: Causal keyboard pause candidate (bounded visual A/B probe)
         timeout-minutes: 3
         run: |
