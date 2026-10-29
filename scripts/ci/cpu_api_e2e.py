@@ -238,6 +238,28 @@ def main():
         if code != 423:
             raise Unqualified("human_only_policy_not_enforced")
         verdict("PASS: human-only policy denied authenticated key")
+
+        # Batch the same boundary across a second mutating endpoint and an
+        # alternative input backend. A genuine 423 must precede any device
+        # execution; no keyboard/mouse actions should be sent by these probes.
+        mouse = {"x": 10, "y": 10, "button": 1}
+        code, _ = request(
+            "POST", "/input/mouse/click", mouse, authorized=False,
+        )
+        if code != 401:
+            raise Unqualified("human_only_unauthenticated_mouse_not_rejected")
+        verdict("PASS: human-only unauthenticated mouse denied")
+        code, _ = request("POST", "/input/mouse/click", mouse)
+        if code != 423:
+            raise Unqualified("human_only_mouse_policy_not_enforced")
+        verdict("PASS: human-only mouse policy denied authenticated click")
+
+        code, _ = request(
+            "POST", "/input/key", {"keys": "Down", "backend": "ahk"},
+        )
+        if code != 423:
+            raise Unqualified("human_only_ahk_policy_not_enforced")
+        verdict("PASS: human-only alternate AHK key backend denied")
         return 0
     except Unqualified as exc:
         verdict("UNQUALIFIED: " + str(exc))
