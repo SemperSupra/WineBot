@@ -60,8 +60,15 @@ class ActualBrokerSnapshotTests(unittest.TestCase):
             finally:
                 done.set()
         def reader():
-            while not done.is_set():
+            # Bounded collection/yield prevents tight-loop test contention
+            # from starving the writer or consuming ephemeral-runner RAM.
+            import time
+            for iteration in range(4096):
                 observed.append(broker.get_observer_session_snapshot())
+                if done.is_set():
+                    break
+                if iteration % 64 == 0:
+                    time.sleep(0)
             observed.append(broker.get_observer_session_snapshot())
         t1 = threading.Thread(target=writer)
         readers = [threading.Thread(target=reader) for _ in range(3)]
