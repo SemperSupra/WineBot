@@ -19,6 +19,7 @@ class LocalSourceTests(unittest.TestCase):
         self.registry = SessionObserverRegistry()
         self.active = ["session-one"]
         self.broker = ["session-one"]
+        self.incarnation = ["synthetic-source-receipt"]
         self.src = self.source("session-one")
 
     def tearDown(self):
@@ -30,6 +31,8 @@ class LocalSourceTests(unittest.TestCase):
             session_id, self.registry,
             lambda: self.active[0],
             lambda: self.broker[0],
+            incarnation=self.incarnation[0],
+            validate_incarnation=lambda session, receipt: receipt == self.incarnation[0],
         )
 
     def ready(self):
