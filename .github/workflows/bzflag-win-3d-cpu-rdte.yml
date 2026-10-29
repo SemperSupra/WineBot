@@ -267,7 +267,9 @@ jobs:
                 exit 2
               fi
               cd "$(dirname "$client")"
-              wine "$client" -window 800x600 -mute -nomotd -nolist \
+              # Official upstream bzflag.cxx parses -debug (debugLevel++).
+              # Source-backed phase classifier stays entirely local.
+              wine "$client" -debug -window 800x600 -mute -nomotd -nolist \
                 winebotrdte@127.0.0.1:5154 >/tmp/bzflag-join-local.log 2>&1 &
               gamepid=$!
               connected=0
@@ -307,6 +309,20 @@ jobs:
                 fi
                 if grep -Eiq "fatal|error|fail|unable|cannot" /tmp/bzflag-join-local.log; then
                   echo "OBS: BZFlag local log class=error_keyword"
+                fi
+                # Source phases: autoConnect -> joinRequested -> DNS ->
+                # ServerLink TCP; only allowlisted local code-derived strings.
+                if grep -Eiq "Trying Automatic Connection|Entering game" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source auto-connect phase keyword observed"
+                fi
+                if grep -Eiq "Server not found|Unable to resolve|hostname" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source DNS failure keyword observed"
+                fi
+                if grep -Eiq "Error connecting to server|Connection refused|SocketError" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source TCP failure keyword observed"
+                fi
+                if grep -Eiq "OpenGL|renderer|GLX" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local graphics phase keyword observed"
                 fi
                 echo "UNQUALIFIED: local Windows client TCP handshake not observed"
                 exit 2
