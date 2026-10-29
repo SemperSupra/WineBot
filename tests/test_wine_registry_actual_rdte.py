@@ -16,5 +16,23 @@ class RegistryOwnership(unittest.TestCase):
         r.attach_internal("old",EventBridge())
         r.session_changed("new")
         self.assertEqual(r.observe("old")["state"],"unavailable")
+    def test_old_bridge_cleanup_under_concurrent_replacement(self):
+        import threading
+        r=SessionObserverRegistry()
+        old,new=EventBridge(),EventBridge()
+        r.attach_internal("same",old)
+        barrier=threading.Barrier(2)
+        verdict=[]
+        def stale():
+            barrier.wait()
+            verdict.append(r.clear_if_owner("same",old))
+        worker=threading.Thread(target=stale)
+        worker.start()
+        r.attach_internal("same",new)
+        barrier.wait()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(verdict,[False])
+        self.assertTrue(r.clear_if_owner("same",new))
 if __name__=="__main__":
     unittest.main()
