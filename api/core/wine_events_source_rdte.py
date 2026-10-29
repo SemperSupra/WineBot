@@ -8,6 +8,7 @@ logged, recorded to disk, or uploaded.
 """
 from collections.abc import Callable
 import json
+import threading
 
 from api.core.wine_events_rdte import SessionObserverRegistry
 from rdte.wine11.event_bridge import EventBridge
@@ -23,9 +24,17 @@ class TrustedLocalEventSource:
         registry: SessionObserverRegistry,
         active_session_id: Callable[[], str | None],
         broker_session_id: Callable[[], str | None],
+        *,
+        incarnation: str | None = None,
+        validate_incarnation: Callable[[str, str], bool] | None = None,
     ):
         if not isinstance(session_id, str) or not session_id or "/" in session_id or "\\" in session_id:
             raise ValueError("invalid_session")
+        if (incarnation is None) != (validate_incarnation is None):
+            raise ValueError("incomplete_observer_authority")
+        self._incarnation = incarnation
+        self._validate_incarnation = validate_incarnation
+        self._lock = threading.RLock()
         self._session_id = session_id
         self._registry = registry
         self._active_session_id = active_session_id
@@ -42,6 +51,9 @@ class TrustedLocalEventSource:
             return (
                 self._active_session_id() == self._session_id
                 and self._broker_session_id() == self._session_id
+                and self._incarnation is not None
+                and self._validate_incarnation is not None
+                and self._validate_incarnation(self._session_id, self._incarnation)
             )
         except Exception:
             return False
