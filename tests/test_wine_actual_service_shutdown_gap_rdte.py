@@ -34,12 +34,8 @@ class ActualServiceCleanup(unittest.TestCase):
         probe.clear_count=0
     def test_shutdown_without_owner_does_not_clear_foreign_stream(self):
         service=ObserverService(lambda:"s",lambda:"s")
-        # Expected-failure characterization of the currently unsafe path:
-        # shutdown unconditionally clears the process-global registry.
-        with self.assertRaises(AssertionError):
-            service.shutdown()
-            self.assertEqual(probe.clear_count,0)
-        self.assertEqual(probe.clear_count,1)
+        self.assertTrue(service.shutdown())
+        self.assertEqual(probe.clear_count,0)
 
 if __name__=="__main__":
     unittest.main()
