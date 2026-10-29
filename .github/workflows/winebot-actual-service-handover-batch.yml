@@ -1,0 +1,33 @@
+name: winebot-actual-service-handover-batch
+on:
+  push:
+    branches:
+      - qualification/actual-service-handover-batch-20261029
+permissions:
+  contents: read
+concurrency:
+  group: winebot-actual-service-handover-batch
+  cancel-in-progress: true
+jobs:
+  actual-service:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned API Python dependencies
+        run: |
+          python3 -m venv /tmp/winebot-handover-env
+          /tmp/winebot-handover-env/bin/pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Actual classes and existing regressions, no Wine spawn
+        run: |
+          set -euo pipefail
+          for suite in test_wine_actual_service_handover_batch_rdte.py test_wine_actual_service_shutdown_gap_rdte.py test_wine_events_service_rdte.py test_wine_events_rdte.py test_wine_events_source_rdte.py; do
+            /tmp/winebot-handover-env/bin/python -m unittest discover -s tests -p "$suite" -v
+          done
+          printf 'PASS: actual_service_scoped_handover_batch\n'
+      - name: Nonpublishing limits
+        if: always()
+        run: |
+          printf '%s\n' 'Tests use actual service/registry/event bridge with a synthetic owner, no Wine spawn.' 'No artifacts, network listener, image push, production admission, merge or release.'
