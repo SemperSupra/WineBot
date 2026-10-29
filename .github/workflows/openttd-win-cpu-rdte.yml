@@ -234,5 +234,66 @@ jobs:
               kill "$proc" >/dev/null 2>&1 || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Source-backed deterministic Win32 OpenTTD new-world smoke
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 160s docker run --rm --init --network none \
+            --user 1000:1000 --cpus=2 --memory=3g --pids-limit=256 \
+            --tmpfs /tmp:rw,exec,nosuid,size=512m,mode=1777 \
+            -e HOME=/home/winebot -e WINEDEBUG=-all \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:openttd-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              export WINEPREFIX="$HOME/.winebot-newworld-fixture"
+              if ! timeout -k 5s 65s wineboot -u >/tmp/openttd-prefix-local.log 2>&1; then
+                echo "UNQUALIFIED: deterministic world HOME Wine prefix"
+                exit 2
+              fi
+              exe="$(find /game -type f -iname openttd.exe -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: pinned game executable absent"; exit 2; fi
+              cd "$(dirname "$exe")"
+              # OpenTTD 15.3 src/openttd.cpp ShowHelp:
+              # -g creates a game and -G supplies its PRNG seed.
+              wine "$exe" -v win32 -m null -s null -g -G 61731 \
+                >/tmp/openttd-world-local.log 2>&1 &
+              proc=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                if ! kill -0 "$proc" 2>/dev/null; then
+                  echo "UNQUALIFIED: deterministic world process exited"
+                  exit 2
+                fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: deterministic world window absent"
+                exit 2
+              fi
+              sleep 5
+              if ! import -window "$wid" /tmp/openttd-world-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: deterministic world scoped frame"
+                exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/openttd-world-a.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: deterministic world frame stats"
+                exit 2
+              fi
+              echo "OBS: seeded-game window_width=$w height=$h colors=$colors"
+              if [ "$w" -lt 250 ] || [ "$h" -lt 180 ] || [ "$colors" -lt 70 ]; then
+                echo "UNQUALIFIED: seeded-game nonblank frame"
+                exit 2
+              fi
+              echo "PASS: documented seeded new-game startup and Win32 visible pixels"
+              kill "$proc" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # This checks requested game initialization, not an independently
+      # decoded map, town, train, or in-world control.
       # No screenshots, raw Wine logs, VNC listeners, game saves, secrets,
       # machine identifiers, or artifacts uploaded by this RDTE.
