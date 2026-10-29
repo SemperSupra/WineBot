@@ -1,0 +1,24 @@
+name: winebot-source-receipt-regression
+on:
+  push:
+    branches:
+      - qualification/source-receipt-regression-20261029
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_events_source_rdte.py' -v
+  broker-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_actual_broker_incarnation_rdte.py' -v
