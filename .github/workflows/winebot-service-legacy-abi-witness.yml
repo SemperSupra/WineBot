@@ -1,0 +1,16 @@
+name: winebot-service-legacy-abi-witness
+on:
+  push:
+    branches:
+      - qualification/service-legacy-abi-witness-20261029
+permissions:
+  contents: read
+jobs:
+  legacy-service:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_events_service_rdte.py' -v
