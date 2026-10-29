@@ -1,0 +1,32 @@
+name: winebot-actual-broker-incarnation-batch
+on:
+  push:
+    branches:
+      - qualification/actual-broker-incarnation-batch-20261029
+permissions:
+  contents: read
+concurrency:
+  group: winebot-actual-broker-incarnation-batch
+  cancel-in-progress: true
+jobs:
+  actual-broker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned API Python dependencies
+        run: |
+          python3 -m venv /tmp/winebot-broker-env
+          /tmp/winebot-broker-env/bin/pip install --quiet --disable-pip-version-check -r requirements/requirements-rel.txt
+      - name: Actual InputBroker synchronized incarnation snapshot
+        run: |
+          set -euo pipefail
+          /tmp/winebot-broker-env/bin/python -m unittest discover -s tests -p test_wine_actual_broker_incarnation_batch_rdte.py -v
+          /tmp/winebot-broker-env/bin/python -m unittest discover -s tests -p test_wine_broker_contract_gap_rdte.py -v
+          printf 'PASS: actual_broker_incarnation_batch\n'
+      - name: Scope
+        if: always()
+        run: |
+          printf '%s\n' 'Process-local read-only candidate, NOT a durable epoch/admission token.' 'No resource mutation authorization, Wine spawn, secrets, artifacts, merge or release.'

@@ -27,6 +27,10 @@ class InputBroker:
             session_control_mode=ControlPolicyMode.HYBRID,
             effective_control_mode=ControlPolicyMode.HYBRID,
         )
+        # Process-local session incarnation, NON-ADMITTING. A new update
+        # increments even when a session string is reused (ABA witness).
+        # This is not persisted and does not fence any resource mutation.
+        self._observer_incarnation = 0
         self.last_user_activity = 0.0
         self.last_agent_activity = 0.0
         self._grant_challenge_token = None
@@ -86,6 +90,9 @@ class InputBroker:
         session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
     ):
         with self._lock:
+            # The observer snapshot and session mutation share one RLock;
+            # no mixed (new session, old incarnation) pair can be read.
+            self._observer_incarnation += 1
             self.state.session_id = session_id
             self.state.interactive = interactive
             self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())
@@ -195,6 +202,16 @@ class InputBroker:
                 self.revoke_agent("user_stop_now")
                 return False
             return True
+
+    def get_observer_session_snapshot(self) -> tuple[str, int]:
+        """Return a coherent process-local *observation* pair, NOT a grant.
+
+        This in-memory epoch is not durable across a broker restart or
+        database rollback; it does not authorize launch, feed, kill or cleanup.
+        Separate owner/resource-side fencing is mandatory before integration.
+        """
+        with self._lock:
+            return self.state.session_id, self._observer_incarnation
 
     def get_state(self) -> ControlState:
         # Return a detached snapshot so callers cannot mutate shared broker state.
