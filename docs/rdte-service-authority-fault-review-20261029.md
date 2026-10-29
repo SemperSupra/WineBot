@@ -1,0 +1,9 @@
+# Actual ObserverService internal receipt fault boundary — independent red-team witness
+
+Parent: source-unchanged receipt-aware test branch `71f765bebc01cd316ca1873c03285b69524803be`, native CI `40939323874` success 36/36. This workcell adds only a new synthetic test, documentation and scoped public CI workflow. Do not change or promote production observer code.
+
+**Threat/failure model:** `ObserverService._admitted()` checks flags, token, prefix and session, but `_admit_observer(session)` executes outside its try/except and trusts tuple shape. An internal callback may raise or return an incomplete receipt. The service's `start_if_admitted` can then raise rather than return false, potentially aborting its caller. These tests use actual `ObserverService` with a deterministic synthetic local callback and patched `_admitted`, NEVER spawn a real process. They are not public input validation, a credential exposure, privilege bypass, or evidence of an actual production exception.
+
+**Four cases:** `None` -> correctly returns false; callback RuntimeError -> currently escapes (NEGATIVE WITNESS); empty tuple -> currently IndexError (NEGATIVE WITNESS); missing incarnation -> currently IndexError (NEGATIVE WITNESS). An expected exception assertion passing is evidence of an unhandled internal fault, **not** an accepted outcome.
+
+Run existing 8 corrected service + 2 broker control tests alongside four new witnesses in independent $0 public CPU CI jobs with project-pinned Python dependencies, no images, uploads, raw event telemetry, private inputs or new ingress. Never weaken fail-closed no-receipt policy. An owner-reviewed future bounded correction should catch and classify callback/receipt-shape failures, preserve no-spawn and exact ownership semantics, and independently requalify before G2. Security #515/G0, source custody, no auto-restart, merge, release and durable epoch gates remain open.
