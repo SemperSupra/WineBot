@@ -1,0 +1,16 @@
+name: winebot-actual-service-shutdown-gap
+on:
+  push:
+    branches:
+      - qualification/actual-observer-service-20261029
+permissions:
+  contents: read
+jobs:
+  service-gap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_wine_actual_service_shutdown_gap_rdte.py' -v
