@@ -269,7 +269,7 @@ jobs:
               cd "$(dirname "$client")"
               # Official upstream bzflag.cxx parses -debug (debugLevel++).
               # Source-backed phase classifier stays entirely local.
-              wine "$client" -debug -window 800x600 -mute -nomotd -nolist \
+              wine "$client" -debug -debug -window 800x600 -mute -nomotd -nolist \
                 winebotrdte@127.0.0.1:5154 >/tmp/bzflag-join-local.log 2>&1 &
               gamepid=$!
               connected=0
@@ -314,6 +314,12 @@ jobs:
                 # ServerLink TCP; only allowlisted local code-derived strings.
                 if grep -Eiq "Trying Automatic Connection|Entering game" /tmp/bzflag-join-local.log; then
                   echo "OBS: BZFlag source auto-connect phase keyword observed"
+                fi
+                # Upstream src/net/AresHandler.cxx initializes c-ares
+                # before its numeric IPv4 inet_aton fast path; both
+                # initialization diagnostics log only at level 2.
+                if grep -Eiq "Ares failed initializing library|Ares Failed initializing" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag c-ares initialization failure"
                 fi
                 if grep -Eiq "Server not found|Unable to resolve|hostname" /tmp/bzflag-join-local.log; then
                   echo "OBS: BZFlag source DNS failure keyword observed"
