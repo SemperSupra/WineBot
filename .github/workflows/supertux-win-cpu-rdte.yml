@@ -143,5 +143,79 @@ jobs:
               kill "$child" 2>/dev/null || true
               wineserver -k >/dev/null 2>&1 || true
             '
+      - name: Source-backed SDL menu Down and Return diagnostic
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 145s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEPREFIX=/tmp/winebot-supertux-menu-fixture -e WINEDEBUG=-all \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/win-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:supertux-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -iname "supertux*.exe" -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: menu Windows executable absent"; exit 2; fi
+              cd "$(dirname "$exe")"
+              wine "$exe" >/tmp/supertux-menu-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name SuperTux 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: SDL menu visible Windows game window"; exit 2
+              fi
+              sleep 4
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1; then
+                echo "UNQUALIFIED: SDL menu window focus"; exit 2
+              fi
+              if [ "$(xdotool getwindowfocus 2>/dev/null || true)" != "$wid" ]; then
+                echo "UNQUALIFIED: SDL menu focus identity"; exit 2
+              fi
+              # v0.7.0 src/control/keyboard_manager.cpp:
+              # SDLK_DOWN maps to Control::DOWN in menus; SDLK_RETURN
+              # maps to Control::MENU_SELECT, not an in-game movement control.
+              if ! import -window "$wid" /tmp/menu-before.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: SDL menu baseline frame"; exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/menu-idle.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: SDL menu idle frame"; exit 2
+              fi
+              xdotool key --clearmodifiers Down >/dev/null 2>&1 || {
+                echo "UNQUALIFIED: SDL menu Down submission"; exit 2;
+              }
+              sleep 2
+              if ! import -window "$wid" /tmp/menu-down.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: SDL menu Down frame"; exit 2
+              fi
+              xdotool key --clearmodifiers Return >/dev/null 2>&1 || {
+                echo "UNQUALIFIED: SDL menu Return submission"; exit 2;
+              }
+              sleep 3
+              if ! import -window "$wid" /tmp/menu-return.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: SDL menu Return frame"; exit 2
+              fi
+              ae() {
+                compare -metric AE "$1" "$2" null: 2>/tmp/menu-ae-local.log || true
+                grep -Eo "^[0-9]+" /tmp/menu-ae-local.log | head -1 || true
+              }
+              idle="$(ae /tmp/menu-before.png /tmp/menu-idle.png)"
+              down="$(ae /tmp/menu-idle.png /tmp/menu-down.png)"
+              enter="$(ae /tmp/menu-down.png /tmp/menu-return.png)"
+              for val in "$idle" "$down" "$enter"; do
+                if [[ ! "$val" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: SDL menu numeric observations"; exit 2
+                fi
+              done
+              echo "OBS: SDL menu idle_delta=$idle down_delta=$down return_delta=$enter"
+              echo "PASS: source-backed SDL menu input event submission with bounded observations"
+              # No claim of selected menu index or entered world.
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
       # No raw Wine logs, window IDs, screenshots, gamesaves, or host identity
       # reach published output. All untrusted captures remain ephemeral.
