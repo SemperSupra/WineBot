@@ -248,7 +248,7 @@ jobs:
                 fi
                 exit 2
               fi
-              if ! grep -Fxq "PASS: Wine Notepad native EDIT text readback after X11 input" /tmp/notepad-probe-local.log; then
+              if ! tr -d "\r" </tmp/notepad-probe-local.log | grep -Fxq "PASS: Wine Notepad native EDIT text readback after X11 input"; then
                 echo "UNQUALIFIED: notepad_native_text_readback"; exit 2
               fi
               echo "PASS: Wine Notepad source-backed native EDIT text after X11 keyboard input"
