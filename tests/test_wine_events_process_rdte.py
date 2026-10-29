@@ -80,6 +80,10 @@ class OwnedProcessTests(unittest.TestCase):
             lambda: self.broker[0],
             prefix="/tmp/synthetic-prefix",
             spawn=spawn,
+            incarnation="synthetic-process-receipt",
+            validate_incarnation=lambda session, receipt: (
+                session == SESSION and receipt == "synthetic-process-receipt"
+            ),
             **kwargs,
         )
 
