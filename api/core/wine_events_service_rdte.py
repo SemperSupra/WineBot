@@ -117,11 +117,10 @@ class ObserverService:
             owner.request_stop()
         if thread is not None:
             thread.join(timeout=4.0)
-        # Erase the per-session stream even if a broken child missed grace.
-        # Return false to preserve the cleanup failure for the outer owner.
-        complete = thread is None or not thread.is_alive()
-        registry.clear()
-        return complete
+        # The source owns bridge-scoped cleanup via clear_if_owner().
+        # Never clear the process-global registry: a successor may own it.
+        # An unresponsive worker is reported as incomplete, not force-cleared.
+        return thread is None or not thread.is_alive()
 
 
 def _active_session_id() -> str | None:
