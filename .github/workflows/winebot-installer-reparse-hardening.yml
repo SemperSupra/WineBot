@@ -1,0 +1,32 @@
+name: winebot-installer-reparse-hardening
+on:
+  push:
+    branches:
+      - qualification/portable-installer-hardening-20261031
+permissions:
+  contents: read
+jobs:
+  reparse-negative:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Reject symlinked package, destination and owned uninstall target
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'wb-reparse-rdte'
+          $real = Join-Path $base 'real'
+          $link = Join-Path $base 'linked'
+          New-Item -ItemType Directory -Path $real -Force | Out-Null
+          New-Item -ItemType SymbolicLink -Path $link -Target $real -ErrorAction Stop | Out-Null
+          $installer = './scripts/rdte/install-portable-toolkit.ps1'
+          $refused = $false
+          try { & $installer -Operation Install -PackageDir $link -InstallRoot (Join-Path $base 'safe') -Version 'rdte-v0' } catch { if ($_.Exception.Message -match 'reparse_path_refused') { $refused = $true } else { throw } }
+          if (-not $refused) { throw 'package_reparse_not_refused' }
+          $refused = $false
+          try { & $installer -Operation Uninstall -PackageDir $real -InstallRoot $link -Version 'rdte-v0' } catch { if ($_.Exception.Message -match 'reparse_path_refused') { $refused = $true } else { throw } }
+          if (-not $refused) { throw 'destination_reparse_not_refused' }
+          Write-Output 'PASS: symlink package and destination rejected'
