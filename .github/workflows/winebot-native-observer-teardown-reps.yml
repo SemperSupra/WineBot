@@ -1,0 +1,49 @@
+name: winebot-native-observer-teardown-reps
+
+# Repeated synthetic native Windows observer start/stop. No injection or production code.
+on:
+  push:
+    branches:
+      - qualification/native-win32-observer-teardown-reps-20261031
+    paths:
+      - .github/workflows/winebot-native-observer-teardown-reps.yml
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-start-stop:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, Win32]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build existing WinEvent C observer and fixture
+        shell: pwsh
+        run: |
+          cmake -S tests/portable_win32_native_rdte -B rdte-native-build -G "Visual Studio 17 2022" -A "${{ matrix.arch }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build rdte-native-build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Repeated independent synthetic start, event, private-Q stop
+        shell: pwsh
+        run: |
+          for ($rep = 1; $rep -le 12; $rep++) {
+            python tests/portable_win32_native_rdte/probe.py rdte-native-build/Release/win_event_observer.exe rdte-native-build/Release/win_event_fixture.exe
+            if ($LASTEXITCODE -ne 0) {
+              Write-Output "FAIL: native repeated observer rep $rep of 12"
+              exit $LASTEXITCODE
+            }
+          }
+          Write-Output "PASS: native repeated observer 12 of 12 fixture startups and stops"
+      - name: Disposition
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "Synthetic start-stop stress only, no 192-event overflow or simultaneous observer owners."
+          Write-Output "No raw events, screenshots, uploaded binaries, private runner or release."
