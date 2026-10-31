@@ -1,0 +1,50 @@
+name: winebot-portable-user-install-rdte
+on:
+  push:
+    branches:
+      - qualification/portable-toolkit-user-install-20261031
+permissions:
+  contents: read
+jobs:
+  user-install:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Synthetic no-admin install/uninstall and negative cases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $env:RUNNER_TEMP 'wb-package'
+          $root = Join-Path $env:RUNNER_TEMP 'wb-user-install'
+          New-Item -ItemType Directory -Path (Join-Path $pkg 'bin') -Force | Out-Null
+          $files = @{}
+          foreach ($name in @('bin/win_event_observer.exe','bin/win_event_fixture.exe')) {
+            $p = Join-Path $pkg $name
+            [IO.File]::WriteAllBytes($p,[byte[]](1,2,3,4,5))
+            $files[$name] = (Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          @{schema='winebot.toolkit.package.v0';target='win-x64';status='synthetic-rdte-only';files=$files} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $pkg 'manifest.json')
+          $script = './scripts/rdte/install-portable-toolkit.ps1'
+          & $script -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'rdte-v0'
+          if (-not (Test-Path (Join-Path $root 'rdte-v0/bin/win_event_observer.exe'))) { throw 'install_missing' }
+          $refused = $false
+          try { & $script -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'rdte-v0' } catch { $refused = $true }
+          if (-not $refused) { throw 'overwrite_not_rejected' }
+          $refused = $false
+          try { & $script -Operation Install -PackageDir $pkg -InstallRoot $root -Version '..' } catch { $refused = $true }
+          if (-not $refused) { throw 'traversal_not_rejected' }
+          & $script -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'rdte-v0'
+          if (Test-Path (Join-Path $root 'rdte-v0')) { throw 'uninstall_incomplete' }
+          $files['bin/win_event_observer.exe'] = '0'*64
+          @{schema='winebot.toolkit.package.v0';target='win-x64';status='synthetic-rdte-only';files=$files} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $pkg 'manifest.json')
+          $refused = $false
+          try { & $script -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'rdte-v1' } catch { $refused = $true }
+          if (-not $refused) { throw 'hash_mismatch_not_rejected' }
+          if (Test-Path (Join-Path $root 'rdte-v1')) { throw 'failed_install_left_target' }
+          Write-Output 'PASS: synthetic user install, uninstall, overwrite/traversal/hash negative tests'
+      - name: Custody
+        if: always()
+        run: echo 'No binaries, packages or artifacts uploaded; synthetic bytes only.'
