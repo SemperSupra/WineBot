@@ -1,0 +1,59 @@
+name: winebot-portable-toolkit-package-rdte
+on:
+  push:
+    branches:
+      - qualification/portable-toolkit-packaging-20261031
+permissions:
+  contents: read
+jobs:
+  package-structure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile synthetic Win32 observer and fixture x64/x86
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+          for arch in x86_64 i686; do
+            mkdir -p "dist/$arch/bin"
+            "${arch}-w64-mingw32-gcc" -std=c11 -O2 -Wall -Wextra -Werror -o "dist/$arch/bin/win_event_observer.exe" rdte/wine11/win_event_observer.c -luser32
+            "${arch}-w64-mingw32-gcc" -std=c11 -O2 -Wall -Wextra -Werror -o "dist/$arch/bin/win_event_fixture.exe" rdte/wine11/win_event_fixture.c -luser32
+          done
+      - name: Validate minimal package manifest and content without publishing binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,subprocess,zipfile
+          root=pathlib.Path('dist')
+          for arch,machine in [('x86_64',0x8664),('i686',0x14c)]:
+              folder=root/arch
+              names=['bin/win_event_observer.exe','bin/win_event_fixture.exe']
+              hashes={}
+              for name in names:
+                  b=(folder/name).read_bytes()
+                  assert b[:2]==b'MZ'
+                  pe=int.from_bytes(b[0x3c:0x40],'little')
+                  assert b[pe:pe+4]==b'PE\\0\\0'.replace(b'\\0',b'\0')
+                  assert int.from_bytes(b[pe+4:pe+6],'little')==machine
+                  hashes[name]=hashlib.sha256(b).hexdigest()
+              manifest={'schema':'winebot.toolkit.package.v0','target':'win-'+('x64' if arch=='x86_64' else 'x86'),'status':'synthetic-rdte-only','files':hashes}
+              (folder/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+              archive=root/(arch+'.zip')
+              with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
+                  for name in sorted(names+['manifest.json']):
+                      z.write(folder/name,name)
+              with zipfile.ZipFile(archive) as z:
+                  assert sorted(z.namelist())==sorted(names+['manifest.json'])
+                  for name,digest in hashes.items():
+                      assert hashlib.sha256(z.read(name)).hexdigest()==digest
+              print('PASS: '+arch+' PE architecture, manifest SHA256 and ZIP integrity; no upload')
+          PY
+      - name: No artifact publication
+        if: always()
+        run: echo 'Synthetic binaries are transient runner-local only; no upload, release, or install.'
