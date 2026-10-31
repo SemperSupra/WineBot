@@ -57,14 +57,21 @@ def drain(records, target, duration):
 
 
 def main():
-    if len(sys.argv) != 3:
-        raise ValueError("expected_two_synthetic_executables")
-    observer, fixture = sys.argv[1:]
+    if len(sys.argv) == 4 and sys.argv[1] == "--wine":
+        observer, fixture = sys.argv[2:]
+        observer_cmd, fixture_cmd = ["wine", observer], ["wine", fixture]
+        runtime = "wine"
+    elif len(sys.argv) == 3:
+        observer, fixture = sys.argv[1:]
+        observer_cmd, fixture_cmd = [observer], [fixture]
+        runtime = "windows"
+    else:
+        raise ValueError("expected_fixture_executables_and_optional_wine_flag")
     records = queue.Queue(maxsize=150)
     events = []
     # Local process only; Windows session and desktop come from hosted runner.
     proc = subprocess.Popen(
-        [observer], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        observer_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, bufsize=0,
     )
     reader = threading.Thread(target=collect_pipe, args=(proc.stdout, records), daemon=True)
@@ -91,7 +98,7 @@ def main():
             raise ValueError("observer_not_ready")
         # The only active Windows application is the controlled fixture.
         completed = subprocess.run(
-            [fixture], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            fixture_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=16.0, check=False,
         )
         if completed.returncode != 0:
@@ -124,7 +131,7 @@ def main():
         missing = REQUIRED - kinds
         if missing:
             raise ValueError("native_window_events_missing_" + "_".join(sorted(missing)))
-        print("PASS: native_windows_fixture_win_events")
+        print("PASS: " + runtime + "_synthetic_fixture_win_events")
         print("PASS: contiguous_schema_bound_events=" + str(len(events) - 1))
         print("PASS: required_event_kinds=show,location,destroy")
         print("PASS: cooperative_private_Q_shutdown")
