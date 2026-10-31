@@ -1,0 +1,31 @@
+name: winebot-portable-observer-interface-oracle
+on:
+  push:
+    branches:
+      - qualification/portable-observer-interface-20261031
+    paths:
+      - tests/portable_observer_contract/**
+      - .github/workflows/winebot-portable-observer-interface-oracle.yml
+permissions:
+  contents: read
+jobs:
+  contract-conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Test portable Windows and Wine observation contract (offline Go stdlib)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version
+          cd tests/portable_observer_contract
+          GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -count=1 -v ./...
+      - name: Disposition
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' 'Test-only capability-qualified portable observer interface.' \
+            'No private source, production brokers, native/runtime parity claims, artifacts or release.'
