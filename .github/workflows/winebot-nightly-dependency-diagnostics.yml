@@ -1,0 +1,39 @@
+name: winebot-nightly-dependency-diagnostics
+on:
+  push:
+    branches:
+      - qualification/nightly-dependency-diagnostics-20261031
+permissions:
+  contents: read
+jobs:
+  release-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - name: Verify pinned public WinInspect release independently of Docker Buildx
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/SemperSupra/WinInspect/releases/download/v0.4.0/WinInspectPortable-v0.4.0.zip'
+          expected='83b64999fef9ab01d749ab94193899e3915774d217900ac80c3c34021ff3e416'
+          status=$(curl -L -sS --retry 2 --max-time 75 -o /tmp/wininspect.zip -w '%{http_code}' "$url")
+          echo "HTTP status: $status"
+          test "$status" = 200
+          printf '%s  %s\n' "$expected" /tmp/wininspect.zip | sha256sum -c -
+          unzip -tq /tmp/wininspect.zip >/dev/null
+          echo 'Pinned release checksum and archive verified'
+  source-context:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm previously missing Buildx COPY inputs exist on checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in automation/core/shell32_hook.c automation/core/user32_hook.c; do
+            test -s "$f"
+            sha256sum "$f"
+          done
