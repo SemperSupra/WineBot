@@ -17,17 +17,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
-          if (-not $cl) {
-            $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
-            $vc = Get-ChildItem -Path (Join-Path $vs 'VC/Tools/MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
-            $compiler = Join-Path $vc.FullName 'bin/Hostx64/x64/cl.exe'
-          } else { $compiler = $cl.Source }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'vc_toolchain_missing' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (-not (Test-Path $vcvars)) { throw 'vcvars_missing' }
           New-Item -ItemType Directory -Path dist/bin -Force | Out-Null
-          & $compiler /nologo /W3 /O2 /Fe:dist/bin/win_event_observer.exe rdte/wine11/win_event_observer.c user32.lib
-          if ($LASTEXITCODE -ne 0) { throw 'observer_compile_failed' }
-          & $compiler /nologo /W3 /O2 /Fe:dist/bin/win_event_fixture.exe rdte/wine11/win_event_fixture.c user32.lib
-          if ($LASTEXITCODE -ne 0) { throw 'fixture_compile_failed' }
+          $commands = 'call "' + $vcvars + '" >nul && cl /nologo /W3 /O2 /Fe:dist/bin/win_event_observer.exe rdte/wine11/win_event_observer.c user32.lib && cl /nologo /W3 /O2 /Fe:dist/bin/win_event_fixture.exe rdte/wine11/win_event_fixture.c user32.lib'
+          & cmd.exe /d /s /c $commands
+          if ($LASTEXITCODE -ne 0) { throw 'native_compile_failed' }
       - name: Manifest, real binary install and bounded fixture execution
         shell: pwsh
         run: |
