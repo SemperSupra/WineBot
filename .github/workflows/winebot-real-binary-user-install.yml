@@ -1,0 +1,59 @@
+name: winebot-real-binary-user-install
+on:
+  push:
+    branches:
+      - qualification/portable-real-binary-install-20261031
+permissions:
+  contents: read
+jobs:
+  native-windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile current synthetic observer and fixture with real Win32 compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
+          if (-not $cl) {
+            $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+            $vc = Get-ChildItem -Path (Join-Path $vs 'VC/Tools/MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            $compiler = Join-Path $vc.FullName 'bin/Hostx64/x64/cl.exe'
+          } else { $compiler = $cl.Source }
+          New-Item -ItemType Directory -Path dist/bin -Force | Out-Null
+          & $compiler /nologo /W3 /O2 /Fe:dist/bin/win_event_observer.exe rdte/wine11/win_event_observer.c user32.lib
+          if ($LASTEXITCODE -ne 0) { throw 'observer_compile_failed' }
+          & $compiler /nologo /W3 /O2 /Fe:dist/bin/win_event_fixture.exe rdte/wine11/win_event_fixture.c user32.lib
+          if ($LASTEXITCODE -ne 0) { throw 'fixture_compile_failed' }
+      - name: Manifest, real binary install and bounded fixture execution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = (Resolve-Path dist).Path
+          $files = @{}
+          foreach ($name in @('bin/win_event_observer.exe','bin/win_event_fixture.exe')) {
+            $files[$name] = (Get-FileHash (Join-Path $pkg $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          @{schema='winebot.toolkit.package.v0';target='win-x64';status='synthetic-rdte-only';files=$files} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $pkg 'manifest.json')
+          $root = Join-Path $env:RUNNER_TEMP 'winebot-real-binary-install'
+          & ./scripts/rdte/install-portable-toolkit.ps1 -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'rdte-native'
+          $installed = Join-Path $root 'rdte-native/bin'
+          foreach ($exe in @('win_event_observer.exe','win_event_fixture.exe')) {
+            if (-not (Test-Path (Join-Path $installed $exe))) { throw "missing_$exe" }
+            $actual = (Get-FileHash (Join-Path $installed $exe) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $files["bin/$exe"]) { throw "installed_digest_mismatch_$exe" }
+          }
+          $fixture = Start-Process -FilePath (Join-Path $installed 'win_event_fixture.exe') -PassThru
+          try {
+            if (-not $fixture.WaitForExit(15000)) { $fixture.Kill(); throw 'fixture_timeout' }
+            if ($fixture.ExitCode -ne 0) { throw "fixture_exit_$($fixture.ExitCode)" }
+          } finally { if (-not $fixture.HasExited) { $fixture.Kill() } }
+          & ./scripts/rdte/install-portable-toolkit.ps1 -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'rdte-native'
+          if (Test-Path (Join-Path $root 'rdte-native')) { throw 'uninstall_incomplete' }
+          Write-Output 'PASS: native real executable compile, digest-verified per-user install, bounded fixture execution and uninstall'
+      - name: No binary artifact publication
+        if: always()
+        run: echo 'Native binaries remain ephemeral on public runner; no artifact upload.'
