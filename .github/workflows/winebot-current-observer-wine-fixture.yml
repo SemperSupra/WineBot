@@ -1,0 +1,70 @@
+name: winebot-current-observer-wine-fixture
+
+# Exact same public, synthetic WinEvent C sources and oracle as native Windows.
+# Public branch-only RDTE, no proprietary data or artifact/image upload.
+on:
+  push:
+    branches:
+      - qualification/wine-current-observer-fixture-20261031
+    paths:
+      - tests/portable_win32_native_rdte/**
+      - .github/workflows/winebot-current-observer-wine-fixture.yml
+
+permissions:
+  contents: read
+
+jobs:
+  wine-synthetic-fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install public Wine and MinGW dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine wine64 gcc-mingw-w64-x86-64 xvfb x11-utils
+      - name: Compile unchanged observer and fixture for Wine x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p rdte-wine-build
+          x86_64-w64-mingw32-gcc -Wall -Wextra -Werror -O2 -o rdte-wine-build/win_event_observer.exe rdte/wine11/win_event_observer.c -luser32
+          x86_64-w64-mingw32-gcc -Wall -Wextra -Werror -O2 -o rdte-wine-build/win_event_fixture.exe rdte/wine11/win_event_fixture.c -luser32
+          wine --version
+      - name: Run same synthetic event assertions under a disposable Wine and Xvfb session
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WINEARCH=win64 WINEDEBUG=-all DISPLAY=:97
+          export WINEPREFIX="$(mktemp -d /tmp/wb-portable-prefix.XXXXXX)"
+          export XDG_RUNTIME_DIR="$(mktemp -d /tmp/wb-portable-xdg.XXXXXX)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb_pid=''
+          cleanup() {
+            wineserver -k >/dev/null 2>&1 || true
+            if [[ -n "$xvfb_pid" ]]; then kill "$xvfb_pid" >/dev/null 2>&1 || true; fi
+            rm -rf "$WINEPREFIX" "$XDG_RUNTIME_DIR" rdte-wine-build
+          }
+          trap cleanup EXIT
+          Xvfb :97 -screen 0 1024x768x24 -nolisten tcp >/dev/null 2>&1 &
+          xvfb_pid=$!
+          for i in $(seq 1 25); do
+            if xdpyinfo -display :97 >/dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
+          xdpyinfo -display :97 >/dev/null 2>&1
+          timeout 100s wineboot -u >/dev/null 2>&1
+          timeout 75s python3 tests/portable_win32_native_rdte/probe.py --wine \
+            "$(pwd)/rdte-wine-build/win_event_observer.exe" \
+            "$(pwd)/rdte-wine-build/win_event_fixture.exe"
+      - name: Disposition
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' 'Synthetic Wine/Win32 event and private-Q observer lifecycle only.' \
+            'No image, binary, screenshot, raw event or build-history artifact upload.' \
+            'Ubuntu packaged Wine is a comparative runtime, not the qualified custom Wine 11 source image.'
