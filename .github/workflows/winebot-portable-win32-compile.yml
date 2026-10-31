@@ -1,0 +1,25 @@
+name: winebot-portable-win32-compile
+on:
+  push:
+    branches:
+      - qualification/portable-win32-observer-build-20261031
+permissions:
+  contents: read
+jobs:
+  cross-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, i686]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cross compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+      - name: Compile portable Win32 fixture without Wine headers
+        run: |
+          ${{ matrix.arch }}-w64-mingw32-gcc -Wall -Wextra -Werror -O2 -o /tmp/win_event_observer.exe rdte/wine11/win_event_observer.c -luser32
+          file /tmp/win_event_observer.exe
