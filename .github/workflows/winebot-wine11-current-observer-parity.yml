@@ -1,0 +1,51 @@
+name: winebot-wine11-current-observer-parity
+
+# Isolated public, read-only, pinned Wine 11.0 source qualification.
+# No Docker publishing, auto-upload artifacts, credentials or production source changes.
+on:
+  push:
+    branches:
+      - qualification/wine11-current-observer-parity-20261031
+    paths:
+      - tests/portable_win32_native_rdte/**
+      - .github/workflows/winebot-wine11-current-observer-parity.yml
+
+permissions:
+  contents: read
+
+jobs:
+  source-pinned-wine11:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare public runner disk for pinned source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build pinned pristine Wine 11.0 source and unchanged current observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain --file docker/wine11-source.Dockerfile \
+            --target wine11-runtime --tag winebot-wine11-current:fixture .
+      - name: Run current observer with same event oracle as native Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 --memory=4g \
+            --pids-limit=256 --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$PWD/tests/portable_win32_native_rdte,target=/opt/rdte-tests,readonly" \
+            winebot-wine11-current:fixture \
+            /bin/bash /opt/rdte-tests/run_wine11.sh
+      - name: Result classification
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'Current observer + pinned Wine 11.0 source under synthetic Xvfb only.' \
+            'Do not treat earlier Wine9 or earlier-collector Wine11 results as this acceptance.' \
+            'No artifacts, raw data, image pushes, credentials, real applications or release.'
