@@ -10,3 +10,7 @@ add_executable(win_event_observer ../../rdte/wine11/win_event_observer.c)
 add_executable(win_event_fixture ../../rdte/wine11/win_event_fixture.c)
 target_link_libraries(win_event_observer PRIVATE user32)
 target_link_libraries(win_event_fixture PRIVATE user32)
+
+# Test-only storm fixture to verify 128-event bound and overflow@129.
+add_executable(win_event_storm_fixture win_event_storm_fixture.c)
+target_link_libraries(win_event_storm_fixture PRIVATE user32)
