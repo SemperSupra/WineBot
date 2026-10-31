@@ -103,7 +103,8 @@ def main():
         )
         if completed.returncode != 0:
             raise ValueError("fixture_execution_failure")
-        drain(records, events, 1.0)
+        # Allow Wine's asynchronous event delivery additional bounded time.
+        drain(records, events, 5.0 if runtime == "wine" else 1.0)
         if proc.poll() is not None:
             raise ValueError("observer_exited_before_control_stop")
         proc.stdin.write(b"Q")
@@ -128,6 +129,9 @@ def main():
         kinds = {e["kind"] for e in events[1:]}
         if "overflow" in kinds or "unsupported" in kinds:
             raise ValueError("observer_overflow_or_unsupported")
+        if runtime == "wine":
+            print("WITNESS: synthetic_wine_event_kinds=" + ",".join(sorted(kinds)))
+            print("WITNESS: synthetic_wine_event_count=" + str(len(events) - 1))
         missing = REQUIRED - kinds
         if missing:
             raise ValueError("native_window_events_missing_" + "_".join(sorted(missing)))
