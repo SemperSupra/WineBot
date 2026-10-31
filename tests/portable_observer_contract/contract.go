@@ -73,17 +73,36 @@ var canonical = map[string]string{
 }
 
 func decode(line []byte) (raw,error) {
-    if len(line)==0 || len(line)>256 {
+    if len(line)==0 || len(line)>256 { return raw{},ErrInvalid }
+    d:=json.NewDecoder(bytes.NewReader(line))
+    token,err:=d.Token()
+    if err!=nil || token!=json.Delim('{') {return raw{},ErrInvalid}
+    r:=raw{}
+    seen:=map[string]bool{}
+    for d.More() {
+        token,err=d.Token()
+        if err!=nil {return raw{},ErrInvalid}
+        name,ok:=token.(string)
+        if !ok || seen[name] {return raw{},ErrInvalid}
+        switch name {
+        case "schema": err=d.Decode(&r.Schema)
+        case "kind": err=d.Decode(&r.Kind)
+        case "sequence": err=d.Decode(&r.Sequence)
+        default: return raw{},ErrInvalid
+        }
+        if err!=nil {return raw{},ErrInvalid}
+        seen[name]=true
+    }
+    token,err=d.Token()
+    if err!=nil || token!=json.Delim('}') || len(seen)!=3 {
         return raw{},ErrInvalid
     }
-    d:=json.NewDecoder(bytes.NewReader(line))
-    d.DisallowUnknownFields()
-    var r raw
-    if err:=d.Decode(&r); err!=nil { return raw{},ErrInvalid }
     var trailing interface{}
-    if err:=d.Decode(&trailing); err!=io.EOF { return raw{},ErrInvalid }
-    if r.Schema!=RawContract || r.Sequence<0 || r.Sequence>129 {return raw{},ErrInvalid}
-    if _, ok:=canonical[r.Kind]; !ok && r.Kind!="ready" && r.Kind!="overflow" && r.Kind!="unsupported" {
+    if err=d.Decode(&trailing); err!=io.EOF {return raw{},ErrInvalid}
+    if r.Schema!=RawContract || r.Sequence<0 || r.Sequence>129 {
+        return raw{},ErrInvalid
+    }
+    if _,ok:=canonical[r.Kind]; !ok && r.Kind!="ready" && r.Kind!="overflow" && r.Kind!="unsupported" {
         return raw{},ErrInvalid
     }
     return r,nil
