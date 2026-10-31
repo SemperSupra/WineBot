@@ -1,0 +1,16 @@
+name: winebot-wine11-oracle-negatives
+on:
+  push:
+    branches:
+      - qualification/wine11-oracle-negatives-20261031
+permissions:
+  contents: read
+jobs:
+  negative-oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests/portable_win32_native_rdte -p 'test_probe_oracle_negatives.py' -v
