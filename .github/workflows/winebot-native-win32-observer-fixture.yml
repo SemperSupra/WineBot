@@ -1,0 +1,44 @@
+name: winebot-native-win32-observer-fixture
+
+# Isolated RDTE only. No production code, image, artifact or release publication.
+on:
+  push:
+    branches:
+      - qualification/native-win32-observer-fixture-20261031
+    paths:
+      - tests/portable_win32_native_rdte/**
+      - .github/workflows/winebot-native-win32-observer-fixture.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-synthetic-fixture:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, Win32]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile existing observer and synthetic fixture under native MSVC
+        shell: pwsh
+        run: |
+          cmake -S tests/portable_win32_native_rdte -B rdte-native-build -G "Visual Studio 17 2022" -A "${{ matrix.arch }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build rdte-native-build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Execute native Windows event observation and bounded shutdown
+        shell: pwsh
+        run: |
+          python tests/portable_win32_native_rdte/probe.py rdte-native-build/Release/win_event_observer.exe rdte-native-build/Release/win_event_fixture.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Disposition
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "Synthetic native Windows RDTE only; hosted runner GUI accessibility is environment-dependent."
+          Write-Output "No artifact uploads, screenshots, packaged binaries, source promotion or application injection."
