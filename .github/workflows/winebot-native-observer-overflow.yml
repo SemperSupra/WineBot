@@ -1,0 +1,44 @@
+name: winebot-native-observer-overflow
+
+# Isolated public fixture-only test of existing 128+terminal bounded stream.
+on:
+  push:
+    branches:
+      - qualification/native-win32-observer-overflow-20261031
+    paths:
+      - tests/portable_win32_native_rdte/**
+      - .github/workflows/winebot-native-observer-overflow.yml
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-overflow:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, Win32]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile existing collector and separate synthetic storm
+        shell: pwsh
+        run: |
+          cmake -S tests/portable_win32_native_rdte -B rdte-native-build -G "Visual Studio 17 2022" -A "${{ matrix.arch }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build rdte-native-build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Require explicit terminal overflow and bounded exit
+        shell: pwsh
+        run: |
+          python tests/portable_win32_native_rdte/probe_overflow.py rdte-native-build/Release/win_event_observer.exe rdte-native-build/Release/win_event_storm_fixture.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Disposition
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "Public synthetic fixture only. No real app injection, screenshots, raw events, binaries or uploaded artifacts."
+          Write-Output "Overflow fixture cannot establish production G2 session fencing or native/Wine runtime parity."
