@@ -1,0 +1,47 @@
+name: winebot-wine11-target-correlation-rdte
+# Public hosted synthetic-only Wine 11 source qualifier.
+on:
+  push:
+    branches:
+      - qualification/wine11-target-correlation-20261101
+    paths:
+      - docker/wine11-target-correlation-rdte.Dockerfile
+      - tests/portable_win32_native_rdte/run_wine11_target.sh
+      - tests/portable_win32_native_rdte/probe_target.py
+      - .github/workflows/winebot-wine11-target-correlation-rdte.yml
+permissions:
+  contents: read
+jobs:
+  pristine-wine11-target-comparator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare public runner disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build pinned unmodified Wine11 source and synthetic target comparator overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOCKER_BUILD_RECORD_UPLOAD=false DOCKER_BUILD_EXPORT_LEGACY=false
+          docker build --progress=plain -f docker/wine11-source.Dockerfile \
+            --target wine11-runtime --tag winebot-wine11-target-base:rdte .
+          docker build --progress=plain -f docker/wine11-target-correlation-rdte.Dockerfile \
+            --tag winebot-wine11-target-correlation:rdte .
+      - name: Execute Xvfb two-instance fixture target-epoch comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 --memory=4g \
+            --pids-limit=256 --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$PWD/tests/portable_win32_native_rdte,target=/opt/rdte-tests,readonly" \
+            winebot-wine11-target-correlation:rdte \
+            /bin/bash /opt/rdte-tests/run_wine11_target.sh
+      - name: No release or disclosure
+        if: always()
+        run: echo 'No image push, binary upload, source patch, private source, credentials, real process identities, actuation or release.'
