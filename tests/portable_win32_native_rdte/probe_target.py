@@ -50,9 +50,17 @@ def drain(messages, received, seconds):
         received.append(parse(line))
 
 def main():
-    if len(sys.argv)!=3: raise ValueError("two_executables_required")
-    obs,fixture=sys.argv[1:]
-    proc=subprocess.Popen([obs],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+    if len(sys.argv)==4 and sys.argv[1]=="--wine":
+        obs,fixture=sys.argv[2:]
+        observe_cmd,fixture_cmd=["wine",obs],["wine",fixture]
+        runtime="wine"
+    elif len(sys.argv)==3:
+        obs,fixture=sys.argv[1:]
+        observe_cmd,fixture_cmd=[obs],[fixture]
+        runtime="native"
+    else:
+        raise ValueError("two_executables_required")
+    proc=subprocess.Popen(observe_cmd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL,bufsize=0)
     messages=queue.Queue(maxsize=140)
     threading.Thread(target=collect,args=(proc.stdout,messages),daemon=True).start()
@@ -71,7 +79,7 @@ def main():
             break
         if not events: raise ValueError("missing_ready")
         for rep in range(2):
-            result=subprocess.run([fixture],stdout=subprocess.DEVNULL,
+            result=subprocess.run(fixture_cmd,stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL,timeout=18,check=False)
             if result.returncode!=0: raise ValueError("fixture_failure")
             drain(messages,events,1.25)
@@ -94,9 +102,9 @@ def main():
         complete=[epoch for epoch,kinds in by_epoch.items() if REQUIRED<=kinds]
         if len(complete)<2: raise ValueError("two_complete_fixture_epochs_missing")
         if len(set(complete))!=len(complete): raise ValueError("epoch_reuse")
-        print("PASS: native_two_sequential_fixture_target_epochs="+str(len(complete)))
-        print("PASS: native_scoped_show_location_destroy_and_contiguous_sequence")
-        print("PASS: native_no_raw_hwnd_pid_title_or_application_content")
+        print("PASS: "+runtime+"_two_sequential_fixture_target_epochs="+str(len(complete)))
+        print("PASS: "+runtime+"_scoped_show_location_destroy_and_contiguous_sequence")
+        print("PASS: "+runtime+"_no_raw_hwnd_pid_title_or_application_content")
         print("LIMITATION: fixture tokens are not authenticated target identity or actuator authority")
     finally:
         if proc.poll() is None: proc.kill()
