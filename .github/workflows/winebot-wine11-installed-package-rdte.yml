@@ -1,0 +1,45 @@
+name: winebot-wine11-installed-package-rdte
+# Synthetic public hosted runner only; native Windows installer equivalence is NOT claimed.
+on:
+  push:
+    branches:
+      - qualification/wine11-installed-package-20261101
+    paths:
+      - tests/portable_win32_native_rdte/wine11_package_stage.py
+      - tests/portable_win32_native_rdte/run_wine11_installed.sh
+      - .github/workflows/winebot-wine11-installed-package-rdte.yml
+permissions:
+  contents: read
+jobs:
+  pristine-source-installed-pe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disk for bounded public pinned Wine source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build pinned pristine Wine 11.0 and actual synthetic Win32 executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOCKER_BUILD_RECORD_UPLOAD=false
+          export DOCKER_BUILD_EXPORT_LEGACY=false
+          docker build --progress=plain --file docker/wine11-source.Dockerfile \
+            --target wine11-runtime --tag winebot-wine11-installed:rdte .
+      - name: Stage package inside user Wine prefix, execute twice, test negatives
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 --memory=4g \
+            --pids-limit=256 --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$PWD/tests/portable_win32_native_rdte,target=/opt/rdte-tests,readonly" \
+            winebot-wine11-installed:rdte \
+            /bin/bash /opt/rdte-tests/run_wine11_installed.sh
+      - name: Explicit nonpromotion
+        if: always()
+        run: echo 'Wine11 fixture-only installed PE qualification. No uploads, image push, release, private source or actual Windows PowerShell installer acceptance.'
