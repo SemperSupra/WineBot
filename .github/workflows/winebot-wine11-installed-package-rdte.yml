@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - qualification/wine11-installed-package-20261101
+      - qualification/wine11-installed-lifecycle-stress-20261101
     paths:
       - tests/portable_win32_native_rdte/wine11_package_stage.py
       - tests/portable_win32_native_rdte/run_wine11_installed.sh
+      - tests/portable_win32_native_rdte/probe_control_stop.py
       - .github/workflows/winebot-wine11-installed-package-rdte.yml
 permissions:
   contents: read
