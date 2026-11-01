@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - qualification/batched-native-package-matrix-20261031
+      - qualification/installer-uninstall-integrity-20261101
 permissions:
   contents: read
 jobs:
