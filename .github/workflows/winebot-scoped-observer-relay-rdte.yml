@@ -1,0 +1,33 @@
+name: winebot-scoped-observer-relay-rdte
+# Pure synthetic read-only contract. No private source, native target attestation, or actuation.
+on:
+  push:
+    branches:
+      - qualification/scoped-observer-relay-20261101
+    paths:
+      - tests/portable_observer_contract/**
+      - .github/workflows/winebot-scoped-observer-relay-rdte.yml
+permissions:
+  contents: read
+jobs:
+  scoped-contract:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Offline source/session scoped observer and target epoch race suite
+        working-directory: tests/portable_observer_contract
+        run: go test -race -count=1 ./...
+      - name: No promotion
+        if: always()
+        run: echo 'Synthetic only; no claimed HWND correlation, WinInspect RPC, broker authorization, private data, binary upload, or release.'
