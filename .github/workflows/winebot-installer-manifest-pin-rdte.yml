@@ -1,0 +1,73 @@
+name: winebot-installer-manifest-pin-rdte
+# Test-only PowerShell 5.1 manifest trust-anchor oracle; no public artifact publication.
+on:
+  push:
+    branches:
+      - qualification/installer-manifest-custody-20261101
+    paths:
+      - scripts/rdte/install-portable-toolkit.ps1
+      - .github/workflows/winebot-installer-manifest-pin-rdte.yml
+permissions:
+  contents: read
+jobs:
+  pinned-manifest-negative:
+    runs-on: windows-2022
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Execute synthetic SHA pin verification in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'incorrect_powershell_major' }
+          $pkg = Join-Path $env:RUNNER_TEMP 'wb-pin-source'
+          $forged = Join-Path $env:RUNNER_TEMP 'wb-pin-forged'
+          $root = Join-Path $env:RUNNER_TEMP 'wb-pin-installed'
+          $badroot = Join-Path $env:RUNNER_TEMP 'wb-pin-refused'
+          New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'bin') | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $pkg 'bin/win_event_observer.exe'),[Text.Encoding]::ASCII.GetBytes('SYNTHETIC-OBSERVER'))
+          [IO.File]::WriteAllBytes((Join-Path $pkg 'bin/win_event_fixture.exe'),[Text.Encoding]::ASCII.GetBytes('SYNTHETIC-FIXTURE'))
+          $files = @{}
+          foreach ($name in @('bin/win_event_observer.exe','bin/win_event_fixture.exe')) {
+            $files[$name] = (Get-FileHash -LiteralPath (Join-Path $pkg $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          @{schema='winebot.toolkit.package.v0';target='win-x64';status='synthetic-rdte-only';files=$files} |
+            ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $pkg 'manifest.json')
+          $pin = (Get-FileHash -LiteralPath (Join-Path $pkg 'manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installer = './scripts/rdte/install-portable-toolkit.ps1'
+          & $installer -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'v1' -ExpectedManifestSha256 $pin
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'v1/bin/win_event_fixture.exe'))) { throw 'pinned_install_missing' }
+          # A forged manifest can correctly hash a modified binary, but cannot
+          # satisfy the external trusted manifest digest from the original package.
+          Copy-Item -LiteralPath $pkg -Destination $forged -Recurse
+          Add-Content -LiteralPath (Join-Path $forged 'bin/win_event_fixture.exe') -Value 'FORGED'
+          $m = Get-Content -LiteralPath (Join-Path $forged 'manifest.json') -Raw | ConvertFrom-Json
+          $m.files.PSObject.Properties['bin/win_event_fixture.exe'].Value =
+            (Get-FileHash -LiteralPath (Join-Path $forged 'bin/win_event_fixture.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $m | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $forged 'manifest.json')
+          $refused = $false
+          try {
+            & $installer -Operation Install -PackageDir $forged -InstallRoot $badroot -Version 'forged' -ExpectedManifestSha256 $pin
+          } catch { $refused = $true }
+          if (-not $refused -or (Test-Path -LiteralPath (Join-Path $badroot 'forged'))) { throw 'forged_manifest_accepted' }
+          # Changed-but-schema-valid installed manifest must not authorize deletion.
+          $installed = Join-Path $root 'v1/manifest.json'
+          $replacement = Get-Content -LiteralPath $installed -Raw | ConvertFrom-Json
+          $replacement.target = 'win-x86'
+          $replacement | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $installed
+          $refused = $false
+          try {
+            & $installer -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'v1' -ExpectedManifestSha256 $pin
+          } catch { $refused = $true }
+          if (-not $refused -or -not (Test-Path -LiteralPath (Join-Path $root 'v1/bin/win_event_fixture.exe'))) {
+            throw 'modified_manifest_uninstall_not_fail_atomic'
+          }
+          Copy-Item -LiteralPath (Join-Path $pkg 'manifest.json') -Destination $installed -Force
+          & $installer -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'v1' -ExpectedManifestSha256 $pin
+          if (Test-Path -LiteralPath (Join-Path $root 'v1')) { throw 'trusted_uninstall_residue' }
+          Write-Output 'PASS: PS5.1 external trusted SHA manifest pin; forged package refused; modified uninstall refused; trusted cleanup'
+      - name: No promotion
+        if: always()
+        run: echo 'Test-only opt-in trusted manifest SHA pin; unpinned RDTE compatibility remains and is NOT authenticated product installation.'
