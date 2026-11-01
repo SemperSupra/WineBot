@@ -48,11 +48,23 @@ if python3 "$helper" install "$tampered" "$root" tamper >/dev/null 2>&1; then
 fi
 rm -rf "$tampered"
 echo 'PASS: overwrite_traversal_and_digest_negatives'
+# Installed-file tamper must be observable independently of source-package hashes.
+printf 'X' >>"$root/v1/bin/win_event_fixture.exe"
+if python3 "$helper" verify "$root/v1" >/dev/null 2>&1; then
+  echo 'FAIL: modified_installed_binary_accepted'; exit 1
+fi
+cp "$package/bin/win_event_fixture.exe" "$root/v1/bin/win_event_fixture.exe"
+python3 "$helper" verify "$root/v1"
 for version in v1 v2; do
   observer="$root/$version/bin/win_event_observer.exe"
   fixture="$root/$version/bin/win_event_fixture.exe"
-  timeout 90s python3 /opt/rdte-tests/probe.py --wine "$observer" "$fixture"
+  for rep in $(seq 1 6); do
+    timeout 95s python3 /opt/rdte-tests/probe.py --wine "$observer" "$fixture"
+  done
+  timeout 75s python3 /opt/rdte-tests/probe_control_stop.py "$observer"
+  echo "PASS: wine11_installed_${version}_six_fixture_reps_and_control_negative"
 done
+echo 'PASS: wine11_installed_12_repeated_fixture_sessions'
 python3 "$helper" uninstall "$root" v1
 [[ -f "$root/v2/bin/win_event_fixture.exe" ]] || { echo 'FAIL: sibling_lost'; exit 1; }
 python3 "$helper" uninstall "$root" v2
