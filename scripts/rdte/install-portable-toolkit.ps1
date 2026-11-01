@@ -92,6 +92,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $package ($name.Replace('/',[IO.Path]::DirectorySeparatorChar))) -Destination (Join-Path $staging ($name.Replace('/',[IO.Path]::DirectorySeparatorChar)))
   }
   Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $staging 'manifest.json')
+  Assert-ManifestPin (Join-Path $staging 'manifest.json') $ExpectedManifestSha256
   foreach ($name in $names) {
     $digest = (Get-FileHash -LiteralPath (Join-Path $staging ($name.Replace('/',[IO.Path]::DirectorySeparatorChar))) -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($digest -cne $manifest.files.PSObject.Properties[$name].Value) { throw 'staged_hash_mismatch' }
