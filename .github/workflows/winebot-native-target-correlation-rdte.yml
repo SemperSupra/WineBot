@@ -1,0 +1,44 @@
+name: winebot-native-target-correlation-rdte
+# Isolated native synthetic fixture comparator; NO trusted identity or actuation.
+on:
+  push:
+    branches:
+      - qualification/native-target-correlation-20261101
+    paths:
+      - rdte/wine11/win_event_target_probe.c
+      - tests/portable_win32_native_rdte/probe_target.py
+      - .github/workflows/winebot-native-target-correlation-rdte.yml
+permissions:
+  contents: read
+jobs:
+  fixture-epoch:
+    runs-on: windows-2022
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile independent Win32 event target comparator and synthetic fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) {throw 'no_compiler'}
+          $vcvars = Join-Path $vs ('VC/Auxiliary/Build/vcvars' + $(if ('${{ matrix.arch }}' -eq 'x86') {'32'} else {'64'}) + '.bat')
+          New-Item -ItemType Directory -Path rdte-bin -Force | Out-Null
+          $commands = 'call "' + $vcvars + '" >nul && cl /nologo /W3 /O2 /Fe:rdte-bin/win_event_target_probe.exe rdte/wine11/win_event_target_probe.c user32.lib && cl /nologo /W3 /O2 /Fe:rdte-bin/win_event_fixture.exe rdte/wine11/win_event_fixture.c user32.lib'
+          & cmd.exe /d /s /c $commands
+          if ($LASTEXITCODE -ne 0) {throw 'native_compile_failed'}
+      - name: Execute two sequential synthetic windows and target epoch oracle
+        shell: pwsh
+        run: |
+          python tests/portable_win32_native_rdte/probe_target.py rdte-bin/win_event_target_probe.exe rdte-bin/win_event_fixture.exe
+          if ($LASTEXITCODE -ne 0) {throw 'target_correlation_oracle_failed'}
+      - name: No promotion
+        if: always()
+        run: echo 'Fixture class only; tentative correlation does not prove trusted principal, session, desktop, HWND ownership or authority to control.'
