@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory=$true)][ValidateSet('Install','Uninstall')][string]$Operation,
   [Parameter(Mandatory=$true)][string]$PackageDir,
   [Parameter(Mandatory=$true)][string]$InstallRoot,
-  [string]$Version = 'rdte-v0'
+  [string]$Version = 'rdte-v0',
+  [string]$ExpectedManifestSha256 = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -22,6 +23,17 @@ function Assert-NoReparsePath([string]$path) {
     $current = $parent
   }
 }
+function Assert-ManifestPin([string]$manifestPath,[string]$expected) {
+  Assert-NoReparsePath $manifestPath
+  if ([string]::IsNullOrEmpty($expected)) {
+    # RDTE back-compat only: an unpinned manifest has no authenticity proof.
+    return
+  }
+  if ($expected -cnotmatch '^[a-f0-9]{64}$') { throw 'invalid_manifest_pin' }
+  if ((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) {
+    throw 'manifest_pin_mismatch'
+  }
+}
 Assert-SafeName $Version
 Assert-NoReparsePath $InstallRoot
 Assert-NoReparsePath $PackageDir
@@ -32,7 +44,7 @@ if ($Operation -eq 'Uninstall') {
   if (-not (Test-Path -LiteralPath $destination -PathType Container)) { return }
   $marker = Join-Path $destination 'manifest.json'
   if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw 'refuse_unowned_uninstall' }
-  Assert-NoReparsePath $marker
+  Assert-ManifestPin $marker $ExpectedManifestSha256
   $installed = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
   if ($installed.schema -ne 'winebot.toolkit.package.v0' -or $installed.status -ne 'synthetic-rdte-only' -or $installed.target -notin @('win-x64','win-x86')) { throw 'refuse_unowned_uninstall' }
   # Verify every owned payload before deleting any byte; fail atomically.
@@ -59,6 +71,7 @@ if ($Operation -eq 'Uninstall') {
 if (Test-Path -LiteralPath $destination) { throw 'destination_exists_no_overwrite' }
 $package = [IO.Path]::GetFullPath($PackageDir)
 $manifestFile = Join-Path $package 'manifest.json'
+Assert-ManifestPin $manifestFile $ExpectedManifestSha256
 $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
 if ($manifest.schema -ne 'winebot.toolkit.package.v0' -or $manifest.status -ne 'synthetic-rdte-only' -or $manifest.target -notin @('win-x64','win-x86')) { throw 'invalid_manifest' }
 $names = @('bin/win_event_observer.exe','bin/win_event_fixture.exe')
