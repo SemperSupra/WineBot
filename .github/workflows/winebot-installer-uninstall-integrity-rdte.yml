@@ -1,0 +1,74 @@
+name: winebot-installer-uninstall-integrity-rdte
+# Native Windows 2022 synthetic package negative tests; no binaries published.
+on:
+  push:
+    branches:
+      - qualification/installer-uninstall-integrity-20261101
+    paths:
+      - scripts/rdte/install-portable-toolkit.ps1
+      - .github/workflows/winebot-installer-uninstall-integrity-rdte.yml
+permissions:
+  contents: read
+jobs:
+  native-atomic-uninstall-negatives:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Synthetic per-user package atomic uninstall and custody tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $env:RUNNER_TEMP 'wb-uninstall-pkg'
+          $root = Join-Path $env:RUNNER_TEMP 'wb-uninstall-owned'
+          New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'bin') | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $pkg 'bin/win_event_observer.exe'),[Text.Encoding]::ASCII.GetBytes('SYNTHETIC-OBSERVER'))
+          [IO.File]::WriteAllBytes((Join-Path $pkg 'bin/win_event_fixture.exe'),[Text.Encoding]::ASCII.GetBytes('SYNTHETIC-FIXTURE'))
+          $files = @{}
+          foreach ($name in @('bin/win_event_observer.exe','bin/win_event_fixture.exe')) {
+            $files[$name] = (Get-FileHash (Join-Path $pkg $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          @{schema='winebot.toolkit.package.v0';target='win-x64';status='synthetic-rdte-only';files=$files} |
+            ConvertTo-Json -Depth 4 | Set-Content (Join-Path $pkg 'manifest.json')
+          $installer = './scripts/rdte/install-portable-toolkit.ps1'
+          & $installer -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'v1'
+          & $installer -Operation Install -PackageDir $pkg -InstallRoot $root -Version 'v2'
+          $v1 = Join-Path $root 'v1'
+          $observer = Join-Path $v1 'bin/win_event_observer.exe'
+          $fixture = Join-Path $v1 'bin/win_event_fixture.exe'
+          function Assert-Refuses([string]$Case) {
+            $refused = $false
+            try {
+              & $installer -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'v1'
+            } catch { $refused = $true }
+            if (-not $refused) { throw ('negative_not_refused_'+$Case) }
+            if (-not (Test-Path -LiteralPath $observer) -or -not (Test-Path -LiteralPath (Join-Path $v1 'manifest.json'))) {
+              throw ('partial_removal_'+$Case)
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $root 'v2/bin/win_event_fixture.exe'))) {
+              throw ('sibling_destroyed_'+$Case)
+            }
+          }
+          Add-Content -LiteralPath $fixture -Value 'TAMPER'
+          Assert-Refuses 'modified_payload'
+          Copy-Item -LiteralPath (Join-Path $pkg 'bin/win_event_fixture.exe') -Destination $fixture -Force
+          $saved = Get-Content -LiteralPath (Join-Path $v1 'manifest.json') -Raw
+          $bad = $saved | ConvertFrom-Json
+          $bad.target = 'win-arm64'
+          $bad | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $v1 'manifest.json')
+          Assert-Refuses 'unknown_target'
+          Set-Content -LiteralPath (Join-Path $v1 'manifest.json') -Value $saved
+          Remove-Item -LiteralPath $fixture -Force
+          Assert-Refuses 'missing_payload'
+          Copy-Item -LiteralPath (Join-Path $pkg 'bin/win_event_fixture.exe') -Destination $fixture
+          & $installer -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'v1'
+          if (Test-Path -LiteralPath $v1) { throw 'owned_uninstall_residue' }
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'v2/bin/win_event_fixture.exe'))) {throw 'unrelated_version_removed'}
+          & $installer -Operation Uninstall -PackageDir $pkg -InstallRoot $root -Version 'v2'
+          if (Test-Path -LiteralPath (Join-Path $root 'v2')) {throw 'sibling_uninstall_residue'}
+          Write-Output 'PASS: tampered/missing/unknown-target fail-atomic; clean versions uninstall'
+      - name: No promotion
+        if: always()
+        run: echo 'Synthetic Windows installer negative only; no actual release, Wine11 installer parity, or uploaded artifacts.'
