@@ -1,0 +1,44 @@
+name: winebot-rel-pin-and-build-record-rdte
+# Qualify composition of existing independent draft PR #124 + #125.
+# DO NOT use docker/build-push-action, upload-artifact, secrets or private source.
+on:
+  push:
+    branches:
+      - qualification/nightly-rel-asset-and-artifact-preflight-20261102
+    paths:
+      - docker/Dockerfile
+      - .github/workflows/winebot-rel-pin-and-build-record-rdte.yml
+permissions:
+  contents: read
+jobs:
+  exact-public-asset-and-no-auto-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Run existing PR125 fail-closed build action publication policy
+        run: python3 tests/test_ci_dockerbuild_artifact_policy.py
+      - name: Validate exact immutable WinInspect release asset pin in Dockerfile
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("docker/Dockerfile").read_text(encoding="utf-8")
+          expected="WinInspectPortable-v0.4.4.zip"
+          digest="6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04"
+          assert s.count(expected)==1 and s.count(digest)==1
+          assert "WinInspectPortable-v0.4.0.zip" not in s
+          print("PASS: exact_official_asset_pin_static")
+          PY
+      - name: Compile only public WinInspect tool stage with fail-closed checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain --pull --target builder-winspy \
+            --file docker/Dockerfile --tag winebot-wininspect-public-pin:rdte .
+          echo 'PASS: real_public_asset_download_checksum_and_tool_stage'
+      - name: Nonpromotion boundary
+        if: always()
+        run: echo 'Only public synthetic/tool asset source; no full REL, release, browser source projection, image publish, artifact upload, private infrastructure or target actuation.'
