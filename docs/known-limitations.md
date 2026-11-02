@@ -1,5 +1,7 @@
 # Known Limitations
 
+> **Version/scope note (2026-11-02):** The platform and software-rendering constraints below describe previously evaluated/default WineBot deployments and their known workarounds. They are **not** a universal assertion that all possible Wine 11, Xvfb, Mesa, LLVMpipe or Lavapipe configurations lack CPU-rendered 3D support. Separate [source-pinned Wine 11 experimental qualifications](wine11-experimental-qualification-20261102.md) and open renderer/game draft PRs must be evaluated on their own exact source, software renderer and runner before any supported capability or release claim is updated. Window targeting constraints also remain subject to separately trusted cross-runtime identity/lease qualification.
+
 This document catalogs fundamental limitations of the tools and subsystems
 used by WineBot. These are not bugs — they are constraints of the underlying
 platforms ([Wine](https://www.winehq.org), X11, AHK, [xdotool](https://github.com/jordansissel/xdotool)) that agents and users should understand.
