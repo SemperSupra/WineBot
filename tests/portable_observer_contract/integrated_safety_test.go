@@ -92,3 +92,58 @@ func TestIntegratedGapInvalidatesAllHintsAndRejectsStaleLease(t *testing.T) {
     t.Fatal("stale lease promoted on observation loss")
   }
 }
+
+func TestIntegratedRawProducerAdapterRelayAndGapRecovery(t *testing.T) {
+  stream:="synthetic-raw-stream-20261102"
+  adapter,err:=NewAdapter(stream)
+  if err!=nil {t.Fatal(err)}
+  relay,err:=NewScopedRelay(stream,Source,1,4)
+  if err!=nil {t.Fatal(err)}
+  feed:=func(seq int,kind string) (Frame,error) {
+    wire,err:=json.Marshal(raw{Schema:RawContract,Kind:kind,Sequence:seq})
+    if err!=nil {t.Fatal(err)}
+    return adapter.Consume(wire)
+  }
+  frame,err:=feed(0,"ready")
+  if err!=nil || relay.Accept(frame)!=nil {t.Fatal("raw ready could not initialize scoped relay")}
+  inspector,err:=relay.NewBridge("read-only-wininspect-consumer")
+  if err!=nil {t.Fatal(err)}
+  automation,err:=relay.NewBridge("read-only-automation-consumer")
+  if err!=nil {t.Fatal(err)}
+  defer inspector.Close();defer automation.Close()
+  for i,kind:=range []string{"show","location"} {
+    frame,err=feed(i+1,kind)
+    if err!=nil {t.Fatal(err)}
+    if err=relay.Accept(frame);err!=nil {t.Fatal(err)}
+  }
+  for _,consumer:=range []*ScopedBridge{inspector,automation} {
+    hints,err:=consumer.Poll(4)
+    if err!=nil || len(hints)!=2 || hints[0].Reason!="window.shown" ||
+      hints[1].Reason!="window.location_changed" ||
+      hints[0].Scope!="desktop" || hints[1].Scope!="desktop" {
+      t.Fatalf("raw-to-hint semantics incorrect: %+v / %v",hints,err)
+    }
+  }
+  frame,err=feed(4,"destroy") // omitted sequence 3
+  if !errors.Is(err,ErrGap) || frame.Status!="gap" {
+    t.Fatalf("producer gap not diagnosed: %v %+v",err,frame)
+  }
+  if err=relay.Accept(frame);!errors.Is(err,ErrRelayStale) {
+    t.Fatalf("scoped consumer accepted producer gap: %v",err)
+  }
+  for _,consumer:=range []*ScopedBridge{inspector,automation} {
+    if _,err=consumer.Poll(4);!errors.Is(err,ErrReinspectionRequired) {
+      t.Fatalf("stale stream remained consumable: %v",err)
+    }
+  }
+  if _,err=relay.NewBridge("third-reader");!errors.Is(err,ErrRelayStale) {
+    t.Fatal("new consumer admitted after producer gap")
+  }
+  for _,runtime:=range []string{"windows","wine"} {
+    capabilities,err:=UnverifiedCapabilities(runtime)
+    if err!=nil || !capabilities.FixtureScoped {t.Fatal("invalid runtime capability status")}
+    for _,status:=range capabilities.Features {
+      if status!="unverified" {t.Fatalf("automatic parity claimed for %s",runtime)}
+    }
+  }
+}
