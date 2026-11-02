@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          cmake --build wininspect-source/build --target wininspectd --parallel 2 \
+          cmake --build wininspect-source/build --target wininspectd --parallel 1 \
             >/tmp/wi044-build.log 2>&1
           rc=$?
           if [ "$rc" -ne 0 ]; then
@@ -102,6 +102,17 @@ jobs:
           text=Path("/tmp/wi044-build.log").read_text(encoding="utf-8",errors="replace")
           lines=[x for x in text.splitlines() if "error:" in x.lower() or
                  "undefined reference" in x.lower() or "FAILED:" in x]
+          lower=text.lower()
+          if "killed signal terminated program" in lower or "out of memory" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=resource_or_compiler_killed")
+          elif "collect2: error:" in lower or "undefined reference" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=linker")
+          elif "fatal error:" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=fatal_compiler")
+          elif "ninja: build stopped" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=ninja_stopped_unclassified")
+          else:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=other")
           if not lines:
               print("PUBLIC_SOURCE_BUILD_ERROR_CLASS=unclassified")
           else:
