@@ -1,0 +1,105 @@
+name: winebot-wininspect044-correlation-public-crossbuild-rdte
+# Public-hosted only. Immutable public v0.4.4 source plus exact upstream #18 test patch.
+# A success is a source-build candidate, NOT an official release or runtime admission.
+on:
+  push:
+    branches:
+      - qualification/wininspect-044-correlation-crossbuild-20261102
+    paths:
+      - .github/workflows/winebot-wininspect044-correlation-public-crossbuild-rdte.yml
+permissions:
+  contents: read
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+jobs:
+  public-source-crossbuild-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - name: Checkout exact WineBot qualification branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Checkout exact published WinInspect v0.4.4 public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WinInspect
+          ref: b2d07ae3ff1df53a62c27ec3fa27f1452ff5926a
+          path: wininspect-source
+          persist-credentials: false
+      - name: Reproduce upstream PR18 response-ID fix in disposable copy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          f=Path("wininspect-source/source/core/src/core.cpp")
+          s=f.read_text(encoding="utf-8")
+          anchor="  after_dispatch:\n    auto end_time = std::chrono::steady_clock::now();\n"
+          update=("  after_dispatch:\n"
+                  "    // Restore response identity after handlers replace the result.\n"
+                  "    resp.id = req.id;\n"
+                  "    auto end_time = std::chrono::steady_clock::now();\n")
+          assert s.count(anchor)==1, "source patch anchor mismatch"
+          f.write_text(s.replace(anchor,update),encoding="utf-8")
+          print("PASS: immutable_public_source_plus_upstream_PR18_exact_semantics")
+          PY
+      - name: Install disposable public MinGW compiler
+        shell: bash
+        run: |
+          sudo apt-get update -qq >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 ninja-build >/dev/null
+      - name: Configure crossbuild with no private source and no secrets
+        shell: bash
+        run: |
+          set +e
+          cmake -S wininspect-source/source -B wininspect-source/build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF \
+            > /tmp/wi044-cmake-config.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo 'FAIL: public_crossbuild_configuration'
+            exit 1
+          fi
+          echo 'PASS: public_crossbuild_configuration'
+      - name: Build only disposable source-corrected WinInspect daemon
+        shell: bash
+        run: |
+          set +e
+          cmake --build wininspect-source/build --target wininspectd --parallel 2 \
+            >/tmp/wi044-build.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            # Sanitized compiler category only. No full command, full source line,
+            # absolute path, runtime identifier, raw stderr, or uploaded artifact.
+            python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path("/tmp/wi044-build.log").read_text(encoding="utf-8",errors="replace")
+          lines=[x for x in text.splitlines() if "error:" in x.lower() or
+                 "undefined reference" in x.lower() or "FAILED:" in x]
+          if not lines:
+              print("PUBLIC_SOURCE_BUILD_ERROR_CLASS=unclassified")
+          else:
+              for line in lines[:8]:
+                  low=line.lower()
+                  label=("header_unavailable" if "fatal error:" in low and "no such file" in low
+                         else "missing_symbol" if "not declared" in low
+                         else "link_symbol" if "undefined reference" in low
+                         else "compiler_diagnostic" if "error:" in low
+                         else "build_command_failed")
+                  print("PUBLIC_SOURCE_BUILD_ERROR_CLASS="+label)
+          print("PUBLIC_SOURCE_BUILD_ERROR_COUNT="+str(len(lines)))
+          PY
+            echo 'FAIL: public_wininspect_correlation_crossbuild'
+            exit 1
+          fi
+          test -s wininspect-source/build/wininspectd.exe
+          echo 'PASS: public_wininspect_correlation_crossbuild'
+      - name: Nonpromotion boundary
+        if: always()
+        run: echo 'No official release replacement, no private Actions minutes, no private source, no uploaded executable, no image push or live actuation.'
