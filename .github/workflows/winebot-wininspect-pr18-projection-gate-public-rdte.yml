@@ -45,6 +45,7 @@ jobs:
           $gateResult = $LASTEXITCODE
           if ($gateResult -eq 0) { throw 'FAIL: mutated_public_source_unexpectedly_admitted' }
           Write-Output 'PASS: source_edit_without_new_authoritative_projection_rejected'
+          exit 0  # The negative projector subprocess intentionally returned nonzero.
       - name: Scope and owner gates
         if: always()
         run: echo 'Public source only; no private Actions minutes, private source ID emission, release tag, upload, or promotion. Exact new owner-approved projection required.'
