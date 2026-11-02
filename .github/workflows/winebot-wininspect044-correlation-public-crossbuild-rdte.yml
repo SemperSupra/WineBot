@@ -103,6 +103,28 @@ jobs:
           lines=[x for x in text.splitlines() if "error:" in x.lower() or
                  "undefined reference" in x.lower() or "FAILED:" in x]
           lower=text.lower()
+          failed=[x for x in text.splitlines() if x.startswith("FAILED: ")]
+          for failure in failed[:3]:
+              import re
+              target=re.search(r"([A-Za-z0-9_-]+\\.(?:cpp\\.obj|obj|res|exe|a))",failure)
+              if target:
+                  print("PUBLIC_BUILD_FAILED_TARGET="+target.group(1))
+              else:
+                  print("PUBLIC_BUILD_FAILED_TARGET=unclassified")
+          for indicator,category in (
+              ("windres:", "windres"),
+              ("ninja:", "ninja"),
+              ("cc1plus:", "cc1plus"),
+              ("collect2:", "collect2"),
+              ("ld.exe:", "linker"),
+              ("compilation terminated", "compilation_terminated"),
+              ("permission denied", "permissions"),
+              ("no such file", "missing_file"),
+              ("cannot find", "missing_linker_input"),
+              ("fatal error", "fatal_compiler"),
+              ("killed", "process_killed")):
+              if indicator in lower:
+                  print("PUBLIC_BUILD_MESSAGE_CATEGORY="+category)
           if "killed signal terminated program" in lower or "out of memory" in lower:
               print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=resource_or_compiler_killed")
           elif "collect2: error:" in lower or "undefined reference" in lower:
