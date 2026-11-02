@@ -1,0 +1,69 @@
+name: winebot-wininspect-pr18-native-daemon-public-rdte
+# Public GitHub-hosted Windows only; no private runners or Actions minutes.
+# Source is the already-public projected WinInspect PR #18 exact immutable commit.
+on:
+  push:
+    branches:
+      - qualification/wininspect-pr18-native-daemon-20261103
+    paths:
+      - .github/workflows/winebot-wininspect-pr18-native-daemon-public-rdte.yml
+permissions:
+  contents: read
+jobs:
+  native-wininspect-candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout public qualification harness
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Checkout exact public WinInspect PR18 source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WinInspect
+          ref: 04c2a978747bb1bceecba1c7ab3af8e004f11718
+          path: wi-src
+          persist-credentials: false
+      - name: Apply upstream exact source correction and test fixture
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./experiments/Apply-RpcResponseIdFix.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'public_source_diff_invalid' }
+          Write-Output 'PASS: upstream_exact_response_correlation_patch_applied'
+      - name: Configure native public Windows build
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S source -B build -A x64 -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'public_native_configure_failed' }
+      - name: Build both native daemon and real correlation test
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build build --config Release --target wininspectd test_response_id --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'public_native_daemon_or_correlation_test_build_failed' }
+          if (!(Test-Path build/Release/wininspectd.exe)) { throw 'daemon_missing' }
+          if (!(Test-Path build/Release/test_response_id.exe)) { throw 'oracle_missing' }
+          Write-Output 'PASS: native_daemon_and_regression_built'
+      - name: Verify real CoreEngine handler response correlation
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          & ./build/Release/test_response_id.exe
+          if ($LASTEXITCODE -ne 0) { throw 'response_id_oracle_red' }
+          Write-Output 'PASS: native_actual_handler_preserves_response_id'
+      - name: Bound result to candidate, never release
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'Not the official v0.4.4 release, no Windows/Wine container integration, no image/binary/artifact publication, no secrets, no private Actions.'
