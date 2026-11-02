@@ -40,8 +40,15 @@ jobs:
                   "    resp.id = req.id;\n"
                   "    auto end_time = std::chrono::steady_clock::now();\n")
           assert s.count(anchor)==1, "source patch anchor mismatch"
-          f.write_text(s.replace(anchor,update),encoding="utf-8")
+          # Exact original public release core.cpp uses strcmp but omitted
+          # the C++ standard <cstring> include. Add in disposable copy only.
+          portability_anchor="#include <cctype>\n"
+          assert s.count(portability_anchor)==1, "public core include anchor mismatch"
+          amended=s.replace(anchor,update).replace(
+              portability_anchor,portability_anchor+"#include <cstring>\n")
+          f.write_text(amended,encoding="utf-8")
           print("PASS: immutable_public_source_plus_upstream_PR18_exact_semantics")
+          print("PASS: bounded_public_strcmp_cstring_portability_header")
           PY
       - name: Install disposable public MinGW compiler
         shell: bash
