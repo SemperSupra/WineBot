@@ -36,8 +36,11 @@ jobs:
         working-directory: wi-src
         run: |
           $ErrorActionPreference = 'Stop'
-          ./experiments/Apply-RpcResponseIdFix.ps1 *> $null
-          if ($LASTEXITCODE -ne 0) { throw 'FAIL: upstream_patch_not_applied' }
+          $before = (Get-FileHash source/core/src/core.cpp -Algorithm SHA256).Hash
+          & pwsh -NoProfile -File experiments/Apply-RpcResponseIdFix.ps1 *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'FAIL: upstream_patch_process_nonzero' }
+          $after = (Get-FileHash source/core/src/core.cpp -Algorithm SHA256).Hash
+          if ($after -eq $before) { throw 'FAIL: upstream_patch_no_source_delta' }
           & pwsh -NoProfile -File scripts/Test-ProjectedSource.ps1 *> $null
           $gateResult = $LASTEXITCODE
           if ($gateResult -eq 0) { throw 'FAIL: mutated_public_source_unexpectedly_admitted' }
