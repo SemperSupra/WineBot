@@ -1,0 +1,155 @@
+name: winebot-wininspect-pr18-disposable-semantic-public-rdte
+# Public-hosted only. Immutable public v0.4.4 source plus exact upstream #18 test patch.
+# A success is a source-build candidate, NOT an official release or runtime admission.
+on:
+  push:
+    branches:
+      - qualification/wininspect-pr18-disposable-semantic-20261103
+    paths:
+      - .github/workflows/winebot-wininspect-pr18-disposable-semantic-public-rdte.yml
+      - scripts/ci/rdte-wininspect-pr18-semantic-runtime.sh
+permissions:
+  contents: read
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+jobs:
+  public-source-crossbuild-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - name: Checkout exact WineBot qualification branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Checkout exact published WinInspect v0.4.4 public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WinInspect
+          ref: b2d07ae3ff1df53a62c27ec3fa27f1452ff5926a
+          path: wininspect-source
+          persist-credentials: false
+      - name: Reproduce upstream PR18 response-ID fix in disposable copy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          f=Path("wininspect-source/source/core/src/core.cpp")
+          s=f.read_text(encoding="utf-8")
+          anchor="  after_dispatch:\n    auto end_time = std::chrono::steady_clock::now();\n"
+          update=("  after_dispatch:\n"
+                  "    // Restore response identity after handlers replace the result.\n"
+                  "    resp.id = req.id;\n"
+                  "    auto end_time = std::chrono::steady_clock::now();\n")
+          assert s.count(anchor)==1, "source patch anchor mismatch"
+          # Exact original public release core.cpp uses strcmp but omitted
+          # the C++ standard <cstring> include. Add in disposable copy only.
+          portability_anchor="#include <cctype>\n"
+          assert s.count(portability_anchor)==1, "public core include anchor mismatch"
+          amended=s.replace(anchor,update).replace(
+              portability_anchor,portability_anchor+"#include <cstring>\n")
+          f.write_text(amended,encoding="utf-8")
+          print("PASS: immutable_public_source_plus_upstream_PR18_exact_semantics")
+          print("PASS: bounded_public_strcmp_cstring_portability_header")
+          # The Windows compression API headers use PVOID for input buffers,
+          # although Compress/Decompress consume input. Strict MinGW rejects
+          # const vector::data(); test ONLY a narrow input cast in this job.
+          c=Path("wininspect-source/source/core/src/compress.cpp")
+          data=c.read_text(encoding="utf-8")
+          assert data.count("Compress(compressor, data.data(),")==2
+          assert data.count("Decompress(decompressor, data.data(),")==1
+          data=data.replace("Compress(compressor, data.data(),",
+                            "Compress(compressor, const_cast<uint8_t*>(data.data()),")
+          data=data.replace("Decompress(decompressor, data.data(),",
+                            "Decompress(decompressor, const_cast<uint8_t*>(data.data()),")
+          c.write_text(data,encoding="utf-8")
+          print("PASS: bounded_public_compressapi_input_constness_portability")
+          PY
+      - name: Install disposable public MinGW compiler
+        shell: bash
+        run: |
+          sudo apt-get update -qq >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 ninja-build >/dev/null
+      - name: Configure crossbuild with no private source and no secrets
+        shell: bash
+        run: |
+          set +e
+          cmake -S wininspect-source/source -B wininspect-source/build -G Ninja \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF \
+            > /tmp/wi044-cmake-config.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo 'FAIL: public_crossbuild_configuration'
+            exit 1
+          fi
+          echo 'PASS: public_crossbuild_configuration'
+      - name: Build only disposable source-corrected WinInspect daemon
+        shell: bash
+        run: |
+          set +e
+          cmake --build wininspect-source/build --target wininspectd --parallel 1 \
+            >/tmp/wi044-build.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            # Sanitized compiler category only. No full command, full source line,
+            # absolute path, runtime identifier, raw stderr, or uploaded artifact.
+            python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path("/tmp/wi044-build.log").read_text(encoding="utf-8",errors="replace")
+          lines=[x for x in text.splitlines() if "error:" in x.lower() or
+                 "undefined reference" in x.lower() or "FAILED:" in x]
+          lower=text.lower()
+          if "killed signal terminated program" in lower or "out of memory" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=resource_or_compiler_killed")
+          elif "collect2: error:" in lower or "undefined reference" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=linker")
+          elif "fatal error:" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=fatal_compiler")
+          elif "ninja: build stopped" in lower:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=ninja_stopped_unclassified")
+          else:
+              print("PUBLIC_SOURCE_BUILD_ROOT_CLASS=other")
+          if not lines:
+              print("PUBLIC_SOURCE_BUILD_ERROR_CLASS=unclassified")
+          else:
+              for line in lines[:8]:
+                  low=line.lower()
+                  label=("header_unavailable" if "fatal error:" in low and "no such file" in low
+                         else "missing_symbol" if "not declared" in low
+                         else "link_symbol" if "undefined reference" in low
+                         else "compiler_diagnostic" if "error:" in low
+                         else "build_command_failed")
+                  print("PUBLIC_SOURCE_BUILD_ERROR_CLASS="+label)
+                  if label in ("missing_symbol","compiler_diagnostic"):
+                      match=re.search(r"([A-Za-z0-9_-]+\.(?:cpp|hpp|h)):(\d+):",line)
+                      if match:
+                          print("PUBLIC_RELEASE_COMPILER_LOCATION="+match.group(1)+":"+match.group(2))
+                      detail=line.split("error:",1)[-1].strip()[:140]
+                      # Public-release source-only compiler diagnostic; never
+                      # copy raw paths, host markers, URLs or unbounded strings.
+                      if (len(detail) <= 140 and not any(x in detail.lower()
+                          for x in ("/home/","/tmp/","http:","https:","\\\\","@","token","password"))):
+                          print("PUBLIC_RELEASE_COMPILER_DETAIL="+detail)
+          print("PUBLIC_SOURCE_BUILD_ERROR_COUNT="+str(len(lines)))
+          PY
+            echo 'FAIL: public_wininspect_correlation_crossbuild'
+            exit 1
+          fi
+          test -s wininspect-source/build/wininspectd.exe
+          echo 'PASS: public_wininspect_correlation_crossbuild'
+      - name: Test patched public-source candidate inside actual WineBot/Wine
+        if: success()
+        shell: bash
+        env:
+          WININSPECT_TEST_DAEMON_PATH: wininspect-source/build/wininspectd.exe
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+          DOCKER_BUILD_EXPORT_LEGACY: 'false'
+        run: bash scripts/ci/rdte-wininspect-pr18-semantic-runtime.sh
+      - name: Nonpromotion boundary
+        if: always()
+        run: echo 'Experimental job-local patched public source, NOT official release. No private Actions, image or binary upload, screenshots, credentials, raw window content or live actuation.'
