@@ -1,0 +1,47 @@
+name: winebot-wininspect-pr18-projection-gate-public-rdte
+# Public GHA only; prove upstream PR18 source mutation cannot bypass projection
+# custody manifest. Never release, sign, print protected source IDs or upload.
+on:
+  push:
+    branches:
+      - qualification/wininspect-pr18-public-projection-gate-20261103
+    paths:
+      - .github/workflows/winebot-wininspect-pr18-projection-gate-public-rdte.yml
+permissions:
+  contents: read
+jobs:
+  public-projection-mutation-rejection:
+    runs-on: windows-2022
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WinInspect
+          ref: 04c2a978747bb1bceecba1c7ab3af8e004f11718
+          path: wi-src
+          persist-credentials: false
+      - name: Verify public projected-source baseline without emitting source metadata
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & pwsh -NoProfile -File scripts/Test-ProjectedSource.ps1 *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'FAIL: unchanged_public_projection_not_valid' }
+          Write-Output 'PASS: current_public_projection_manifest_valid'
+      - name: Prove PR18 source modification requires authoritative reprojection
+        shell: pwsh
+        working-directory: wi-src
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./experiments/Apply-RpcResponseIdFix.ps1 *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'FAIL: upstream_patch_not_applied' }
+          & pwsh -NoProfile -File scripts/Test-ProjectedSource.ps1 *> $null
+          $gateResult = $LASTEXITCODE
+          if ($gateResult -eq 0) { throw 'FAIL: mutated_public_source_unexpectedly_admitted' }
+          Write-Output 'PASS: source_edit_without_new_authoritative_projection_rejected'
+      - name: Scope and owner gates
+        if: always()
+        run: echo 'Public source only; no private Actions minutes, private source ID emission, release tag, upload, or promotion. Exact new owner-approved projection required.'
