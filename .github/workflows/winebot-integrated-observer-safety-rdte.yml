@@ -1,0 +1,33 @@
+name: winebot-integrated-observer-safety-rdte
+# Synthetic offline integrated contract only, not WinInspect RPC or an actuator.
+on:
+  push:
+    branches:
+      - qualification/integrated-observer-safety-slice-20261102
+    paths:
+      - tests/portable_observer_contract/**
+      - .github/workflows/winebot-integrated-observer-safety-rdte.yml
+permissions:
+  contents: read
+jobs:
+  integrated-negative-oracle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Qualify integrated read-only hints, scoped stream, synthetic epoch, negative preflight
+        working-directory: tests/portable_observer_contract
+        run: go test -race -count=1 ./...
+      - name: Nonpromotion
+        if: always()
+        run: echo 'No production Wine/WinInspect source, authenticated identity, live target resolution, desktop broker, real input, uploaded artifacts or release.'
