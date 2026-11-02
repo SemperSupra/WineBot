@@ -46,6 +46,9 @@ func gitAt(path string, args ...string) ([]byte,error) {
 }
 
 func parseWorktrees(data []byte,includeBranch bool) ([]worktree,error) {
+  // Git porcelain -z ends each worktree with an empty NUL record. A final
+  // single NUL is a truncated record, not sufficient proof of completion.
+  if !bytes.HasSuffix(data,[]byte{0,0}) {return nil,errors.New("truncated_worktree_record")}
   var entries []worktree
   var cur *worktree
   for _,raw:=range bytes.Split(data,[]byte{0}) {
