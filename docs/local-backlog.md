@@ -1,5 +1,7 @@
 # Local Backlog
 
+> **Historical backlog / issue availability (2026-11-02):** GitHub Issues are disabled for this repository (the Issues API returns HTTP 410). Links below to earlier WineBot issues document provenance and prior intent; they must not be interpreted as an accessible current task queue or live readiness authority. Preserve this historical list until the owning project work register reconciles each item. Do not recreate the issues or infer current completion from a broken URL. Experimental Wine 11 and observer qualification evidence is summarized in [Wine 11 experimental status](wine11-experimental-qualification-20261102.md); that document is not production-release authority.
+
 This file tracks in-flight and planned work items that are not yet fully delivered in a single PR.
 
 ## Recording Program
