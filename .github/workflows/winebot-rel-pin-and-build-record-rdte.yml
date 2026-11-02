@@ -41,4 +41,39 @@ jobs:
           echo 'PASS: real_public_asset_download_checksum_and_tool_stage'
       - name: Nonpromotion boundary
         if: always()
-        run: echo 'Only public synthetic/tool asset source; no full REL, release, browser source projection, image publish, artifact upload, private infrastructure or target actuation.'
+        run: echo 'Public tool-stage source only. No release, image push, upload, private source or target actuation.'
+
+  bounded-public-rel-build:
+    needs: exact-public-asset-and-no-auto-artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disposable public hosted runner disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+          df -h .
+      - name: Build REL image with exact PR124 asset and PR125 suppression, no publication
+        shell: bash
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+          DOCKER_BUILD_EXPORT_LEGACY: 'false'
+        run: |
+          set -euo pipefail
+          docker build --progress=plain --target intent-rel --file docker/Dockerfile \
+            --build-arg BUILD_INTENT=rel \
+            --build-arg BASE_IMAGE=ghcr.io/sempersupra/winebot-base:base-2026-05-04 \
+            --tag winebot:combined-rel-preflight .
+          docker image inspect winebot:combined-rel-preflight \
+            --format '{{.Id}}' | grep -q '^sha256:'
+          echo 'PASS: source_pinned_combined_REL_image_built_locally'
+      - name: Explicit nonpromotion and ephemeral cleanup
+        if: always()
+        shell: bash
+        run: |
+          docker image rm winebot:combined-rel-preflight >/dev/null 2>&1 || true
+          echo 'No image publish, release, trust-pack upload, unsanitized diagnostics, private runner, secrets or production deployment.'
