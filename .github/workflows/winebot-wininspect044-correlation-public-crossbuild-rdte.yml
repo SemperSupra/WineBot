@@ -101,7 +101,7 @@ jobs:
                          else "build_command_failed")
                   print("PUBLIC_SOURCE_BUILD_ERROR_CLASS="+label)
                   if label in ("missing_symbol","compiler_diagnostic"):
-                      match=re.search(r"(?:wininspect-source/source/)?((?:core|daemon|clients)/[A-Za-z0-9_./-]+\\.(?:cpp|hpp)):(\\d+):",line)
+                      match=re.search(r"([A-Za-z0-9_-]+\.(?:cpp|hpp|h)):(\d+):",line)
                       if match:
                           print("PUBLIC_RELEASE_COMPILER_LOCATION="+match.group(1)+":"+match.group(2))
                       detail=line.split("error:",1)[-1].strip()[:140]
