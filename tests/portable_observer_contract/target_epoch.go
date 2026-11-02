@@ -4,6 +4,8 @@
 package observercontract
 
 import (
+    "crypto/rand"
+    "encoding/hex"
     "errors"
     "regexp"
 )
@@ -17,6 +19,7 @@ var (
 // TargetStamp is an opaque reference only if a separately trusted supervisor
 // minted the reference. It is not proof of HWND, PID, ownership, or authorization.
 type TargetStamp struct {
+    Issuer string
     Session string
     Desktop string
     Producer string
@@ -28,6 +31,7 @@ type TargetStamp struct {
 // TargetRegistry models a single stream producer's target lifetimes.
 // Single-writer only. Observations must not create stamps implicitly.
 type TargetRegistry struct {
+    issuer string
     session string
     desktop string
     producer string
@@ -44,16 +48,30 @@ func NewTargetRegistry(session, desktop, producer string, generation uint64) (*T
         generation == 0 {
         return nil, ErrTargetInvalid
     }
+    nonce, err := freshTargetIssuer()
+    if err != nil { return nil, ErrTargetInvalid }
     return &TargetRegistry{
-        session: session, desktop: desktop, producer: producer,
+        issuer: nonce, session: session, desktop: desktop, producer: producer,
         generation: generation, active: make(map[string]TargetStamp),
     }, nil
+}
+
+// Every registry has a separate unpredictable incarnation discriminator.
+// This ONLY prevents local registry-identity collisions. It does NOT attest a
+// real window source, a broker principal, or control authority.
+func freshTargetIssuer() (string,error) {
+    var nonce [16]byte
+    if _,err:=rand.Read(nonce[:]);err!=nil{return "",err}
+    return hex.EncodeToString(nonce[:]),nil
 }
 
 // Rotate invalidates every reference, even if the same synthetic opaque ref is
 // later issued again. Generation must be strictly increasing (no ABA/replay).
 func (r *TargetRegistry) Rotate(next uint64) error {
     if r == nil || next == 0 || next <= r.generation { return ErrTargetStale }
+    nonce,err:=freshTargetIssuer()
+    if err!=nil{return ErrTargetInvalid}
+    r.issuer = nonce
     r.generation = next
     r.active = make(map[string]TargetStamp)
     return nil
@@ -70,7 +88,7 @@ func (r *TargetRegistry) BindTrustedRef(ref string) (TargetStamp, error) {
     if _, exists := r.active[ref]; exists { return TargetStamp{}, ErrTargetDuplicate }
     r.nextEpoch++
     stamp := TargetStamp{
-        Session: r.session, Desktop: r.desktop, Producer: r.producer,
+        Issuer: r.issuer, Session: r.session, Desktop: r.desktop, Producer: r.producer,
         Generation: r.generation, Ref: ref, Epoch: r.nextEpoch,
     }
     r.active[ref] = stamp
@@ -79,7 +97,7 @@ func (r *TargetRegistry) BindTrustedRef(ref string) (TargetStamp, error) {
 
 // Check proves only current registry consistency, not authority to actuate.
 func (r *TargetRegistry) Check(s TargetStamp) error {
-    if r == nil || s.Session != r.session || s.Desktop != r.desktop ||
+    if r == nil || s.Issuer != r.issuer || s.Session != r.session || s.Desktop != r.desktop ||
         s.Producer != r.producer || s.Generation != r.generation ||
         s.Epoch == 0 || s.Ref == "" {
         return ErrTargetStale
