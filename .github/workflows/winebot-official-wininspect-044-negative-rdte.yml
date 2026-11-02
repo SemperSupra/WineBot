@@ -1,0 +1,53 @@
+name: winebot-official-wininspect-044-negative-rdte
+# Public GitHub-hosted runner ONLY. Strict negative baseline for immutable v0.4.4.
+# PASS means known correlation defect was detected, NOT that semantic RPC works.
+on:
+  push:
+    branches:
+      - qualification/official-wininspect-044-in-winebot-20261102
+    paths:
+      - docker/Dockerfile
+      - api/core/wininspect.py
+      - scripts/ci/rdte-wininspect-v044-release-gate.sh
+      - .github/workflows/winebot-official-wininspect-044-negative-rdte.yml
+permissions:
+  contents: read
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  DOCKER_BUILD_EXPORT_LEGACY: 'false'
+jobs:
+  immutable-release-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Validate released immutable asset and fail-closed client source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          d=Path("docker/Dockerfile").read_text()
+          c=Path("api/core/wininspect.py").read_text()
+          assert d.count("WinInspectPortable-v0.4.4.zip")==1
+          assert d.count("6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04")==1
+          assert "WinInspectPortable-v0.4.0.zip" not in d
+          assert 'WININSPECT_PROTOCOL_VERSION = "0.3.0"' in c
+          assert 'raise WinInspectError("WinInspect response correlation failed")' in c
+          assert 'response.get("id") != request_id' in c
+          print("PASS: pinned_official_044_archive_and_strict_rpc_correlation")
+          PY
+      - name: Free disposable runner disk without host/identity output
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Exercise unmodified release INSIDE WineBot; require known response-ID failure
+        shell: bash
+        run: bash scripts/ci/rdte-wininspect-v044-release-gate.sh
+      - name: Qualification boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'No private Actions minutes, real input, unsigned source projection, image push, build record upload, screenshot or binary artifact.'
+          echo 'A PASS here records expected *UNQUALIFIED* semantic RPC for stock v0.4.4; no production acceptance.'
