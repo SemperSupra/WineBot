@@ -17,7 +17,7 @@ jobs:
   native-synthetic-fixture:
     runs-on: windows-2022
     env:
-      WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ runner.temp }}\native-observer-safe.jsonl
+      WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ github.workspace }}/native-observer-safe.jsonl
     timeout-minutes: 18
     strategy:
       fail-fast: false
