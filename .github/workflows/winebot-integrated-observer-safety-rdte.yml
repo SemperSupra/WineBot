@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - qualification/integrated-observer-safety-slice-20261102
+      - qualification/winspect-typed-reinspection-hint-20261103
     paths:
       - tests/portable_observer_contract/**
       - .github/workflows/winebot-integrated-observer-safety-rdte.yml
