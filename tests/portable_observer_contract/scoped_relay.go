@@ -17,6 +17,7 @@ type ScopedRelay struct {
     generation uint64
     started bool
     stale bool
+    reason string
     next int
 }
 
@@ -38,32 +39,47 @@ func isSupportedObservation(kind string) bool {
 
 // Accept consumes normalized, validated adapter Frames only. Calling Accept is
 // never an attestation that an actual window or desktop identity was resolved.
+func (r *ScopedRelay) markStale(reason string) error {
+    r.stale = true
+    r.reason = reason
+    return ErrRelayStale
+}
+
 func (r *ScopedRelay) Accept(f Frame) error {
     if r==nil || r.stale {return ErrRelayStale}
     if f.Contract!=Contract || f.Stream!=r.stream || f.Source!=r.source {
-        r.stale=true
-        return ErrRelayStale
+        return r.markStale("stale_source")
     }
     if !r.started {
         if f.Status!="ready" || f.Sequence!=0 || f.Kind!="" {
-            r.stale=true
-            return ErrRelayStale
+            return r.markStale("invalid_start")
         }
-        if err:=r.ring.Publish(f);err!=nil {r.stale=true;return ErrRelayStale}
+        if err:=r.ring.Publish(f);err!=nil {return r.markStale("invalid_event")}
         r.started=true
         r.next=1
         return nil
     }
     if f.Status=="observed" && f.Sequence==r.next &&
        f.Sequence>=1 && f.Sequence<=128 && isSupportedObservation(f.Kind) {
-        if err:=r.ring.Publish(f);err!=nil {r.stale=true;return ErrRelayStale}
+        if err:=r.ring.Publish(f);err!=nil {return r.markStale("invalid_event")}
         r.next++
         return nil
     }
-    // Overflow, unsupported, sequence gaps, replays, unexpected readiness and
-    // forged event statuses demand a new snapshot and fresh incarnation.
-    r.stale=true
-    return ErrRelayStale
+    // Terminal causes are fixed literals, never source-supplied strings.
+    // The stream is unusable until an independently verified fresh snapshot
+    // and producer incarnation; neither a hint nor this error grants control.
+    switch {
+    case f.Status=="overflow":
+        return r.markStale("overflow")
+    case f.Status=="unsupported":
+        return r.markStale("unsupported")
+    case f.Status=="gap" || f.Sequence>r.next:
+        return r.markStale("gap")
+    case f.Sequence<r.next:
+        return r.markStale("replay")
+    default:
+        return r.markStale("invalid_event")
+    }
 }
 
 type ScopedBridge struct {
@@ -78,8 +94,11 @@ func (r *ScopedRelay) NewBridge(consumer string) (*ScopedBridge,error) {
     return &ScopedBridge{relay:r,bridge:bridge},nil
 }
 func (b *ScopedBridge) Poll(max int) ([]InspectionHint,error) {
-    if b==nil || b.relay==nil || b.relay.stale {
-        return nil,ErrReinspectionRequired
+    if b==nil || b.relay==nil || b.bridge==nil {
+        return nil,&ReinspectionError{Reason:"invalid_bridge"}
+    }
+    if b.relay.stale {
+        return nil,&ReinspectionError{Reason:b.relay.reason}
     }
     return b.bridge.Poll(max)
 }
