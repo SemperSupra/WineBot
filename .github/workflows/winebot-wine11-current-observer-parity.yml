@@ -6,8 +6,10 @@ on:
   push:
     branches:
       - qualification/wine11-current-observer-parity-20261031
+      - qualification/wine11-winspect-bridge-joined-20261103
     paths:
       - tests/portable_win32_native_rdte/**
+      - tests/portable_observer_contract/**
       - .github/workflows/winebot-wine11-current-observer-parity.yml
 
 permissions:
@@ -32,15 +34,42 @@ jobs:
           set -euo pipefail
           docker build --progress=plain --file docker/wine11-source.Dockerfile \
             --target wine11-runtime --tag winebot-wine11-current:fixture .
+      - name: Prepare disposable identity-free observation receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wine11-observer-join"
+          sudo chown 1000:1000 "$RUNNER_TEMP/wine11-observer-join"
+          chmod 0755 "$RUNNER_TEMP/wine11-observer-join"
       - name: Run current observer with same event oracle as native Windows
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm --network=none --cpus=2 --memory=4g \
             --pids-limit=256 --cap-drop=ALL --security-opt=no-new-privileges \
+            -e WINEBOT_OBSERVER_SAFE_RECEIPT=/opt/observer-join/events.jsonl \
             --mount "type=bind,source=$PWD/tests/portable_win32_native_rdte,target=/opt/rdte-tests,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/wine11-observer-join,target=/opt/observer-join" \
             winebot-wine11-current:fixture \
             /bin/bash /opt/rdte-tests/run_wine11.sh
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Verify real Wine 11 callback records through read-only portable consumer
+        shell: bash
+        env:
+          WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ runner.temp }}/wine11-observer-join/events.jsonl
+        run: |
+          set -euo pipefail
+          test -f "$WINEBOT_OBSERVER_SAFE_RECEIPT"
+          ( cd tests/portable_observer_contract && \
+            go test -race -count=1 -v -run '^TestRealNativeWinEventProducerThroughPortableWinInspectBridge$' ./... )
+      - name: Remove same-job synthetic records
+        if: always()
+        shell: bash
+        run: |
+          sudo rm -f "$RUNNER_TEMP/wine11-observer-join/events.jsonl"
       - name: Result classification
         if: always()
         shell: bash
