@@ -17,8 +17,7 @@ jobs:
   native-synthetic-fixture:
     runs-on: windows-2022
     env:
-      # Same disposable public job only: three-field synthetic event records.
-      WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ runner.temp }}\\native-observer-safe.jsonl
+      WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ runner.temp }}\native-observer-safe.jsonl
     timeout-minutes: 18
     strategy:
       fail-fast: false
@@ -44,20 +43,15 @@ jobs:
         run: |
           python tests/portable_win32_native_rdte/probe.py rdte-native-build/Release/win_event_observer.exe rdte-native-build/Release/win_event_fixture.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Consume real native event records via portable WinInspect-like read-only bridge
+      - name: Consume actual WinEvent records with portable read-only bridge
         shell: pwsh
         run: |
           if (-not (Test-Path -LiteralPath $env:WINEBOT_OBSERVER_SAFE_RECEIPT -PathType Leaf)) {
-            throw 'Native WinEvent source receipt is missing.'
+            throw 'Native producer record missing.'
           }
           Push-Location tests/portable_observer_contract
           try {
-            go test -race -count=1 -run '^TestRealNativeWinEventProducerThroughPortableWinInspectBridge        if: always()
-        shell: pwsh
-        run: |
-          Write-Output "Synthetic native Windows RDTE only; hosted runner GUI accessibility is environment-dependent."
-          Write-Output "No artifact uploads, screenshots, packaged binaries, source promotion or application injection."
- ./...
+            go test -race -count=1 -run '^TestRealNativeWinEventProducerThroughPortableWinInspectBridge$' ./...
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
       - name: Disposition
