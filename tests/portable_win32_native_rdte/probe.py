@@ -5,6 +5,7 @@ Uses two preexisting public synthetic C programs; no real app controls,
 injection, screen capture, network access or binary publication.
 """
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -135,6 +136,14 @@ def main():
         missing = REQUIRED - kinds
         if missing:
             raise ValueError("native_window_events_missing_" + "_".join(sorted(missing)))
+        # No raw daemon output or host identity: only the already validated
+        # three-field synthetic event schema is staged for the in-job Go
+        # normalization / WinInspect-like read-only consumer acceptance oracle.
+        receipt_path = os.environ.get("WINEBOT_OBSERVER_SAFE_RECEIPT")
+        if receipt_path:
+            with open(receipt_path, "w", encoding="utf-8", newline="\n") as receipt:
+                for item in events:
+                    receipt.write(json.dumps(item, separators=(",", ":")) + "\n")
         print("PASS: " + runtime + "_synthetic_fixture_win_events")
         print("PASS: contiguous_schema_bound_events=" + str(len(events) - 1))
         print("PASS: required_event_kinds=show,location,destroy")
