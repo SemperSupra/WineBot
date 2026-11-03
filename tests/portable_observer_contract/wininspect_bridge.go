@@ -6,12 +6,20 @@ import "errors"
 
 var ErrReinspectionRequired = errors.New("reinspection_required")
 
+// ReinspectionError retains only a fixed, non-identifying terminal cause.
+// It does not contain a stream cursor, reader identity, target, or authority.
+type ReinspectionError struct {
+ Reason string
+}
+func (e *ReinspectionError) Error() string { return ErrReinspectionRequired.Error() }
+func (e *ReinspectionError) Is(target error) bool { return target == ErrReinspectionRequired }
+
 // InspectionHint intentionally contains no HWND, PID, title, control text,
-// selector, target_ref, or action token. Legacy events.poll remains unchanged.
+// selector, target_ref, action token, or falsely resumable reader-name cursor.
+// There is intentionally no public resume cursor in hint.v0. Legacy events.poll is unchanged.
 type InspectionHint struct {
  Contract string `json:"contract"`
  Stream string `json:"stream"`
- Cursor string `json:"cursor"`
  Sequence int `json:"sequence"`
  Scope string `json:"scope"`
  Reason string `json:"reason"`
@@ -29,14 +37,14 @@ func NewReadOnlyBridge(ring *Fanout,consumer string) (*ReadOnlyBridge,error) {
 func (b *ReadOnlyBridge) Poll(max int) ([]InspectionHint,error) {
  frames,err:=b.ring.Poll(b.consumer,max)
  if err!=nil {
-  if errors.Is(err,ErrCursorGap) {return nil,ErrReinspectionRequired}
+  if errors.Is(err,ErrCursorGap) {return nil,&ReinspectionError{Reason:"gap"}}
   return nil,err
  }
  out:=make([]InspectionHint,0,len(frames))
  for _,f:=range frames {
   reason:=f.Kind
   if f.Status!="observed" {reason=f.Status}
-  out=append(out,InspectionHint{Contract:"wininspect.observer.hint.v0",Stream:f.Stream,Cursor:b.consumer,Sequence:f.Sequence,Scope:"desktop",Reason:reason})
+  out=append(out,InspectionHint{Contract:"wininspect.observer.hint.v0",Stream:f.Stream,Sequence:f.Sequence,Scope:"desktop",Reason:reason})
  }
  return out,nil
 }
