@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - qualification/native-win32-observer-fixture-20261031
+      - qualification/native-winspect-bridge-joined-20261103
     paths:
       - tests/portable_win32_native_rdte/**
       - .github/workflows/winebot-native-win32-observer-fixture.yml
@@ -15,6 +16,9 @@ permissions:
 jobs:
   native-synthetic-fixture:
     runs-on: windows-2022
+    env:
+      # Same disposable public job only: three-field synthetic event records.
+      WINEBOT_OBSERVER_SAFE_RECEIPT: ${{ runner.temp }}\\native-observer-safe.jsonl
     timeout-minutes: 18
     strategy:
       fail-fast: false
@@ -31,11 +35,31 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build rdte-native-build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.24'
+          cache: false
       - name: Execute native Windows event observation and bounded shutdown
         shell: pwsh
         run: |
           python tests/portable_win32_native_rdte/probe.py rdte-native-build/Release/win_event_observer.exe rdte-native-build/Release/win_event_fixture.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Consume real native event records via portable WinInspect-like read-only bridge
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath $env:WINEBOT_OBSERVER_SAFE_RECEIPT -PathType Leaf)) {
+            throw 'Native WinEvent source receipt is missing.'
+          }
+          Push-Location tests/portable_observer_contract
+          try {
+            go test -race -count=1 -run '^TestRealNativeWinEventProducerThroughPortableWinInspectBridge        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "Synthetic native Windows RDTE only; hosted runner GUI accessibility is environment-dependent."
+          Write-Output "No artifact uploads, screenshots, packaged binaries, source promotion or application injection."
+ ./...
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
       - name: Disposition
         if: always()
         shell: pwsh
