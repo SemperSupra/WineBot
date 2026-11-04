@@ -6,7 +6,13 @@ on:
   push:
     branches:
       - qualification/wine11-current-observer-parity-20261031
-      - qualification/wine11-winspect-bridge-joined-20261103
+    paths:
+      - tests/portable_win32_native_rdte/**
+      - tests/portable_observer_contract/**
+      - .github/workflows/winebot-wine11-current-observer-parity.yml
+  pull_request:
+    branches:
+      - qualification/native-winspect-bridge-joined-20261103
     paths:
       - tests/portable_win32_native_rdte/**
       - tests/portable_observer_contract/**
