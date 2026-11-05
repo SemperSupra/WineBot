@@ -153,3 +153,13 @@ def test_identifier_shape_cannot_encode_sensitive_marker() -> None:
     rendered = json.dumps(public)
     assert "sensitive_host_alias" not in rendered
     assert "secret_token" not in rendered
+
+
+def test_trust_pack_upload_requires_explicit_release_admission() -> None:
+    source = Path(".github/workflows/reusable-build-smoke-gate.yml").read_text(encoding="utf-8")
+    marker = "      - name: Upload trust pack\n"
+    assert source.count(marker) == 1
+    upload_block = source.split(marker, 1)[1].split("\n      - name:", 1)[0]
+    assert "inputs.generate_trust_pack && github.event_name == 'release'" in upload_block
+    assert "vars.WINEBOT_PUBLIC_TRUST_PACK_ENABLED == 'true'" in upload_block
+    assert "uses: actions/upload-artifact@" in upload_block
