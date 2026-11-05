@@ -18,6 +18,8 @@ else
     echo "Warning: shellcheck not found, skipping shell script linting."
 fi
 
+# Independent, dependency-free check before any Dockerfile-dependent unit-image build.
+python3 tests/test_ci_dockerbuild_artifact_policy.py
 python3 scripts/ci/verify-capability-matrix.py
 python3 scripts/ci/generate-python-sbom.py --output artifacts/ci/python-sbom.cdx.json
 python3 scripts/ci/validate-sbom.py --input artifacts/ci/python-sbom.cdx.json

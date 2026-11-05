@@ -1,0 +1,268 @@
+name: CPU Software Renderer RDTE (synthetic)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/cpu_renderer.py
+      - tests/test_cpu_renderer.py
+      - docker/cpu-renderers.Dockerfile
+      - tests/fixtures/cpu_gl_smoke.c
+      - scripts/ci/cpu_api_e2e.py
+      - .github/workflows/cpu-renderer-rdte.yml
+permissions:
+  contents: read
+concurrency:
+  group: cpu-rdte-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-software-rendering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Pure synthetic unit tests
+        run: python3 -m unittest discover -s tests -p 'test_cpu_renderer.py' -v
+      - name: Build isolated Debian Mesa image (no WineBot base or private assets)
+        run: docker build -f docker/cpu-renderers.Dockerfile -t winebot-cpu-rdte:synthetic .
+      - name: LLVMpipe GLX probe (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU OpenGL renderer identity'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-opengl-llvmpipe --timeout 20
+          echo 'PASS: CPU OpenGL renderer identity'
+      - name: LLVMpipe GLX draw smoke (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU OpenGL draw'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-opengl-llvmpipe --seconds 7 --timeout 20
+          echo 'PASS: CPU OpenGL draw'
+      - name: Lavapipe Vulkan probe (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU Vulkan renderer identity'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py probe --profile cpu-vulkan-lavapipe --timeout 20
+          echo 'PASS: CPU Vulkan renderer identity'
+      - name: Lavapipe Vulkan draw smoke (bounded)
+        timeout-minutes: 2
+        run: |
+          echo 'BEGIN: CPU Vulkan draw'
+          timeout -k 10s 75s docker run --rm --init --network none --entrypoint /usr/bin/xvfb-run winebot-cpu-rdte:synthetic \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_renderer.py benchmark --profile cpu-vulkan-lavapipe --frames 20 --timeout 45
+          echo 'PASS: CPU Vulkan draw'
+      # SwiftShader is deliberately NOT silently substituted or fetched from
+      # a floating release. A separately pinned, licensed ICD is needed.
+      # No artifact upload: keep public evidence generic and bounded.
+
+  synthetic-wine-opengl:
+    name: Derived WineBot Win32 WGL smoke (synthetic)
+    needs: synthetic-software-rendering
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Compile tiny Win32 OpenGL fixture on public runner
+        run: |
+          docker build -f docker/Dockerfile --target hook-dll-builder -t winebot:rdte-mingw .
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/cpu_gl_smoke.c:/src.c:ro" \
+            -v /tmp:/output winebot:rdte-mingw -O2 -o /output/winebot-cpu-gl-smoke.exe \
+            /src.c -lopengl32 -lgdi32 -luser32
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/wine_notepad_text_probe.c:/notepad-probe.c:ro" \
+            -v /tmp:/output winebot:rdte-mingw -O2 \
+            -o /output/winebot-notepad-probe.exe /notepad-probe.c -luser32
+      - name: Build qualified WineBot candidate and opt-in CPU rendering layer
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:rdte-slim .
+          docker build -f docker/cpu-renderers.Dockerfile \
+            --build-arg BASE_IMAGE=winebot:rdte-slim -t winebot:rdte-cpu .
+      - name: Wine built-in Notepad source-aware Win32 EDIT text oracle
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 115s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-notepad-native \
+            -v /tmp/winebot-notepad-probe.exe:/probe.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              wine notepad.exe >/tmp/notepad-local.log 2>&1 &
+              pid=$!
+              wid=""
+              for tick in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name Notepad 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.2
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: notepad_native_window"; exit 2
+              fi
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1; then
+                echo "UNQUALIFIED: notepad_native_focus"; exit 2
+              fi
+              if ! xdotool type --clearmodifiers --delay 30 WINEBOTRDTE >/dev/null 2>&1; then
+                echo "UNQUALIFIED: notepad_x11_text_submission"; exit 2
+              fi
+              sleep 1
+              if ! wine /probe.exe >/tmp/notepad-probe-local.log 2>&1; then
+                if grep -Eq "UNQUALIFIED: notepad_native_(top_level|edit_control|gettext_timeout|text_mismatch)" /tmp/notepad-probe-local.log; then
+                  grep -E "UNQUALIFIED: notepad_native_(top_level|edit_control|gettext_timeout|text_mismatch)" /tmp/notepad-probe-local.log | head -1
+                else
+                  echo "UNQUALIFIED: notepad_native_probe_execution"
+                fi
+                exit 2
+              fi
+              if ! tr -d "\r" </tmp/notepad-probe-local.log | grep -Fxq "PASS: Wine Notepad native EDIT text readback after X11 input"; then
+                echo "UNQUALIFIED: notepad_native_text_readback"; exit 2
+              fi
+              echo "PASS: Wine Notepad source-backed native EDIT text after X11 keyboard input"
+              kill "$pid" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+          # Only exact allowlisted outcomes; no editor text or X11 trace uploaded.
+      - name: WGL 15-point geometry/fill and thread matrix (bounded)
+        timeout-minutes: 7
+        run: |
+          for threads in 1 2 4; do
+            for config in "1 1 320 0" "20 128 640 0" "25 1024 960 0" "8 8 640 1" "4 32 960 1"; do
+            read -r frames triangles width fill <<< "$config"
+            if timeout -k 10s 85s docker run --rm --init --network none \
+              --cpus=2 --memory=3g --pids-limit=256 \
+              -e WINEDEBUG=-all \
+              -e WINEPREFIX=/tmp/winebot-fixture-prefix \
+              -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+              --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+              -a -s '-screen 0 1280x960x24 +extension GLX -nolisten tcp' \
+              python3 /opt/winebot/cpu_renderer.py exec \
+              --profile cpu-opengl-llvmpipe --threads "$threads" -- \
+              wine /fixture.exe "$frames" "$triangles" "$width" "$fill" \
+              > /tmp/winebot-wgl-job-local.log 2>&1; then
+                :
+            else
+                rc=$?
+                echo "UNQUALIFIED: Windows/WGL draw exit_class=$rc"
+                exit 2
+            fi
+            if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=$frames triangles=$triangles width=$width fill=$fill" \
+              /tmp/winebot-wgl-job-local.log; then
+                echo 'UNQUALIFIED: Windows/WGL success identity mismatch'
+                exit 2
+            fi
+            draw_us="$(grep -Eo 'elapsed_us=[0-9]{1,10}' /tmp/winebot-wgl-job-local.log | tail -1 | cut -d= -f2)"
+            if [[ ! "$draw_us" =~ ^[0-9]{1,10}$ ]]; then
+              echo 'UNQUALIFIED: Windows/WGL elapsed timing unavailable'
+              exit 2
+            fi
+            echo "PASS: Windows/WGL threads=$threads frames=$frames triangles=$triangles width=$width fill=$fill elapsed_us=$draw_us"
+            done
+          done
+          # Raw Wine stdout/stderr remains job-local and is never uploaded.
+
+      - name: Qualify deterministic Win32 key event and RGB response (synthetic)
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 120s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-input-fixture \
+            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              python3 /opt/winebot/cpu_renderer.py exec \
+                --profile cpu-opengl-llvmpipe --threads 2 -- \
+                wine /fixture.exe 1 1 320 0 1 >/tmp/winebot-input-local.log 2>&1 &
+              child=$!
+              ready=0
+              for i in $(seq 1 150); do
+                if grep -Fq WINE_SYNTHETIC_INPUT_READY /tmp/winebot-input-local.log 2>/dev/null; then
+                  ready=1
+                  break
+                fi
+                sleep 0.2
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: Windows synthetic input readiness"
+                exit 2
+              fi
+              wid="$(xdotool search --onlyvisible --name "Synthetic GL fixture" 2>/dev/null | head -1 || true)"
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: Windows input fixture window"
+                exit 2
+              fi
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1 ||
+                 ! xdotool key --clearmodifiers Down >/dev/null 2>&1; then
+                echo "UNQUALIFIED: X11 focus or key submission"
+                exit 2
+              fi
+              if ! wait "$child"; then
+                echo "UNQUALIFIED: Windows input acknowledgement process"
+                exit 2
+              fi
+              if ! grep -Fq WINE_SYNTHETIC_INPUT_ACK_RGB_OK /tmp/winebot-input-local.log; then
+                echo "UNQUALIFIED: Win32 key plus GL pixel oracle"
+                exit 2
+              fi
+              echo "PASS: Win32 key acknowledgement plus expected OpenGL RGB response"
+            '
+          # No raw Wine log or screenshot published.
+
+      - name: Repeat same Windows heavy-fill draw with warm-up (bounded)
+        timeout-minutes: 4
+        run: |
+          for threads in 4 1 2; do
+            timeout -k 10s 100s docker run --rm --init --network none \
+              --cpus=2 --memory=3g --pids-limit=256 \
+              -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-repeated-fixture \
+              -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+              --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+              -a -s '-screen 0 1280x960x24 +extension GLX -nolisten tcp' \
+              /bin/bash -euo pipefail -c '
+                render_threads="$1"
+                for rep in 0 1 2 3; do
+                  if ! python3 /opt/winebot/cpu_renderer.py exec \
+                    --profile cpu-opengl-llvmpipe --threads "$render_threads" -- \
+                    wine /fixture.exe 4 32 960 1 \
+                    >/tmp/winebot-repeated-local.log 2>&1; then
+                    echo "UNQUALIFIED: repeated Windows heavy fill"
+                    exit 2
+                  fi
+                  if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=4 triangles=32 width=960 fill=1" \
+                    /tmp/winebot-repeated-local.log; then
+                    echo "UNQUALIFIED: repeated framebuffer oracle"
+                    exit 2
+                  fi
+                  us="$(grep -Eo "elapsed_us=[0-9]{1,10}" /tmp/winebot-repeated-local.log | tail -1 | cut -d= -f2)"
+                  if [[ ! "$us" =~ ^[0-9]{1,10}$ ]] || [ "$us" -eq 0 ]; then
+                    echo "UNQUALIFIED: repeated render numeric sample"
+                    exit 2
+                  fi
+                  if [ "$rep" -gt 0 ]; then
+                    echo "OBS: warm-heavy-fill threads=$render_threads rep=$rep elapsed_us=$us"
+                  fi
+                done
+                echo "PASS: three warm heavy-fill samples threads=$render_threads"
+              ' -- "$threads"
+          done
+          # Only validated numeric timings are emitted; no image or log uploaded.
+
+      - name: Qualify WineBot API keyboard and framebuffer on CPU
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 145s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e WINEDEBUG=-all \
+            -v /tmp/winebot-cpu-gl-smoke.exe:/fixture.exe:ro \
+            --entrypoint /usr/bin/xvfb-run winebot:rdte-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            python3 /opt/winebot/cpu_api_e2e.py
