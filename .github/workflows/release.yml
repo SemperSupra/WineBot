@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Public BuildKit history artifacts are not approved release evidence.
+# Suppress docker/build-push-action automatic .dockerbuild record uploads.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
 defaults:
   run:
     shell: bash -euo pipefail {0}
