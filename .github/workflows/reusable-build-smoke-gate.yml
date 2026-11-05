@@ -187,7 +187,8 @@ jobs:
         run: scripts/ci/generate-trust-pack.sh "${{ inputs.trust_pack_dir }}"
 
       - name: Upload trust pack
-        if: ${{ inputs.generate_trust_pack }}
+        # Generated evidence stays local unless a release-specific public upload is admitted.
+        if: ${{ inputs.generate_trust_pack && github.event_name == 'release' && vars.WINEBOT_PUBLIC_TRUST_PACK_ENABLED == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.trust_pack_artifact_name }}
