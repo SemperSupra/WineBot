@@ -1,0 +1,27 @@
+name: BuildKit Automatic Record Publication Guard
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/*.yml'
+      - 'tests/test_ci_dockerbuild_artifact_policy.py'
+      - 'scripts/ci/lint.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-artifact-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout public-only source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Verify all Docker build workflows and negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/test_ci_dockerbuild_artifact_policy.py
+          echo 'PASS: all automatic BuildKit build-record uploads disabled'
