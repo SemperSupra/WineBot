@@ -21,7 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Python for synthetic tests
-        uses: actions/setup-python@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.12'
           cache: false
