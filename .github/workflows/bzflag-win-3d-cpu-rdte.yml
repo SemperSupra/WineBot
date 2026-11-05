@@ -1,0 +1,367 @@
+name: BZFlag Windows 3D CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/bzflag-win-3d-cpu-rdte.yml
+      - docker/bzflag-software-gl.Dockerfile
+      - tests/fixtures/win32_dialog_category.c
+      - tests/fixtures/wine32_gl_smoke.c
+permissions:
+  contents: read
+concurrency:
+  group: bzflag-3d-rdte-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-3d-cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Acquire official Windows BZFlag 2.4.30 with publisher checksum
+        timeout-minutes: 4
+        run: |
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 150 \
+            https://download.bzflag.org/bzflag/windows/2.4.30/bzflag-2.4.30.exe \
+            -o "$RUNNER_TEMP/bzflag-installer.exe"
+          echo "ffaed59ed35902ed50959a0c21eab2a68144d02427c0e1cd7ee07eb47c758999  $RUNNER_TEMP/bzflag-installer.exe" | sha256sum -c --status
+          echo 'PASS: official Windows BZFlag installer integrity'
+      - name: Build WineBot and isolated CPU OpenGL child image
+        timeout-minutes: 13
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:bzflag-rdte .
+          docker build -f docker/bzflag-software-gl.Dockerfile -t winebot:bzflag-cpu .
+          docker build -f docker/Dockerfile --target hook-dll-builder -t winebot:bzflag-mingw .
+          docker run --rm --network none --entrypoint x86_64-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/win32_dialog_category.c:/src.c:ro" \
+            -v "$RUNNER_TEMP:/out" winebot:bzflag-mingw \
+            -O2 -o /out/bzflag-dialog-probe.exe /src.c -luser32
+          docker run --rm --network none --entrypoint i686-w64-mingw32-gcc \
+            -v "$PWD/tests/fixtures/wine32_gl_smoke.c:/src32.c:ro" \
+            -v "$RUNNER_TEMP:/out" winebot:bzflag-mingw \
+            -O2 -o /out/wine32-gl-smoke.exe /src32.c \
+            -lopengl32 -lgdi32 -luser32
+      - name: Install and launch Windows 3D game without network
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 210s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-bzflag-fixture \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
+            -v "$RUNNER_TEMP/bzflag-dialog-probe.exe:/dialog-probe.exe:ro" \
+            -v "$RUNNER_TEMP/wine32-gl-smoke.exe:/wine32-gl-smoke.exe:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: CPU OpenGL renderer"
+                exit 2
+              fi
+              echo "PASS: CPU OpenGL renderer selected"
+              if ! timeout -k 5s 30s wine /wine32-gl-smoke.exe 1 1 320 0 \
+                    >/tmp/wine32-gl-local.log 2>&1; then
+                echo "UNQUALIFIED: x86 Win32 WGL software rendering probe"
+                exit 2
+              fi
+              if ! grep -Fq "WINE_OPENGL_LLVMPIPE_OK frames=1 triangles=1 width=320" \
+                    /tmp/wine32-gl-local.log; then
+                echo "UNQUALIFIED: x86 Win32 WGL framebuffer mismatch"
+                exit 2
+              fi
+              echo "PASS: x86 Windows WGL LLVMpipe framebuffer probe"
+              if ! timeout -k 5s 65s wine /installer.exe /S >/tmp/installer-local.log 2>&1; then
+                echo "UNQUALIFIED: silent Windows 3D installer"
+                exit 2
+              fi
+              echo "PASS: Windows game installer completed"
+              game="$(find "$WINEPREFIX/drive_c" -type f -iname bzflag.exe -print -quit)"
+              if [ -z "$game" ]; then
+                echo "UNQUALIFIED: installed 3D game executable missing"
+                exit 2
+              fi
+              # PE Machine field from DOS e_lfanew + 4; only category leaves CI.
+              read -r dos0 dos1 dos2 dos3 <<< "$(od -An -tu1 -j60 -N4 "$game")"
+              pe_offset=$((dos0 + 256*dos1 + 65536*dos2 + 16777216*dos3))
+              if [ "$pe_offset" -ge 64 ] && [ "$pe_offset" -le 10000000 ]; then
+                machine="$(od -An -tu2 -j$((pe_offset+4)) -N2 "$game" | xargs)"
+                case "$machine" in
+                  332) echo "OBS: Windows game PE architecture=x86" ;;
+                  34404) echo "OBS: Windows game PE architecture=x64" ;;
+                  *) echo "OBS: Windows game PE architecture=other" ;;
+                esac
+              else
+                echo "OBS: Windows game PE header unqualified"
+              fi
+              cd "$(dirname "$game")"
+              wine "$game" -window 800x600 -mute -nomotd -nolist >/tmp/game-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name BZFlag 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: visible Windows 3D game"
+                exit 2
+              fi
+              echo "PASS: Windows 3D game window visible"
+              seen=0
+              for sample in 1 2 3 4 5; do
+                sleep 3
+                if ! import -window "$wid" /tmp/game-scoped.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: scoped game frame capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/game-scoped.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ || ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: bounded image metadata"
+                  exit 2
+                fi
+                echo "OBS: scoped sample=$sample width=$w height=$h colors=$colors"
+                if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 40 ]; then
+                  seen=1
+                  echo "PASS: Windows 3D game scoped visual content"
+                  break
+                fi
+              done
+              if [ "$seen" -ne 1 ]; then
+                if import -window root /tmp/bzflag-root-local.png >/dev/null 2>&1; then
+                  read -r root_w root_h root_colors <<< "$(identify -format "%w %h %k" /tmp/bzflag-root-local.png 2>/dev/null || true)"
+                  if [[ "${root_w:-}" =~ ^[0-9]{1,4}$ && "${root_h:-}" =~ ^[0-9]{1,4}$ && "${root_colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                    echo "OBS: root screen width=$root_w height=$root_h colors=$root_colors"
+                  fi
+                fi
+                title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+                if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                  echo "OBS: application error-titled dialog"
+                else
+                  echo "OBS: application window title category unknown"
+                fi
+                if kill -0 "$child" 2>/dev/null; then
+                  echo "OBS: game launch process still present"
+                else
+                  echo "OBS: game launch process exited"
+                fi
+                if grep -Eiq "OpenGL|GLX|wgl|FBConfig" /tmp/game-local.log; then
+                  echo "OBS: local game log contains graphics terminology"
+                fi
+                if grep -Eiq "fatal|failed|unable|cannot|error" /tmp/game-local.log; then
+                  echo "OBS: local game log contains error terminology"
+                fi
+                if timeout -k 2s 8s wine /dialog-probe.exe >/tmp/win32-classification-local.log 2>&1; then
+                  category="$(grep -Eo "WIN32_DIALOG_CATEGORY=(graphics|resources|audio|network|generic_error|no_window|unknown)" /tmp/win32-classification-local.log | head -1 | cut -d= -f2)"
+                  children="$(grep -Eo "WIN32_DIALOG_CHILDREN_PRESENT=[01]" /tmp/win32-classification-local.log | head -1 | cut -d= -f2)"
+                  case "$children" in
+                    0) echo "OBS: dialog exposes no child controls" ;;
+                    1) echo "OBS: dialog exposes child controls" ;;
+                    *) echo "OBS: dialog child visibility unknown" ;;
+                  esac
+                  case "$category" in
+                    graphics|resources|audio|network|generic_error|no_window|unknown)
+                      echo "OBS: Win32 dialog category=$category" ;;
+                    *) echo "OBS: Win32 dialog probe unknown" ;;
+                  esac
+                else
+                  echo "OBS: Win32 dialog classifier unavailable"
+                fi
+                echo "UNQUALIFIED: 3D game viewport absent"
+                exit 2
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      - name: Bound official BZFS loopback-only local-world readiness
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 140s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-bzflag-server \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/bzflag-installer.exe:/installer.exe:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:bzflag-cpu \
+            -a -s '-screen 0 640x480x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! timeout -k 3s 45s wine /installer.exe /S >/tmp/bzfs-install-local.log 2>&1; then
+                echo "UNQUALIFIED: local server source installer"
+                exit 2
+              fi
+              server="$(find "$WINEPREFIX/drive_c" -type f -iname bzfs.exe -print -quit)"
+              if [ -z "$server" ]; then
+                echo "UNQUALIFIED: official local BZFS executable absent"
+                exit 2
+              fi
+              echo "PASS: official Windows BZFS executable available"
+              cd "$(dirname "$server")"
+              # Explicit localhost bind, no public listing and no master ban download.
+              wine "$server" -i 127.0.0.1 -p 5154 -noMasterBanlist >/tmp/bzfs-runtime-local.log 2>&1 &
+              pid=$!
+              ready=0
+              for i in $(seq 1 50); do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                  echo "UNQUALIFIED: local BZFS exited before readiness"
+                  exit 2
+                fi
+                # Local IPv4 127.0.0.1 and port 5154 in /proc/net/tcp; LISTEN only.
+                if awk "NR>1 && \$2==\"0100007F:1422\" && \$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+                  ready=1
+                  break
+                fi
+                sleep 0.3
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: localhost-only BZFS listener not observed"
+                exit 2
+              fi
+              if awk "NR>1 && \$2==\"00000000:1422\" && \$4==\"0A\" {found=1} END {exit !found}" /proc/net/tcp; then
+                echo "UNQUALIFIED: unexpected wildcard BZFS listener"
+                exit 2
+              fi
+              echo "PASS: isolated Windows BZFS loopback TCP listener"
+              # Batched differential: official text-only BZAdmin client, same local server.
+              # Probe before the real-game client. No packets, stdout or names uploaded.
+              admin="$(find "$WINEPREFIX/drive_c" -type f -iname bzadmin.exe -print -quit)"
+              if [ -z "$admin" ]; then
+                echo "OBS: official Windows BZAdmin binary=missing"
+              else
+                echo "PASS: official Windows BZAdmin binary present"
+                cd "$(dirname "$admin")"
+                wine "$admin" -ui stdout winebotrdte@127.0.0.1:5154 >/tmp/bzadmin-run-local.log 2>&1 &
+                adminpid=$!
+                admin_link=0
+                for j in $(seq 1 80); do
+                  if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                    admin_link=1
+                    break
+                  fi
+                  if ! kill -0 "$adminpid" 2>/dev/null; then break; fi
+                  sleep 0.2
+                done
+                if [ "$admin_link" -eq 1 ]; then
+                  echo "PASS: BZAdmin Windows protocol-client TCP connected"
+                else
+                  echo "OBS: BZAdmin TCP handshake not observed"
+                fi
+                kill "$adminpid" >/dev/null 2>&1 || true
+                wait "$adminpid" >/dev/null 2>&1 || true
+                # Preserve qualification integrity: do not allow a residual
+                # text client to be mistaken for the later graphical game client.
+                for j in $(seq 1 15); do
+                  if ! awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                    break
+                  fi
+                  sleep 0.2
+                done
+                if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                  echo "UNQUALIFIED: BZAdmin stale socket contaminates game trial"
+                  exit 2
+                fi
+              fi
+              # BZFlag client manpage: [callsign@]server[:port] positional join.
+              client="$(find "$WINEPREFIX/drive_c" -type f -iname bzflag.exe -print -quit)"
+              if [ -z "$client" ]; then
+                echo "UNQUALIFIED: local Windows BZFlag client absent"
+                exit 2
+              fi
+              cd "$(dirname "$client")"
+              # Official upstream bzflag.cxx parses -debug (debugLevel++).
+              # Source-backed phase classifier stays entirely local.
+              wine "$client" -debug -debug -window 800x600 -mute -nomotd -nolist \
+                winebotrdte@127.0.0.1:5154 >/tmp/bzflag-join-local.log 2>&1 &
+              gamepid=$!
+              connected=0
+              wid=""
+              for i in $(seq 1 100); do
+                if awk "NR>1 && \$4==\"01\" && (\$2 ~ /:1422$/ || \$3 ~ /:1422$/) {found=1} END {exit !found}" /proc/net/tcp; then
+                  connected=1
+                fi
+                wid="$(xdotool search --onlyvisible --name BZFlag 2>/dev/null | head -1 || true)"
+                if [ "$connected" -eq 1 ] && [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  break
+                fi
+                sleep 0.5
+              done
+              if [ "$connected" -ne 1 ]; then
+                if kill -0 "$gamepid" 2>/dev/null; then
+                  echo "OBS: direct-connect game process=present"
+                else
+                  echo "OBS: direct-connect game process=exited"
+                fi
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  echo "OBS: direct-connect game window=visible"
+                  title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+                  if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                    echo "OBS: direct-connect window class=error"
+                  else
+                    echo "OBS: direct-connect window class=other"
+                  fi
+                else
+                  echo "OBS: direct-connect game window=absent"
+                fi
+                if grep -Eiq "reject|denied|refused|banned" /tmp/bzfs-runtime-local.log; then
+                  echo "OBS: BZFS local log class=server_rejection_keyword"
+                fi
+                if grep -Eiq "connect|login|join|server" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local log class=connection_keyword"
+                fi
+                if grep -Eiq "fatal|error|fail|unable|cannot" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local log class=error_keyword"
+                fi
+                # Source phases: autoConnect -> joinRequested -> DNS ->
+                # ServerLink TCP; only allowlisted local code-derived strings.
+                if grep -Eiq "Trying Automatic Connection|Entering game" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source auto-connect phase keyword observed"
+                fi
+                # Upstream src/net/AresHandler.cxx initializes c-ares
+                # before its numeric IPv4 inet_aton fast path; both
+                # initialization diagnostics log only at level 2.
+                if grep -Eiq "Ares failed initializing library|Ares Failed initializing" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag c-ares initialization failure"
+                fi
+                if grep -Eiq "Server not found|Unable to resolve|hostname" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source DNS failure keyword observed"
+                fi
+                if grep -Eiq "Error connecting to server|Connection refused|SocketError" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag source TCP failure keyword observed"
+                fi
+                if grep -Eiq "OpenGL|renderer|GLX" /tmp/bzflag-join-local.log; then
+                  echo "OBS: BZFlag local graphics phase keyword observed"
+                fi
+                echo "UNQUALIFIED: local Windows client TCP handshake not observed"
+                exit 2
+              fi
+              echo "PASS: Windows game client established local server TCP"
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: connected game client window"
+                exit 2
+              fi
+              title="$(xdotool getwindowname "$wid" 2>/dev/null || true)"
+              if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                echo "UNQUALIFIED: connected game client error dialog"
+                exit 2
+              fi
+              sleep 3
+              if ! import -window "$wid" /tmp/bzflag-local-joined-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: connected Windows game frame capture"
+                exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/bzflag-local-joined-a.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ || ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: connected game image statistics"
+                exit 2
+              fi
+              echo "OBS: local client width=$w height=$h colors=$colors"
+              if [ "$w" -lt 250 ] || [ "$h" -lt 180 ] || [ "$colors" -lt 60 ]; then
+                echo "UNQUALIFIED: local client nonblank viewport"
+                exit 2
+              fi
+              echo "PASS: connected Windows game client visible content"
+              kill "$gamepid" >/dev/null 2>&1 || true
+              kill "$pid" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # Loopback server readiness is not a connected client or game-world pass.
+      # All images and process output remain inside disposable offline runner.
