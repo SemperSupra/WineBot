@@ -39,12 +39,12 @@ def sample_report() -> dict:
     }
 
 
-def test_projection_preserves_counts_and_only_static_test_identifiers() -> None:
+def test_projection_preserves_counts_but_redacts_all_untrusted_test_identifiers() -> None:
     report = PROJECT(sample_report())
     assert report["summary"]["total"] == 3
     assert report["summary"]["failed"] == 1
     assert report["failed_tests"] == [
-        {"test_id": "contracts/tests/conformance/test_health.py::TestHealth::test_health"}
+        {"test_id": "redacted"}
     ]
     rendered = json.dumps(report)
     assert "sensitive-host-alias" not in rendered
@@ -53,12 +53,12 @@ def test_projection_preserves_counts_and_only_static_test_identifiers() -> None:
     assert "environment" not in rendered
 
 
-def test_bare_pytest_basename_is_preserved_without_runtime_text() -> None:
+def test_bare_pytest_basename_is_also_redacted() -> None:
     raw = sample_report()
     raw["failures"][0]["test"] = "test_automation.py::TestWindows::test_windows_has_count"
     report = PROJECT(raw)
     assert report["failed_tests"] == [
-        {"test_id": "test_automation.py::TestWindows::test_windows_has_count"}
+        {"test_id": "redacted"}
     ]
     assert "SENSITIVE-TOKEN-VALUE" not in json.dumps(report)
 
@@ -107,6 +107,9 @@ def test_command_does_not_write_artifact_if_input_invalid(tmp_path: Path) -> Non
 def test_public_workflows_do_not_publish_raw_conformance_data(workflow_path: str) -> None:
     source = Path(workflow_path).read_text(encoding="utf-8")
     assert "--tb=no --show-capture=no -rN" in source
+    assert "conformance-pytest-local.log 2>&1" in source
+    assert "name: conformance-summary-public" in source
+    assert "::add-mask::%s" in source
     assert "path: conformance-summary-public.json" in source
     assert "path: conformance-results.json" not in source
     assert "steps.public-conformance-summary.outcome == 'success'" in source
@@ -126,7 +129,7 @@ def test_quiet_pytest_console_does_not_echo_assertion_response(tmp_path: Path) -
             "-m",
             "pytest",
             str(fixture),
-            "-v",
+            "-q",
             "--tb=no",
             "--show-capture=no",
             "-rN",
@@ -140,3 +143,13 @@ def test_quiet_pytest_console_does_not_echo_assertion_response(tmp_path: Path) -
     assert "1 failed" in process.stdout
     assert "SYNTHETIC-UNPUBLISHED-MARKER" not in process.stdout
     assert "SYNTHETIC-UNPUBLISHED-MARKER" not in process.stderr
+
+
+def test_identifier_shape_cannot_encode_sensitive_marker() -> None:
+    raw = sample_report()
+    raw["failures"][0]["test"] = "test_sensitive_host_alias_192_0_2_1.py::test_secret_token_marker"
+    public = PROJECT(raw)
+    assert public["failed_tests"] == [{"test_id": "redacted"}]
+    rendered = json.dumps(public)
+    assert "sensitive_host_alias" not in rendered
+    assert "secret_token" not in rendered

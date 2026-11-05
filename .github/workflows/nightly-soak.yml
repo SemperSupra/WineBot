@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+# Fail closed on unreviewed automatic Docker BuildKit history artifacts.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
 defaults:
   run:
     shell: bash -euo pipefail {0}

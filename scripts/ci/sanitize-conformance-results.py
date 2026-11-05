@@ -9,16 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from pathlib import Path
 
 MAX_RAW_BYTES = 1_048_576
 COUNT_FIELDS = ("total", "passed", "failed", "skipped", "xfailed", "xpassed", "errors")
-SAFE_TEST_ID = re.compile(
-    r"(?:(?:contracts/)?tests/conformance/)?test_[A-Za-z0-9_]+\.py"
-    r"(?:::\w+)*::test_[A-Za-z0-9_]+"
-)
-
 
 def project_public_result(raw: object) -> dict:
     """Build output solely from validated, bounded, allowlisted fields."""
@@ -43,13 +37,8 @@ def project_public_result(raw: object) -> dict:
     for item in failures:
         if not isinstance(item, dict):
             raise ValueError("invalid failure entry")
-        name = item.get("test")
-        safe_name = (
-            name
-            if isinstance(name, str) and len(name) <= 200 and SAFE_TEST_ID.fullmatch(name)
-            else "redacted"
-        )
-        tests.append({"test_id": safe_name})
+        # Names are untrusted even when they match a syntactic test-id pattern.
+        tests.append({"test_id": "redacted"})
 
     return {
         "schema": "winebot.public-conformance.v1",

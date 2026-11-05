@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+# Fail closed on unreviewed automatic Docker BuildKit history artifacts.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
 defaults:
   run:
     shell: bash -euo pipefail {0}
@@ -140,12 +144,13 @@ jobs:
           if [ -z "$TOKEN" ]; then
             TOKEN=$(docker compose -f compose/docker-compose.yml exec -T winebot cat /winebot-shared/winebot_api_token 2>/dev/null || true)
           fi
-          if [ -z "$TOKEN" ]; then
-            echo "Conformance token unavailable" >&2
+          # Avoid log-command/step-output injection and reject missing credentials.
+          if [[ ! "$TOKEN" =~ ^[A-Za-z0-9._~-]{16,512}$ ]]; then
+            echo "Conformance token unavailable or invalid" >&2
             exit 1
           fi
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          printf '::add-mask::%s\n' "$TOKEN"
+          printf 'token=%s\n' "$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Run conformance tests
         env:
@@ -156,7 +161,7 @@ jobs:
             --api-url "$API_URL" \
             --api-token "$API_TOKEN" \
             --results-file conformance-results.json \
-            -v --tb=no --show-capture=no -rN
+            -q --tb=no --show-capture=no -rN > conformance-pytest-local.log 2>&1
 
       - name: Project safe public conformance evidence
         id: public-conformance-summary
@@ -170,7 +175,7 @@ jobs:
         if: ${{ always() && steps.public-conformance-summary.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: conformance-results-release
+          name: conformance-summary-public-release-v1
           path: conformance-summary-public.json
           if-no-files-found: error
 
