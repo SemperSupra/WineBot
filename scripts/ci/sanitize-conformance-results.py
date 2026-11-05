@@ -44,7 +44,7 @@ def project_public_result(raw: object) -> dict:
         "schema": "winebot.public-conformance.v1",
         "summary": counts,
         "failed_tests": tests,
-        "note": "Raw failure payloads and environment details remain job-local.",
+        "note": "Only validated counts and fixed redacted markers are published.",
     }
 
 
