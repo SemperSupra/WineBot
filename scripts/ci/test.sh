@@ -22,4 +22,6 @@ pytest \
   tests/test_diag_bundle.py \
   tests/test_auto_view.py \
   tests/test_ui_dashboard.py \
-  tests/test_ui_accessibility.py
+  tests/test_ui_accessibility.py \
+  tests/test_visual_profile_cli.py \
+  tests/test_ci_trust_pack_provenance.py

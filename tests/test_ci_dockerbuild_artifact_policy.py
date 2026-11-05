@@ -49,6 +49,7 @@ def test_record_policy_fails_closed_on_missing_or_overridden_guard() -> None:
         protected + "      - env:\n          DOCKER_BUILD_RECORD_UPLOAD: 'true'\n"
     )
 
+
 if __name__ == "__main__":
     test_public_build_workflows_disable_automatic_build_record_upload()
     test_record_policy_fails_closed_on_missing_or_overridden_guard()

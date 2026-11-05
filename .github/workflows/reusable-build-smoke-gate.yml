@@ -60,8 +60,7 @@ on:
 permissions:
   contents: read
 
-# Public-source security hold: BuildKit history may contain unreviewed build diagnostics.
-# Retain normal job logs/explicit artifacts; suppress automatic .dockerbuild upload.
+# Fail closed on unreviewed automatic Docker BuildKit history artifacts.
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
 
@@ -182,6 +181,9 @@ jobs:
 
       - name: Generate trust pack artifact
         if: ${{ inputs.generate_trust_pack }}
+        env:
+          # Checkout may be a synthetic PR merge; preserve the source head.
+          WINEBOT_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: scripts/ci/generate-trust-pack.sh "${{ inputs.trust_pack_dir }}"
 
       - name: Upload trust pack
