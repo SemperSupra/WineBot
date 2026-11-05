@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Public-source security hold: BuildKit history may contain unreviewed build diagnostics.
+# Retain normal job logs/explicit artifacts; suppress automatic .dockerbuild upload.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
 defaults:
   run:
     shell: bash -euo pipefail {0}

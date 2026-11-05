@@ -1,0 +1,522 @@
+name: SuperTuxKart Windows 3D CPU RDTE
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/stk15-win-cpu-rdte.yml
+      - docker/stk15-software-gl.Dockerfile
+permissions:
+  contents: read
+concurrency:
+  group: stk15-cpu-rdte-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win64-opengl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Acquire pinned official SuperTuxKart 1.5 Windows game archive
+        timeout-minutes: 7
+        run: |
+          mkdir -p "$RUNNER_TEMP/stk-game"
+          curl -fsSL --retry 1 --connect-timeout 15 --max-time 300 \
+            https://github.com/supertuxkart/stk-code/releases/download/1.5/SuperTuxKart-1.5-win.zip \
+            -o "$RUNNER_TEMP/stk15-win.zip"
+          echo "9df7e2d67e8562127a3bb633030f1bd4ee77fa9e7f0ae110897473025af8acdc  $RUNNER_TEMP/stk15-win.zip" | sha256sum -c --status
+          unzip -qq "$RUNNER_TEMP/stk15-win.zip" -d "$RUNNER_TEMP/stk-game"
+          test -n "$(find "$RUNNER_TEMP/stk-game" -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+          echo "PASS: verified official Windows SuperTuxKart 1.5 portable archive"
+      - name: Build isolated WineBot and CPU-only Mesa overlay
+        timeout-minutes: 12
+        run: |
+          docker build -f docker/Dockerfile --target intent-slim -t winebot:stk15-rdte .
+          docker build -f docker/stk15-software-gl.Dockerfile -t winebot:stk15-cpu .
+      - name: Probe actual Windows 3D renderer startup and scoped pixels
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 215s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-fixture \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: CPU OpenGL device"
+                exit 2
+              fi
+              echo "PASS: software GLX control"
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: Win64 game binary unavailable"
+                exit 2
+              fi
+              # Static PE Machine categorization; do not publish executable paths.
+              arch_ok=0
+              if read -r dos0 dos1 dos2 dos3 <<< "$(od -An -tu1 -j60 -N4 "$exe" 2>/dev/null)" &&
+                 [[ "${dos0:-}" =~ ^[0-9]+$ && "${dos1:-}" =~ ^[0-9]+$ &&
+                    "${dos2:-}" =~ ^[0-9]+$ && "${dos3:-}" =~ ^[0-9]+$ ]]; then
+                pe_offset=$((dos0 + 256*dos1 + 65536*dos2 + 16777216*dos3))
+                if [ "$pe_offset" -ge 64 ] && [ "$pe_offset" -le 10000000 ]; then
+                  machine="$(od -An -tu2 -j$((pe_offset+4)) -N2 "$exe" 2>/dev/null | xargs)"
+                  case "$machine" in
+                    332) echo "OBS: Windows game PE architecture=x86" ;;
+                    34404) echo "OBS: Windows game PE architecture=x64"; arch_ok=1 ;;
+                    *) echo "OBS: Windows game PE architecture=other" ;;
+                  esac
+                else
+                  echo "OBS: Windows game PE architecture=unknown"
+                fi
+              else
+                echo "OBS: Windows game PE architecture=unknown"
+              fi
+              if [ "$arch_ok" -ne 1 ]; then
+                echo "UNQUALIFIED: selected Windows game executable is not x64 PE"
+                exit 2
+              fi
+              if [ -n "$(find /game -maxdepth 5 -type d -iname data -print -quit)" ]; then
+                echo "OBS: portable game data directory=present"
+              else
+                echo "OBS: portable game data directory=not_found"
+              fi
+              cd "$(dirname "$exe")"
+              wine "$exe" >/tmp/stk15-game-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 110); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                # First-failure evidence only: no arbitrary window titles,
+                # executable paths, Wine messages or images enter public CI.
+                if kill -0 "$child" 2>/dev/null; then
+                  echo "OBS: Windows launch process=present"
+                else
+                  echo "OBS: Windows launch process=exited"
+                fi
+                visible="$(xdotool search --onlyvisible --maxdepth 2 --name ".*" 2>/dev/null || true)"
+                count="$(printf "%s\n" "$visible" | grep -Ec "^[0-9]{1,16}$" || true)"
+                if [[ "$count" =~ ^[0-9]{1,4}$ ]]; then
+                  echo "OBS: visible window count=$count"
+                else
+                  echo "OBS: visible window count=unqualified"
+                fi
+                other="$(printf "%s\n" "$visible" | grep -E "^[0-9]{1,16}$" | head -1 || true)"
+                if [[ "$other" =~ ^[0-9]{1,16}$ ]] &&
+                   import -window "$other" /tmp/stk15-diagnostic-local.png >/dev/null 2>&1; then
+                  read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/stk15-diagnostic-local.png 2>/dev/null || true)"
+                  if [[ "${w:-}" =~ ^[0-9]{1,4}$ && "${h:-}" =~ ^[0-9]{1,4}$ &&
+                        "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                    echo "OBS: alternate window width=$w height=$h colors=$colors"
+                  else
+                    echo "OBS: alternate window dimensions=unqualified"
+                  fi
+                  title="$(xdotool getwindowname "$other" 2>/dev/null || true)"
+                  if [[ "$title" =~ [Ee]rror|[Ff]atal|[Ww]arning ]]; then
+                    echo "OBS: alternate window title category=error"
+                  else
+                    echo "OBS: alternate window title category=other"
+                  fi
+                fi
+                if grep -Eiq "import_dll|c0000135|module.*not found|library.*not found" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=loader_dependency"
+                fi
+                if grep -Eiq "OpenGL|GLX|wgl|FBConfig|Vulkan|shader" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=graphics"
+                fi
+                if grep -Eiq "fatal|error|failed|unable|cannot" /tmp/stk15-game-local.log; then
+                  echo "OBS: local Wine trace category=generic_error"
+                fi
+                echo "UNQUALIFIED: Windows 3D game window"
+                exit 2
+              fi
+              echo "PASS: Windows 3D game window visible"
+              ready=0
+              for sample in 1 2 3 4; do
+                sleep 4
+                if ! import -window "$wid" /tmp/stk15-scoped-local.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: window scoped capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/stk15-scoped-local.png 2>/dev/null || true)"
+                if [[ ! "${w:-}" =~ ^[0-9]{1,4}$ || ! "${h:-}" =~ ^[0-9]{1,4}$ || ! "${colors:-}" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: image statistics parsing"
+                  exit 2
+                fi
+                if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 60 ]; then
+                  ready=1
+                  echo "PASS: 3D game window has varied pixels at sample=$sample"
+                  break
+                fi
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: 3D game visual readiness"
+                exit 2
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      - name: Race-requested Windows 3D temporal frames (separate bounded oracle)
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 130s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-race \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              if ! glxinfo -B 2>/dev/null | grep -qi llvmpipe; then
+                echo "UNQUALIFIED: race CPU software renderer"
+                exit 2
+              fi
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: race x64 executable absent"
+                exit 2
+              fi
+              cd "$(dirname "$exe")"
+              # Both CLI options are documented in SuperTuxKart 1.5 main.cpp.
+              wine "$exe" --race-now --use-keyboard=0 >/tmp/stk-race-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: race-requested Windows game window"
+                exit 2
+              fi
+              echo "PASS: race-requested visible Windows game window"
+              if ! import -window "$wid" /tmp/race-frame-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: race first frame capture"
+                exit 2
+              fi
+              ready=0
+              for sample in 1 2 3 4; do
+                sleep 5
+                if ! import -window "$wid" /tmp/race-frame-b.png >/dev/null 2>&1; then
+                  echo "UNQUALIFIED: race followup frame capture"
+                  exit 2
+                fi
+                read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/race-frame-b.png 2>/dev/null || true)"
+                if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                      ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: race image statistics"
+                  exit 2
+                fi
+                compare -metric AE /tmp/race-frame-a.png /tmp/race-frame-b.png null: 2>/tmp/race-delta-local.log || true
+                delta="$(grep -Eo "^[0-9]+" /tmp/race-delta-local.log | head -1 || true)"
+                if [[ ! "$delta" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: race temporal comparison"
+                  exit 2
+                fi
+                echo "OBS: race sample=$sample width=$w height=$h colors=$colors changed_pixels=$delta"
+                if [ "$w" -ge 250 ] && [ "$h" -ge 180 ] && [ "$colors" -ge 60 ] && [ "$delta" -ge 300 ]; then
+                  ready=1
+                  echo "PASS: race-requested temporal pixel variation"
+                  break
+                fi
+              done
+              if [ "$ready" -ne 1 ]; then
+                echo "UNQUALIFIED: race-requested temporal visual readiness"
+                exit 2
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      - name: Batch explicit packaged-track phase and keyboard visual diagnostic
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 130s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-explicit-track \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: explicit-track x64 binary absent"; exit 2; fi
+              track="$(find /game -type f -ipath "*/data/tracks/lighthouse/track.xml" -print -quit)"
+              if [ -z "$track" ]; then
+                echo "UNQUALIFIED: explicit-track packaged lighthouse asset absent"
+                exit 2
+              fi
+              echo "PASS: source-named lighthouse track packaged"
+              cd "$(dirname "$exe")"
+              wine "$exe" --race-now --use-keyboard=0 --track=lighthouse >/tmp/stk-track-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 100); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: explicit-track Windows game window"
+                exit 2
+              fi
+              echo "PASS: explicit-track named Windows window"
+              xdotool windowfocus "$wid" >/dev/null 2>&1 || true
+              sleep 8
+              if ! import -window "$wid" /tmp/track-frame-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track settled first capture"; exit 2
+              fi
+              sleep 5
+              if ! import -window "$wid" /tmp/track-frame-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track settled second capture"; exit 2
+              fi
+              if ! xdotool key --clearmodifiers Escape >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track Escape submission"; exit 2
+              fi
+              sleep 3
+              if ! import -window "$wid" /tmp/track-frame-c.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: explicit-track post-input capture"; exit 2
+              fi
+              read -r w h colors <<< "$(identify -format "%w %h %k" /tmp/track-frame-b.png 2>/dev/null || true)"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: explicit-track image dimensions"; exit 2
+              fi
+              ae() {
+                compare -metric AE "$1" "$2" null: 2>/tmp/track-ae-local.log || true
+                grep -Eo "^[0-9]+" /tmp/track-ae-local.log | head -1 || true
+              }
+              ambient="$(ae /tmp/track-frame-a.png /tmp/track-frame-b.png)"
+              keyresp="$(ae /tmp/track-frame-b.png /tmp/track-frame-c.png)"
+              if [[ ! "$ambient" =~ ^[0-9]{1,9}$ || ! "$keyresp" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: explicit-track AE statistics"; exit 2
+              fi
+              echo "OBS: explicit-track window_width=$w height=$h colors=$colors no_key_delta=$ambient post_key_delta=$keyresp"
+              if grep -Eiq "error|fail|cannot|unable" /tmp/stk-track-local.log; then
+                echo "OBS: explicit-track local game log=generic_error_category"
+              fi
+              if grep -Eiq "track|asset|scene" /tmp/stk-track-local.log; then
+                echo "OBS: explicit-track local game log=track_asset_category"
+              fi
+              if [ "$ambient" -ge 300 ] && [ "$keyresp" -ge 300 ]; then
+                echo "PASS: explicit-track sustained dynamic imagery candidate"
+              else
+                echo "OBS: explicit-track sustained dynamic imagery UNQUALIFIED"
+              fi
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # Explicit-track fixture is independent and diagnostic; strict causal
+      # keyboard gate below remains unchanged and fail-closed.
+      - name: Counterbalanced ABBA source-aware Escape versus no-key trials
+        timeout-minutes: 4
+        run: |
+          timeout -k 10s 185s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then echo "UNQUALIFIED: ABBA game binary"; exit 2; fi
+              cd "$(dirname "$exe")"
+              ctrl_first=0; ctrl_second=0; act_first=0; act_second=0
+              for trial in 1 2 3 4; do
+                case "$trial" in 1|4) mode=control;; 2|3) mode=escape;; esac
+                export WINEPREFIX="/tmp/stk-abba-trial-$trial"
+                wine "$exe" --race-now --use-keyboard=0 --track=lighthouse \
+                  >/tmp/stk-abba-local.log 2>&1 &
+                pid=$!
+                wid=""
+                for tick in $(seq 1 70); do
+                  wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                  if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                  if ! kill -0 "$pid" 2>/dev/null; then break; fi
+                  sleep 0.3
+                done
+                if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                  echo "UNQUALIFIED: ABBA trial named window"; exit 2
+                fi
+                xdotool windowfocus "$wid" >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA trial focus"; exit 2;
+                }
+                sleep 5
+                import -window "$wid" /tmp/abba-before.png >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA baseline frame"; exit 2;
+                }
+                if [ "$mode" = escape ]; then
+                  xdotool key --clearmodifiers Escape >/dev/null 2>&1 || {
+                    echo "UNQUALIFIED: ABBA Escape submission"; exit 2;
+                  }
+                fi
+                sleep 4
+                import -window "$wid" /tmp/abba-after.png >/dev/null 2>&1 || {
+                  echo "UNQUALIFIED: ABBA outcome frame"; exit 2;
+                }
+                compare -metric AE /tmp/abba-before.png /tmp/abba-after.png null: 2>/tmp/abba-ae-local.log || true
+                changed="$(grep -Eo "^[0-9]+" /tmp/abba-ae-local.log | head -1 || true)"
+                if [[ ! "$changed" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: ABBA numeric response"; exit 2
+                fi
+                echo "OBS: ABBA trial=$trial condition=$mode changed_pixels=$changed"
+                case "$trial" in
+                  1) ctrl_first="$changed";; 2) act_first="$changed";;
+                  3) act_second="$changed";; 4) ctrl_second="$changed";;
+                esac
+                kill "$pid" >/dev/null 2>&1 || true
+                wineserver -k >/dev/null 2>&1 || true
+              done
+              if [ "$act_first" -ge 30000 ] && [ "$act_second" -ge 30000 ] &&
+                 [ "$act_first" -ge "$((3*(ctrl_first+1)))" ] &&
+                 [ "$act_second" -ge "$((3*(ctrl_second+1)))" ]; then
+                echo "OBS: ABBA repeated input-correlated contrast candidate"
+              else
+                echo "OBS: ABBA input-correlated contrast UNQUALIFIED"
+              fi
+              # Native StateManager GAME/menu or World phase remains unknown.
+            '
+      - name: Causal keyboard pause candidate (bounded visual A/B probe)
+        timeout-minutes: 3
+        run: |
+          timeout -k 10s 130s docker run --rm --init --network none \
+            --cpus=2 --memory=3g --pids-limit=256 \
+            -e WINEDEBUG=-all -e WINEPREFIX=/tmp/winebot-stk15-key \
+            -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe -e LP_NUM_THREADS=4 \
+            -v "$RUNNER_TEMP/stk-game:/game:ro" \
+            --entrypoint /usr/bin/xvfb-run winebot:stk15-cpu \
+            -a -s '-screen 0 1280x720x24 +extension GLX -nolisten tcp' \
+            /bin/bash -euo pipefail -c '
+              exe="$(find /game -type f -ipath "*/build-x86_64/bin/supertuxkart.exe" -print -quit)"
+              if [ -z "$exe" ]; then
+                echo "UNQUALIFIED: keyboard game executable"
+                exit 2
+              fi
+              cd "$(dirname "$exe")"
+              wine "$exe" --race-now --use-keyboard=0 --track=lighthouse >/tmp/stk-key-local.log 2>&1 &
+              child=$!
+              wid=""
+              for i in $(seq 1 90); do
+                wid="$(xdotool search --onlyvisible --name SuperTuxKart 2>/dev/null | head -1 || true)"
+                if [[ "$wid" =~ ^[0-9]{1,16}$ ]]; then break; fi
+                sleep 0.5
+              done
+              if [[ ! "$wid" =~ ^[0-9]{1,16}$ ]]; then
+                echo "UNQUALIFIED: keyboard race window"
+                exit 2
+              fi
+              if ! xdotool windowfocus "$wid" >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard window focus"
+                exit 2
+              fi
+              echo "PASS: candidate keyboard race window focused"
+              focused="$(xdotool getwindowfocus 2>/dev/null || true)"
+              if [ "$focused" = "$wid" ]; then
+                echo "OBS: X11 focus identity=game_window"
+              else
+                echo "OBS: X11 focus identity=other_or_child"
+              fi
+              sleep 4
+              if ! import -window "$wid" /tmp/key-a.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard control first frame"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/key-b.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard control second frame"
+                exit 2
+              fi
+              # Before versus after a single documented pause action.
+              # No inference of semantic gameplay state from xdotool alone.
+              if ! xdotool key --clearmodifiers Escape >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard synthetic Escape delivery"
+                exit 2
+              fi
+              echo "PASS: candidate keyboard Escape submitted"
+              focused_after="$(xdotool getwindowfocus 2>/dev/null || true)"
+              if [ "$focused_after" = "$wid" ]; then
+                echo "OBS: X11 after-key focus identity=game_window"
+              else
+                echo "OBS: X11 after-key focus identity=other_or_child"
+              fi
+              sleep 1
+              if ! import -window "$wid" /tmp/key-c.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard response capture"
+                exit 2
+              fi
+              sleep 2
+              if ! import -window "$wid" /tmp/key-d.png >/dev/null 2>&1; then
+                echo "UNQUALIFIED: keyboard followup capture"
+                exit 2
+              fi
+              if kill -0 "$child" 2>/dev/null; then
+                echo "OBS: keyboard Wine launch process=present"
+              else
+                echo "OBS: keyboard Wine launch process=exited"
+              fi
+              if grep -Eiq "fatal|error|failed|unable|cannot" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local Wine game log=generic_error_category"
+              else
+                echo "OBS: keyboard local Wine game log=no_generic_error_category"
+              fi
+              # Log contents stay in the disposable runner; classify only.
+              if grep -Eiq "asset|texture|mesh|resource|model|data/|kart|track" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=asset_or_track_keyword"
+              fi
+              if grep -Eiq "OpenGL|GLX|GLSL|shader|driver|Vulkan|renderer" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=graphics_keyword"
+              fi
+              if grep -Eiq "socket|connect|online|network|http|dns" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=network_keyword"
+              fi
+              if grep -Eiq "start.*race|race.*start|player.*kart|current.*track" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=race_phase_keyword"
+              fi
+              if grep -Eiq "fatal|assert|abort|exception|segfault" /tmp/stk-key-local.log; then
+                echo "OBS: keyboard local game log=critical_keyword"
+              fi
+              stats="$(identify -format "%w %h %k" /tmp/key-c.png 2>/dev/null || true)"
+              read -r w h colors <<< "$stats"
+              if [[ ! "$w" =~ ^[0-9]{1,4}$ || ! "$h" =~ ^[0-9]{1,4}$ ||
+                    ! "$colors" =~ ^[0-9]{1,9}$ ]]; then
+                echo "UNQUALIFIED: keyboard response image statistics"
+                exit 2
+              fi
+              ae() {
+                compare -metric AE "$1" "$2" null: 2>/tmp/stk-key-delta-local.log || true
+                grep -Eo "^[0-9]+" /tmp/stk-key-delta-local.log | head -1 || true
+              }
+              neutral="$(ae /tmp/key-a.png /tmp/key-b.png)"
+              response="$(ae /tmp/key-b.png /tmp/key-c.png)"
+              later="$(ae /tmp/key-c.png /tmp/key-d.png)"
+              convert /tmp/key-b.png -crop 640x360+320+180 +repage /tmp/key-center-before.png
+              convert /tmp/key-c.png -crop 640x360+320+180 +repage /tmp/key-center-after.png
+              center="$(ae /tmp/key-center-before.png /tmp/key-center-after.png)"
+              for value in "$neutral" "$response" "$later" "$center"; do
+                if [[ ! "$value" =~ ^[0-9]{1,9}$ ]]; then
+                  echo "UNQUALIFIED: keyboard response delta statistics"
+                  exit 2
+                fi
+              done
+              echo "OBS: keyboard width=$w height=$h colors=$colors no_input_delta=$neutral escape_delta=$response post_escape_delta=$later central_escape_delta=$center"
+              if [ "$w" -ne 1280 ] || [ "$h" -ne 720 ] ||
+                 [ "$response" -lt 25000 ] || [ "$response" -lt "$((2*(neutral+1)))" ] ||
+                 [ "$center" -lt 3000 ]; then
+                echo "UNQUALIFIED: input-correlated visual transition"
+                exit 2
+              fi
+              echo "PASS: input-correlated pause-candidate visual transition"
+              kill "$child" >/dev/null 2>&1 || true
+              wineserver -k >/dev/null 2>&1 || true
+            '
+      # The pause-candidate contrast is a visual input response, not kart motion proof.
+      # The race-requested frame oracle is not proof of race semantics or causal input.
+      # All binaries, assets, PNGs and raw process logs remain ephemeral.
+      # A menu pixel pass does not constitute real 3D gameplay qualification.
