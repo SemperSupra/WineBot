@@ -24,7 +24,6 @@ jobs:
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.12'
-          cache: false
       - name: Install pinned standalone test dependency
         run: python3 -m pip install --disable-pip-version-check pytest==8.4.2
       - name: Verify synthetic provenance and fail-closed cases
