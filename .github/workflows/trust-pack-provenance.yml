@@ -1,0 +1,36 @@
+name: Trust Pack Source Provenance Regression
+on:
+  pull_request:
+    paths:
+      - 'scripts/ci/generate-trust-pack.sh'
+      - 'scripts/ci/test.sh'
+      - 'tests/test_ci_trust_pack_provenance.py'
+      - '.github/workflows/reusable-build-smoke-gate.yml'
+      - '.github/workflows/trust-pack-provenance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-versus-checkout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Checkout public test-only source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Setup Python for synthetic tests
+        uses: actions/setup-python@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          python-version: '3.12'
+          cache: false
+      - name: Install pinned standalone test dependency
+        run: python3 -m pip install --disable-pip-version-check pytest==8.4.2
+      - name: Verify synthetic provenance and fail-closed cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pytest -q tests/test_ci_trust_pack_provenance.py
+          bash -n scripts/ci/generate-trust-pack.sh
+          bash -n scripts/ci/test.sh
