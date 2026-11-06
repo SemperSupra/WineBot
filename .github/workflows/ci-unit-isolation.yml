@@ -37,12 +37,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Build unit image without starting Wine
-        run: docker compose -f compose/docker-compose.yml --profile test build test-runner
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive build test-runner
       - name: Execute real project unit suite with no service dependencies
-        run: docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner scripts/ci/test.sh
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm --no-deps test-runner scripts/ci/test.sh
       - name: Cleanup test-only containers
         if: always()
-        run: docker compose -f compose/docker-compose.yml --profile test down --remove-orphans || true
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive down --remove-orphans || true
 
   bounded-interactive-startup:
     runs-on: ubuntu-24.04
