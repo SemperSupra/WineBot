@@ -1,0 +1,91 @@
+name: CI Unit Isolation and Startup Safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/reusable-build-smoke-gate.yml'
+      - '.github/workflows/ci-unit-isolation.yml'
+      - 'docker/entrypoint.sh'
+      - 'scripts/init/30-start-services.sh'
+      - 'scripts/init/winepath-with-retry.sh'
+      - 'tests/test_winepath_startup_retry.py'
+      - 'scripts/ci/test.sh'
+      - 'scripts/ci/classify-startup-logs.py'
+      - 'tests/test_ci_unit_isolation.py'
+
+permissions:
+  contents: read
+
+jobs:
+  safe-startup-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout public source without saved credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Shell syntax and isolated CI regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/ci/test.sh
+          python3 tests/test_ci_unit_isolation.py
+          python3 -m py_compile scripts/ci/classify-startup-logs.py
+      - name: Validate GitHub Actions workflow YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -c 'import yaml; from pathlib import Path; files = (".github/workflows/ci.yml", ".github/workflows/ci-unit-isolation.yml"); [yaml.safe_load(Path(p).read_text(encoding="utf-8")) for p in files]; print("PASS: workflow YAML parsed")'
+
+  runtime-independent-unit-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout public source without saved credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build unit image without starting Wine
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive build test-runner
+      - name: Execute real project unit suite with no service dependencies
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm --no-deps test-runner scripts/ci/test.sh
+      - name: Cleanup test-only containers
+        if: always()
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive down --remove-orphans || true
+
+  bounded-interactive-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout public source without saved credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build exact WineBot interactive image on public runner
+        run: docker compose -f compose/docker-compose.yml --profile interactive build winebot-interactive
+      - name: Exercise real interactive health gate
+        id: startup
+        continue-on-error: true
+        run: docker compose -f compose/docker-compose.yml --profile interactive up --detach --wait --wait-timeout 150 winebot-interactive
+      - name: Classify startup failure without revealing service logs
+        if: ${{ always() && steps.startup.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          cid="$(docker compose -f compose/docker-compose.yml --profile interactive ps -q winebot-interactive || true)"
+          if [ -z "$cid" ]; then
+            echo "STARTUP_DIAGNOSTIC container=absent"
+          else
+            docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || true
+          fi
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
+            python3 scripts/ci/classify-startup-logs.py || true
+      - name: Reject unqualified interactive startup
+        if: always()
+        env:
+          STARTUP_OUTCOME: ${{ steps.startup.outcome }}
+        run: test "$STARTUP_OUTCOME" = success
+      - name: Stop isolated interactive service
+        if: always()
+        run: docker compose -f compose/docker-compose.yml --profile interactive down --remove-orphans || true
