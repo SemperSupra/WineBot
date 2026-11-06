@@ -39,7 +39,7 @@ jobs:
         run: docker compose -f compose/docker-compose.yml --profile lint run --rm lint-runner scripts/ci/lint.sh
 
       - name: Containerized Unit Tests (runtime-independent)
-        run: docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner scripts/ci/test.sh
+        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm --no-deps test-runner scripts/ci/test.sh
 
       - name: Start interactive dependency for browser E2E
         id: start-e2e-runtime
@@ -72,7 +72,7 @@ for needle, label in stages:
 
       - name: Deterministic E2E subset
         run: |
-          docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner \
+          docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm --no-deps test-runner \
             pytest -q /work/tests/e2e/test_dashboard_e2e.py /work/tests/e2e/test_ux_keyboard_accessibility.py
 
       - name: Stop E2E runtime
