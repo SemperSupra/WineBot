@@ -25,4 +25,5 @@ pytest \
   tests/test_ui_accessibility.py \
   tests/test_visual_profile_cli.py \
   tests/test_ci_trust_pack_provenance.py \
-  tests/test_ci_public_conformance_summary.py
+  tests/test_ci_public_conformance_summary.py \
+  tests/test_ci_unit_isolation.py
