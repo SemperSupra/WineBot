@@ -27,3 +27,19 @@ jobs:
           set -euo pipefail
           bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/ci/test.sh
           python3 tests/test_ci_unit_isolation.py
+
+  runtime-independent-unit-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout public source without saved credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build unit image without starting Wine
+        run: docker compose -f compose/docker-compose.yml --profile test build test-runner
+      - name: Execute real project unit suite with no service dependencies
+        run: docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner scripts/ci/test.sh
+      - name: Cleanup test-only containers
+        if: always()
+        run: docker compose -f compose/docker-compose.yml --profile test down --remove-orphans || true
