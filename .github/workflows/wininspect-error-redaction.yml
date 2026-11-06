@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned public-only test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.4.2
+        run: python3 -m pip install --disable-pip-version-check -r requirements/requirements-rel.txt pytest==8.4.2
       - name: Execute synthetic strict-correlation negative tests
         run: |
           set -euo pipefail
