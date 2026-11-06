@@ -77,8 +77,9 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
     if [ -z "${API_TOKEN:-}" ]; then
         # Generate a random 16-char token for secure-by-default operation
         export API_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-        echo "--> [SECURITY] No API_TOKEN provided. Generated random token: ${API_TOKEN}"
-        echo "--> [SECURITY] Use this token in 'X-API-Key' header for all requests."
+        # Never print the generated credential into public CI/service logs.
+        echo "--> [SECURITY] Generated an ephemeral API token (value not logged)."
+        echo "--> [SECURITY] Token is available only through existing local file discovery."
         
     fi
     # Persist for internal tool discovery (use /tmp as /run is root-only)
