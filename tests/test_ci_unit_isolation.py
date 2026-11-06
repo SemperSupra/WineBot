@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class CIUnitIsolationTests(unittest.TestCase):
     def test_units_do_not_start_interactive_runtime(self):
         source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        unit = "run --rm --no-deps test-runner scripts/ci/test.sh"
+        unit = "--profile test --profile interactive run --rm --no-deps test-runner scripts/ci/test.sh"
         startup = "up --detach --wait --wait-timeout 150 winebot-interactive"
         e2e = "pytest -q /work/tests/e2e/test_dashboard_e2e.py"
         self.assertEqual(source.count(unit), 1)
