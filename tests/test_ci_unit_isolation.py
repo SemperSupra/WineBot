@@ -54,6 +54,16 @@ class CIUnitIsolationTests(unittest.TestCase):
         self.assertEqual(output.strip(), "STARTUP_DIAGNOSTIC stage=failed_trace_log_path")
         self.assertNotIn(marker, output)
 
+    def test_wine_ci_runner_image_pinned_to_qualified_public_venue(self):
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        reusable = (ROOT / ".github/workflows/reusable-build-smoke-gate.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(ci.count("runs-on: ubuntu-24.04"), 2)
+        self.assertEqual(reusable.count("runs-on: ubuntu-24.04"), 1)
+        self.assertNotIn("runs-on: ubuntu-latest", ci)
+        self.assertNotIn("runs-on: ubuntu-latest", reusable)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)
