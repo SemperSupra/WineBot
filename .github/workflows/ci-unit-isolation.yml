@@ -43,3 +43,50 @@ jobs:
       - name: Cleanup test-only containers
         if: always()
         run: docker compose -f compose/docker-compose.yml --profile test down --remove-orphans || true
+
+  bounded-interactive-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout public source without saved credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build exact WineBot interactive image on public runner
+        run: docker compose -f compose/docker-compose.yml --profile interactive build winebot-interactive
+      - name: Exercise real interactive health gate
+        id: startup
+        continue-on-error: true
+        run: docker compose -f compose/docker-compose.yml --profile interactive up --detach --wait --wait-timeout 150 winebot-interactive
+      - name: Classify startup failure without revealing service logs
+        if: ${{ always() && steps.startup.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          cid="$(docker compose -f compose/docker-compose.yml --profile interactive ps -q winebot-interactive || true)"
+          if [ -z "$cid" ]; then
+            echo "STARTUP_DIAGNOSTIC container=absent"
+          else
+            docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || true
+          fi
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
+            python3 -c 'import sys
+text = sys.stdin.read()
+for needle, label in (
+    ("Pass 2: Infrastructure", "infrastructure"),
+    ("Pass 3: Wine Environment", "wine"),
+    ("Pass 4: Services", "services"),
+    ("WINEBOT_STARTUP_ERROR stage=configuration", "failed_configuration"),
+    ("WINEBOT_STARTUP_ERROR stage=infrastructure", "failed_infrastructure"),
+    ("WINEBOT_STARTUP_ERROR stage=wine", "failed_wine"),
+    ("WINEBOT_STARTUP_ERROR stage=services", "failed_services"),
+):
+    if needle in text:
+        print("STARTUP_DIAGNOSTIC stage=" + label)' || true
+      - name: Reject unqualified interactive startup
+        if: always()
+        env:
+          STARTUP_OUTCOME: ${{ steps.startup.outcome }}
+        run: test "$STARTUP_OUTCOME" = success
+      - name: Stop isolated interactive service
+        if: always()
+        run: docker compose -f compose/docker-compose.yml --profile interactive down --remove-orphans || true
