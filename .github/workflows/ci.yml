@@ -38,13 +38,46 @@ jobs:
       - name: Containerized Linting
         run: docker compose -f compose/docker-compose.yml --profile lint run --rm lint-runner scripts/ci/lint.sh
 
-      - name: Containerized Unit Tests
-        run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm test-runner scripts/ci/test.sh
+      - name: Containerized Unit Tests (runtime-independent)
+        run: docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner scripts/ci/test.sh
+
+      - name: Start interactive dependency for browser E2E
+        id: start-e2e-runtime
+        run: docker compose -f compose/docker-compose.yml --profile interactive up --detach --wait --wait-timeout 150 winebot-interactive
+
+      - name: Classify failed interactive startup without printing service logs
+        if: ${{ failure() && steps.start-e2e-runtime.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          container_id="$(docker compose -f compose/docker-compose.yml --profile interactive ps -q winebot-interactive || true)"
+          if [ -z "$container_id" ]; then
+            echo "STARTUP_DIAGNOSTIC container=absent"
+          else
+            docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$container_id" || true
+          fi
+          # Read privately; emit only enumerated stage names, never raw logs or tokens.
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
+            python3 -c 'import sys
+text = sys.stdin.read()
+stages = (
+    ("Pass 2: Infrastructure", "infrastructure"),
+    ("Pass 3: Wine Environment", "wine"),
+    ("Pass 4: Services", "services"),
+    ("WINEBOT_STARTUP_ERROR", "explicit_failure"),
+    ("Xvfb failed to start", "xvfb_failure"),
+    ("Configuration admission rejected", "configuration_rejected"),
+)
+for needle, label in stages:
+    print("STARTUP_DIAGNOSTIC stage=" + label) if needle in text else None' || true
 
       - name: Deterministic E2E subset
         run: |
-          docker compose -f compose/docker-compose.yml --profile interactive --profile test run --rm test-runner \
+          docker compose -f compose/docker-compose.yml --profile test run --rm --no-deps test-runner \
             pytest -q /work/tests/e2e/test_dashboard_e2e.py /work/tests/e2e/test_ux_keyboard_accessibility.py
+
+      - name: Stop E2E runtime
+        if: always()
+        run: docker compose -f compose/docker-compose.yml --profile interactive down --remove-orphans || true
 
   conformance:
     name: Conformance (Contracts)
