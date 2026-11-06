@@ -27,6 +27,12 @@ jobs:
           set -euo pipefail
           bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/ci/test.sh
           python3 tests/test_ci_unit_isolation.py
+      - name: Validate GitHub Actions workflow YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -c 'import yaml; from pathlib import Path; files = (".github/workflows/ci.yml", ".github/workflows/ci-unit-isolation.yml"); [yaml.safe_load(Path(p).read_text(encoding="utf-8")) for p in files]; print("PASS: workflow YAML parsed")'
 
   runtime-independent-unit-suite:
     runs-on: ubuntu-24.04
