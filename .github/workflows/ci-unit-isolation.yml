@@ -6,6 +6,8 @@ on:
       - '.github/workflows/ci-unit-isolation.yml'
       - 'docker/entrypoint.sh'
       - 'scripts/init/30-start-services.sh'
+      - 'scripts/init/winepath-with-retry.sh'
+      - 'tests/test_winepath_startup_retry.py'
       - 'scripts/ci/test.sh'
       - 'scripts/ci/classify-startup-logs.py'
       - 'tests/test_ci_unit_isolation.py'
