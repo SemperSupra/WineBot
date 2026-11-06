@@ -41,6 +41,9 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --- USER CONTEXT (winebot) ---
+# Classify an early failure by a fixed stage, never echoing environment values.
+WINEBOT_STARTUP_STAGE="configuration"
+trap 'startup_rc=$?; if [ "$startup_rc" -ne 0 ]; then printf "WINEBOT_STARTUP_ERROR stage=%s rc=%s\\n" "$WINEBOT_STARTUP_STAGE" "$startup_rc" >&2; fi' EXIT
 write_instance_state() {
     local state="$1"
     local reason="${2:-}"
@@ -116,17 +119,22 @@ if { [ "$BUILD_INTENT" = "rel" ] || [ "$BUILD_INTENT" = "rel-runner" ]; } && [ "
     echo "--> Support Mode enabled for ${ttl_min} minutes (until epoch ${WINEBOT_SUPPORT_MODE_UNTIL_EPOCH})."
 fi
 
+WINEBOT_STARTUP_STAGE="infrastructure"
 # 2. Infrastructure Setup (Session, X11, WM)
 echo "--> Pass 2: Infrastructure..."
 source /scripts/init/10-setup-infra.sh
 
+WINEBOT_STARTUP_STAGE="wine"
 # 3. Wine Environment Setup (Prefix, Theme, VNC)
 echo "--> Pass 3: Wine Environment..."
 source /scripts/init/20-setup-wine.sh
 
+WINEBOT_STARTUP_STAGE="services"
 # 4. Service Startup (API, Recorder, Supervisor)
 echo "--> Pass 4: Services..."
 source /scripts/init/30-start-services.sh
+# Startup complete; do not misclassify later application failures.
+trap - EXIT
 
 if [ "${DEBUG:-0}" = "1" ]; then
     echo "--> DEBUG: Windows automation tool versions..."
