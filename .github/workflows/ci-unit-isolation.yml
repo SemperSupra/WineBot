@@ -69,19 +69,7 @@ jobs:
             docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || true
           fi
           docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
-            python3 -c 'import sys
-text = sys.stdin.read()
-for needle, label in (
-    ("Pass 2: Infrastructure", "infrastructure"),
-    ("Pass 3: Wine Environment", "wine"),
-    ("Pass 4: Services", "services"),
-    ("WINEBOT_STARTUP_ERROR stage=configuration", "failed_configuration"),
-    ("WINEBOT_STARTUP_ERROR stage=infrastructure", "failed_infrastructure"),
-    ("WINEBOT_STARTUP_ERROR stage=wine", "failed_wine"),
-    ("WINEBOT_STARTUP_ERROR stage=services", "failed_services"),
-):
-    if needle in text:
-        print("STARTUP_DIAGNOSTIC stage=" + label)' || true
+            python3 -c 'import sys; data = sys.stdin.read(); stages = (("Pass 2: Infrastructure", "infrastructure"), ("Pass 3: Wine Environment", "wine"), ("Pass 4: Services", "services"), ("WINEBOT_STARTUP_ERROR stage=configuration", "failed_configuration"), ("WINEBOT_STARTUP_ERROR stage=infrastructure", "failed_infrastructure"), ("WINEBOT_STARTUP_ERROR stage=wine", "failed_wine"), ("WINEBOT_STARTUP_ERROR stage=services", "failed_services")); [print("STARTUP_DIAGNOSTIC stage=" + label) for needle, label in stages if needle in data]' || true
       - name: Reject unqualified interactive startup
         if: always()
         env:
