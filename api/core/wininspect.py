@@ -287,9 +287,8 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         response = _read_frame(sock)
 
     if response.get("id") != request_id:
-        raise WinInspectError(
-            f"unexpected WinInspect response id: {response.get('id')!r}; hello={hello!r}"
-        )
+        # Never expose untrusted daemon hello identity in API-visible errors.
+        raise WinInspectError("WinInspect response correlation failed")
     if not response.get("ok"):
         error = response.get("error") or {}
         raise WinInspectError(str(error.get("message") or error or "WinInspect request failed"))
