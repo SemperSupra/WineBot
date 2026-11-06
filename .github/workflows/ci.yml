@@ -27,7 +27,7 @@ concurrency:
 jobs:
   pre-flight:
     name: Pre-flight (Lint & Unit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Verify capability matrix references
@@ -71,7 +71,7 @@ jobs:
   conformance:
     name: Conformance (Contracts)
     needs: pre-flight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
