@@ -43,7 +43,7 @@
 | **OmniParser v2** | 2024 | YOLOv8 | No | Florence-2 | 0.6s/A100 | Partial | Microsoft |
 | **ScreenParser** | 2024 | 55-class detector | Tesseract | No | 47ms | ✅ | — |
 | **UIBert** | 2021 | BERT-based | No | No | — | ❌ Mobile | — |
-| **Ours (WineBot)** | 2026 | YOLO26-S | ✅ PP-OCRv6 | ✅ KV-Ground | **330ms/3090** | ✅ Desktop | This work |
+| **Ours (WineBot)** | 2026 | YOLO26-S | ✅ PP-OCRv6 | ✅ KV-Ground | **workload-dependent** | ✅ Desktop | This work |
 
 **OmniParser v2** (Microsoft, 2024) uses YOLOv8 for icon detection and Florence-2 for captioning. It achieves 39.6% on ScreenSpot-Pro. Key limitation: does not include desktop OCR (reads text via captioning only, not dedicated OCR). Runs at 0.6s/frame on A100.
 

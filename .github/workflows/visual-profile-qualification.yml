@@ -1,0 +1,39 @@
+name: Visual Profile CLI Synthetic RDTE (no image or private output)
+on:
+  pull_request:
+    paths:
+      - .github/workflows/visual-profile-qualification.yml
+      - scripts/internal/profile-catalog.sh
+      - scripts/wb
+      - tests/test_visual_profile_cli.py
+      - docs/default-profiles.md
+
+permissions:
+  contents: read
+
+jobs:
+  visual-profile-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source-only candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          bash -n scripts/wb
+          bash -n scripts/internal/profile-catalog.sh
+      - name: Qualify all synthetic profile acceptance cases
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import runpy
+          tests=runpy.run_path("tests/test_visual_profile_cli.py")
+          for name in sorted(tests):
+              if name.startswith("test_"):
+                  tests[name]()
+          print("VISUAL_PROFILE_SYNTHETIC_CASES=9")
+          print("VISUAL_PROFILE_AUTHORITY_MODIFICATION=false")
+          PY

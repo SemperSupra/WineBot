@@ -1,0 +1,28 @@
+name: Provisional vNext Public Evidence Safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/public-vnext-evidence-guard.yml'
+      - 'scripts/ci/project-vnext-public.py'
+      - 'scripts/ci/run-vnext-slices.sh'
+      - 'tests/test_ci_vnext_evidence.py'
+      - 'scripts/ci/test.sh'
+permissions:
+  contents: read
+jobs:
+  public-counts-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Source, safe output and workflow policy checks
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/run-vnext-slices.sh
+          python3 -m py_compile scripts/ci/project-vnext-public.py
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3 pytest==8.4.2
+          python3 -m pytest -q tests/test_ci_vnext_evidence.py
+          python3 -c 'import yaml; from pathlib import Path; yaml.safe_load(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))'
