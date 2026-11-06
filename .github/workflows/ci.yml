@@ -57,7 +57,7 @@ jobs:
           fi
           # Read privately; emit only enumerated stage names, never raw logs or tokens.
           docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
-            python3 -c 'import sys; data = sys.stdin.read(); stages = (("Pass 2: Infrastructure", "infrastructure"), ("Pass 3: Wine Environment", "wine"), ("Pass 4: Services", "services"), ("WINEBOT_STARTUP_ERROR", "explicit_failure"), ("Xvfb failed to start", "xvfb_failure"), ("Configuration admission rejected", "configuration_rejected")); [print("STARTUP_DIAGNOSTIC stage=" + label) for needle, label in stages if needle in data]' || true
+            python3 scripts/ci/classify-startup-logs.py || true
 
       - name: Deterministic E2E subset
         run: |

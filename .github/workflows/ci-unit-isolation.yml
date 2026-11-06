@@ -7,6 +7,7 @@ on:
       - 'docker/entrypoint.sh'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/test.sh'
+      - 'scripts/ci/classify-startup-logs.py'
       - 'tests/test_ci_unit_isolation.py'
 
 permissions:
@@ -27,6 +28,7 @@ jobs:
           set -euo pipefail
           bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/ci/test.sh
           python3 tests/test_ci_unit_isolation.py
+          python3 -m py_compile scripts/ci/classify-startup-logs.py
       - name: Validate GitHub Actions workflow YAML
         shell: bash
         run: |
@@ -75,7 +77,7 @@ jobs:
             docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || true
           fi
           docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
-            python3 -c 'import sys; data = sys.stdin.read(); stages = (("Pass 2: Infrastructure", "infrastructure"), ("Pass 3: Wine Environment", "wine"), ("Pass 4: Services", "services"), ("WINEBOT_STARTUP_ERROR stage=configuration", "failed_configuration"), ("WINEBOT_STARTUP_ERROR stage=infrastructure", "failed_infrastructure"), ("WINEBOT_STARTUP_ERROR stage=wine", "failed_wine"), ("WINEBOT_STARTUP_ERROR stage=services", "failed_services")); [print("STARTUP_DIAGNOSTIC stage=" + label) for needle, label in stages if needle in data]' || true
+            python3 scripts/ci/classify-startup-logs.py || true
       - name: Reject unqualified interactive startup
         if: always()
         env:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 30-start-services.sh: Start API, Tracing, and Supervisor Loop
 
+WINEBOT_STARTUP_STAGE="services/input-trace"
 echo "--> Pass 4: Service Startup (WINEBOT_INPUT_TRACE_WINDOWS=${WINEBOT_INPUT_TRACE_WINDOWS:-unset})"
 
 # Post-Init Tracing (Ensures wineserver is stable)
@@ -9,8 +10,11 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     sleep 2
     WIN_TRACE_MS="${WINEBOT_INPUT_TRACE_WINDOWS_SAMPLE_MS:-5}"
     mkdir -p "$SESSION_DIR/logs"
+    WINEBOT_STARTUP_STAGE="services/trace-log-path"
     WINE_LOG_PATH=$(winepath -w "$SESSION_DIR/logs/input_events_windows.jsonl")
+    WINEBOT_STARTUP_STAGE="services/trace-script-path"
     WINE_SCRIPT_PATH=$(winepath -w /automation/core/input_trace_windows.ahk)
+    WINEBOT_STARTUP_STAGE="services/trace-launch"
     echo "--> Starting Windows Input Trace..."
     (
       TRACE_RESTART_WINDOW="${WINEBOT_TRACE_RESTART_WINDOW_SECONDS:-120}"
@@ -47,11 +51,13 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     ) &
 fi
 
+WINEBOT_STARTUP_STAGE="services/native-input-trace"
 if [ "${WINEBOT_INPUT_TRACE:-0}" = "1" ]; then
     python3 -m automation.input_trace start --session-dir "$SESSION_DIR" >/dev/null 2>&1 &
 fi
 
 # Recorder (if enabled)
+WINEBOT_STARTUP_STAGE="services/recording"
 if [ "${WINEBOT_RECORD:-0}" = "1" ]; then
     if [[ "$SCREEN" == *x*x* ]]; then RES="${SCREEN%x*}"; else RES="$SCREEN"; fi
     
@@ -73,10 +79,13 @@ if [ "${WINEBOT_RECORD:-0}" = "1" ]; then
 fi
 
 # API
+WINEBOT_STARTUP_STAGE="services/api"
 if [ "${ENABLE_API:-0}" = "1" ]; then
     if [ -z "${API_TOKEN:-}" ]; then
         # Generate a random 16-char token for secure-by-default operation
+        WINEBOT_STARTUP_STAGE="services/api-token"
         export API_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        WINEBOT_STARTUP_STAGE="services/api"
         # Never print the generated credential into public CI/service logs.
         echo "--> [SECURITY] Generated an ephemeral API token (value not logged)."
         echo "--> [SECURITY] Token is available only through existing local file discovery."
@@ -102,6 +111,7 @@ if [ "${ENABLE_API:-0}" = "1" ]; then
 fi
 
 # Supervisor
+WINEBOT_STARTUP_STAGE="services/supervisor"
 if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
     echo "--> Starting Desktop Supervisor..."
     # Settle time
@@ -183,3 +193,5 @@ if [ "${WINEBOT_SUPERVISE_EXPLORER:-1}" = "1" ]; then
 else
     echo "--> Desktop Supervisor disabled (WINEBOT_SUPERVISE_EXPLORER=0)."
 fi
+
+WINEBOT_STARTUP_STAGE="services/complete"

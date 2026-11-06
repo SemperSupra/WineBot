@@ -22,8 +22,8 @@ class CIUnitIsolationTests(unittest.TestCase):
     def test_failed_startup_emits_only_bounded_markers(self):
         source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("Classify failed interactive startup without printing service logs", source)
-        self.assertIn("python3 -c 'import sys", source)
-        self.assertIn('print("STARTUP_DIAGNOSTIC stage=" + label)', source)
+        self.assertIn("python3 scripts/ci/classify-startup-logs.py", source)
+        self.assertIn('STARTUP_DIAGNOSTIC stage=', (ROOT / "scripts/ci/classify-startup-logs.py").read_text(encoding="utf-8"))
         self.assertIn("State.OOMKilled", source)
         self.assertNotIn("docker compose -f compose/docker-compose.yml logs --tail", source)
 
@@ -38,6 +38,21 @@ class CIUnitIsolationTests(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertLess(source.index('WINEBOT_STARTUP_STAGE="services"'),
                         source.index("trap - EXIT"))
+
+    def test_classifier_redacts_untrusted_log_contents(self):
+        import subprocess
+        import sys
+
+        marker = "SYNTHETIC-CREDENTIAL-NOT-FOR-RELEASE"
+        output = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/ci/classify-startup-logs.py")],
+            input=marker + "\\nWINEBOT_STARTUP_ERROR stage=services/trace-log-path rc=1\\n",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        self.assertEqual(output.strip(), "STARTUP_DIAGNOSTIC stage=failed_trace_log_path")
+        self.assertNotIn(marker, output)
 
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
