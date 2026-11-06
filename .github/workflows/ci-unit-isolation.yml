@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/ci.yml'
+      - '.github/workflows/reusable-build-smoke-gate.yml'
       - '.github/workflows/ci-unit-isolation.yml'
       - 'docker/entrypoint.sh'
       - 'scripts/init/30-start-services.sh'
