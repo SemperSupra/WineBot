@@ -1,0 +1,25 @@
+name: WinInspect RPC Identity-Redaction Regression
+on:
+  pull_request:
+    paths:
+      - 'api/core/wininspect.py'
+      - 'tests/test_wininspect_error_redaction.py'
+      - 'scripts/ci/test.sh'
+      - '.github/workflows/wininspect-error-redaction.yml'
+permissions:
+  contents: read
+jobs:
+  strict-correlation-no-identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned public-only test runner
+        run: python3 -m pip install --disable-pip-version-check pytest==8.4.2
+      - name: Execute synthetic strict-correlation negative tests
+        run: |
+          set -euo pipefail
+          python3 -m pytest -q tests/test_wininspect_error_redaction.py
+          python3 -m py_compile api/core/wininspect.py
