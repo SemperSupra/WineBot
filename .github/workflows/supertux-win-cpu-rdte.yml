@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   supertux-win64-cpu:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       DOCKER_BUILD_RECORD_UPLOAD: 'false'
