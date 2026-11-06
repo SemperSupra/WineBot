@@ -1,7 +1,7 @@
 """Source-level regression for isolated unit CI and safe startup diagnostics."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
