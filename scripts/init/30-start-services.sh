@@ -11,9 +11,9 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     WIN_TRACE_MS="${WINEBOT_INPUT_TRACE_WINDOWS_SAMPLE_MS:-5}"
     mkdir -p "$SESSION_DIR/logs"
     WINEBOT_STARTUP_STAGE="services/trace-log-path"
-    WINE_LOG_PATH=$(winepath -w "$SESSION_DIR/logs/input_events_windows.jsonl")
+    WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"
     WINEBOT_STARTUP_STAGE="services/trace-script-path"
-    WINE_SCRIPT_PATH=$(winepath -w /automation/core/input_trace_windows.ahk)
+    WINE_SCRIPT_PATH="$(/scripts/init/winepath-with-retry.sh /automation/core/input_trace_windows.ahk)"
     WINEBOT_STARTUP_STAGE="services/trace-launch"
     echo "--> Starting Windows Input Trace..."
     (
