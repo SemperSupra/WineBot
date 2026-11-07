@@ -206,6 +206,35 @@ esac
             self.assertIn("WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch", source)
             self.assertNotIn('echo "$version"', source)
 
+
+    def test_wine11_candidate_has_scoped_signed_repo_and_pinned_stable_package(self):
+        base = (ROOT / "docker/base.Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "D43F640145369C51D786DDEA76F1A20FF987672F", base
+        )
+        self.assertIn("winehq-stable=11.0.0.0~trixie-1", base)
+        self.assertIn("Signed-By: /etc/apt/keyrings/winehq-archive.gpg", base)
+        self.assertIn("Suites: trixie", base)
+        self.assertNotIn("wine wine64 wine32 cabextract", base)
+        self.assertIn("wine --version | grep -Eq '^wine-11([.]|$)'", base)
+
+    def test_wine11_candidate_uses_local_public_runner_with_no_image_publishing(self):
+        candidate = (
+            ROOT / ".github/workflows/nightly-rel-startup-qualification.yml"
+        ).read_text(encoding="utf-8")
+        manual = (ROOT / ".github/workflows/base-image.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("winebot-base:wine11-candidate", candidate)
+        self.assertIn("file: docker/base.Dockerfile", candidate)
+        self.assertIn("--build-arg BASE_IMAGE=winebot-base:wine11-candidate", candidate)
+        self.assertIn("ref: " + "$" + "{{ github.event.pull_request.head.sha }}", candidate)
+        self.assertIn("push: false", candidate)
+        self.assertNotIn("push: true", candidate)
+        self.assertNotIn("actions/upload-artifact@", candidate)
+        self.assertIn("Require Wine 11 base identity before image publication", manual)
+        self.assertIn("runs-on: ubuntu-24.04", manual)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)

@@ -15,16 +15,36 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     && apt-get update \
     && apt-get -y --with-new-pkgs upgrade \
     && apt-get install -y --no-install-recommends \
-        wine wine64 wine32 cabextract \
+        cabextract \
         xvfb xauth xdotool wmctrl xinput \
         libxcomposite1 libxinerama1 libxrandr2 libxrender1 libxcursor1 libxi6 libxtst6 libxfixes3 libvulkan1 \
         fonts-liberation \
         imagemagick x11-utils procps ffmpeg \
-        ca-certificates curl gosu unzip \
+        ca-certificates curl gnupg gosu unzip \
         python3 python3-pip gdb \
     && apt-get -y --with-new-pkgs upgrade \
     && curl -sL -o /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/20260125/src/winetricks \
     && chmod +x /usr/local/bin/winetricks \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Wine 11 stable requires the upstream WineHQ packaging track. Do not mix
+# Debian Trixie's Wine 10 wrappers with WineHQ's wine-stable packages.
+# Pin both the primary signing-key fingerprint and WineHQ's Wine 11.0
+# package version; signed-by confines the key to this source alone.
+RUN install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSLo /tmp/winehq.key --retry 3 --connect-timeout 10 \
+      https://dl.winehq.org/wine-builds/winehq.key \
+    && fingerprint="$(gpg --batch --with-colons --show-keys /tmp/winehq.key 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}')" \
+    && if [ "$fingerprint" != "D43F640145369C51D786DDEA76F1A20FF987672F" ]; then \
+         echo "WINEHQ_CUSTODY stage=signing_key_mismatch" >&2; exit 1; \
+       fi \
+    && gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.gpg /tmp/winehq.key \
+    && printf 'Types: deb\nURIs: https://dl.winehq.org/wine-builds/debian\nSuites: trixie\nComponents: main\nArchitectures: amd64 i386\nSigned-By: /etc/apt/keyrings/winehq-archive.gpg\n' \
+      > /etc/apt/sources.list.d/winehq-trixie.sources \
+    && apt-get update \
+    && apt-get install -y --install-recommends 'winehq-stable=11.0.0.0~trixie-1' \
+    && wine --version | grep -Eq '^wine-11([.]|$)' \
+    && rm -f /tmp/winehq.key \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
