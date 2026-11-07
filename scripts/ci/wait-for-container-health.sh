@@ -17,6 +17,18 @@ if ! [[ "$sleep_seconds" =~ ^[0-9]+$ ]] || [ "$sleep_seconds" -lt 1 ]; then
   exit 2
 fi
 
+# Classify container startup failures without echoing untrusted service logs
+# into public Actions output. Raw logs remain job-local for gated inspection.
+diagnose_health_failure() {
+  classifier="$(dirname "$0")/classify-startup-logs.py"
+  if [ -f "$classifier" ] && command -v python3 >/dev/null 2>&1; then
+    docker compose -f "$compose_file" --profile "$profile" logs --no-color --tail 200 "$service" 2>/dev/null |
+      python3 "$classifier" || echo "STARTUP_DIAGNOSTIC stage=classifier_failed"
+  else
+    echo "STARTUP_DIAGNOSTIC stage=classifier_unavailable"
+  fi
+}
+
 container_id="$(docker compose -f "$compose_file" --profile "$profile" ps -q "$service" | head -n1)"
 if [ -z "${container_id}" ]; then
   echo "ERROR: no container found for service=${service} profile=${profile}" >&2
@@ -32,7 +44,7 @@ for ((i=1; i<=max_attempts; i++)); do
       ;;
     unhealthy)
       echo "ERROR: service ${service} became unhealthy (${container_id})" >&2
-      docker compose -f "$compose_file" --profile "$profile" logs --tail 200 "$service" || true
+      diagnose_health_failure
       exit 1
       ;;
     *)
@@ -43,5 +55,5 @@ for ((i=1; i<=max_attempts; i++)); do
 done
 
 echo "ERROR: service ${service} did not become healthy after ${max_attempts} attempts" >&2
-docker compose -f "$compose_file" --profile "$profile" logs --tail 200 "$service" || true
+diagnose_health_failure
 exit 1
