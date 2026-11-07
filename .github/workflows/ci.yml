@@ -83,7 +83,7 @@ jobs:
           repository: mark-e-deyoung/winebot-contracts
           path: contracts
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: "3.12"
 
@@ -137,6 +137,26 @@ jobs:
             --api-token "$API_TOKEN" \
             --results-file conformance-results.json \
             -q --tb=no --show-capture=no -rN > conformance-pytest-local.log 2>&1
+
+      - name: Run provisional vNext classified evidence slices
+        id: vnext-slices
+        if: ${{ always() && steps.start-winebot.outcome == 'success' && steps.api-token.outcome == 'success' }}
+        env:
+          API_URL: http://${{ steps.start-winebot.outputs.container-ip }}:8000
+        run: bash winebot/scripts/ci/run-vnext-slices.sh
+      - name: Project safe public vNext counts
+        id: vnext-project
+        if: ${{ always() && steps.vnext-slices.outcome == 'success' }}
+        run: |
+          python3 winebot/scripts/ci/project-vnext-public.py \
+            --raw-dir . --output vnext-slices-public.json
+      - name: Upload provisional vNext public count summary
+        if: ${{ always() && steps.vnext-project.outcome == 'success' && vars.WINEBOT_PUBLIC_VNEXT_SUMMARY_ENABLED == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vnext-public-counts-v1
+          path: vnext-slices-public.json
+          if-no-files-found: error
 
       - name: Project safe public conformance evidence
         id: public-conformance-summary
