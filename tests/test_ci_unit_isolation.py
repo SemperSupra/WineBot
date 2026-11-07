@@ -89,6 +89,15 @@ class CIUnitIsolationTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", nightly)
         self.assertNotIn("runs-on: ubuntu-latest", nightly)
 
+    def test_health_wait_failure_output_is_allowlisted(self):
+        source = (ROOT / "scripts/ci/wait-for-container-health.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(source.count("diagnose_health_failure"), 3)
+        self.assertIn('python3 "$classifier"', source)
+        self.assertIn('logs --no-color --tail 200 "$service" 2>/dev/null', source)
+        self.assertNotIn('logs --tail 200 "$service" || true', source)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)
