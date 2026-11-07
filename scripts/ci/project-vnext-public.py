@@ -44,6 +44,23 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(public, indent=2, sort_keys=True) + "\n",
                            encoding="utf-8")
+    # CI may emit only exact fixed labels and numerically validated counts.
+    # A deliberately conservative cap prevents enormous untrusted integers
+    # from expanding Actions stdout; raw test IDs and response data stay local.
+    for entry in public["slices"]:
+        label = entry["slice"]
+        status = entry["status"]
+        if status != "validated":
+            print(f"VNEXT_PUBLIC_COUNT slice={label} status={status}")
+            continue
+        summary = entry["summary"]
+        if any(value > 1000000 for value in summary.values()):
+            print(f"VNEXT_PUBLIC_COUNT slice={label} status=withheld")
+            continue
+        counts = " ".join(
+            f"{key}={summary[key]}" for key in SAN["COUNT_FIELDS"]
+        )
+        print(f"VNEXT_PUBLIC_COUNT slice={label} status=validated {counts}")
     print("Safe provisional vNext numerical counts projected")
     return 0
 

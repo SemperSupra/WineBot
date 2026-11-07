@@ -47,6 +47,36 @@ def test_invalid_and_symlink_fail_closed(tmp_path: Path) -> None:
     assert PROJECT(tmp_path)["slices"][-1]["status"] == "invalid"
 
 
+
+def test_public_stdout_is_fixed_numeric_counts_only(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    summary = {"total": 2, "passed": 1, "failed": 1, "skipped": 0,
+               "xfailed": 0, "xpassed": 0, "errors": 0}
+    source = {"summary": summary, "failures": [
+        {"test": "SENSITIVE_TEST_ID_SENTINEL",
+         "message": "SENSITIVE_HOST_SENTINEL"}],
+        "environment": {"api_token": "SENSITIVE_TOKEN_SENTINEL"}}
+    (tmp_path / "vnext-internal-unresolved.json").write_text(
+        json.dumps(source), encoding="utf-8"
+    )
+    output = tmp_path / "safe.json"
+    result = subprocess.run(
+        [sys.executable, "scripts/ci/project-vnext-public.py",
+         "--raw-dir", str(tmp_path), "--output", str(output)],
+        text=True, capture_output=True, check=True
+    )
+    assert (
+        "VNEXT_PUBLIC_COUNT slice=unresolved status=validated "
+        "total=2 passed=1 failed=1 skipped=0 xfailed=0 xpassed=0 errors=0"
+    ) in result.stdout
+    for sentinel in ("SENSITIVE_TEST_ID_SENTINEL", "SENSITIVE_HOST_SENTINEL",
+                     "SENSITIVE_TOKEN_SENTINEL"):
+        assert sentinel not in result.stdout + result.stderr
+    assert "VNEXT_PUBLIC_COUNT slice=portable_core_candidate status=missing" in result.stdout
+    assert output.is_file()
+
 def test_legacy_gate_and_public_upload_hold() -> None:
     source = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "Run conformance tests" in source
