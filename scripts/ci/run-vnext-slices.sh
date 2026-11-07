@@ -7,12 +7,21 @@ for label in portable_core_candidate capability_extension_candidate implementati
   raw="vnext-internal-$label.json"
   local_log="vnext-internal-$label.log"
   health_log="vnext-internal-$label-health.log"
+  # Diagnose runner-local failure logs through the fixed stage allowlist only.
+  # Never echo untrusted Docker/Wine stdout, paths or runtime identifiers.
+  emit_stage() {
+    if ! python3 winebot/scripts/ci/classify-startup-logs.py < "$health_log"; then
+      echo "STARTUP_DIAGNOSTIC stage=classifier_failed"
+    fi
+  }
   if ! timeout 30s docker compose -f "$compose" --profile headless restart winebot > "$health_log" 2>&1; then
     echo "VNEXT_STATUS slice=$label state=restart_failed"
+    emit_stage
     continue
   fi
   if ! winebot/scripts/ci/wait-for-container-health.sh "$compose" headless winebot 25 1 >> "$health_log" 2>&1; then
     echo "VNEXT_STATUS slice=$label state=unhealthy"
+    emit_stage
     continue
   fi
   token="$(docker compose -f "$compose" exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)"
