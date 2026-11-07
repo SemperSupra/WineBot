@@ -77,6 +77,19 @@ def test_public_stdout_is_fixed_numeric_counts_only(tmp_path: Path) -> None:
     assert "VNEXT_PUBLIC_COUNT slice=portable_core_candidate status=missing" in result.stdout
     assert output.is_file()
 
+def test_contract_checkout_uses_immutable_source_revision() -> None:
+    import re
+
+    source = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    checkout = (
+        r"repository: mark-e-deyoung/winebot-contracts\n"
+        r"\s+# Frozen external contract fixture; update only with owner evidence\.\n"
+        r"\s+ref: [0-9a-f]{40}\n"
+        r"\s+path: contracts"
+    )
+    assert re.search(checkout, source)
+
+
 def test_legacy_gate_and_public_upload_hold() -> None:
     source = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "Run conformance tests" in source

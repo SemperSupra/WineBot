@@ -81,6 +81,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: mark-e-deyoung/winebot-contracts
+          # Frozen external contract fixture; update only with owner evidence.
+          ref: 205666f7f0235cb0fc51ca8a5af84f9f67831a74
           path: contracts
 
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
