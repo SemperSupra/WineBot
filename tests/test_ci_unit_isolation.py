@@ -100,12 +100,8 @@ class CIUnitIsolationTests(unittest.TestCase):
 
 
     def test_nightly_uses_exact_prebuilt_rel_image(self):
-        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
-            encoding="utf-8"
-        )
-        compose = (ROOT / "compose/docker-compose.yml").read_text(
-            encoding="utf-8"
-        )
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(encoding="utf-8")
+        compose = (ROOT / "compose/docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("tags: winebot:local-rel", nightly)
         self.assertIn("WINEBOT_IMAGE_VERSION: 'local'", nightly)
         self.assertIn("BUILD_INTENT: 'rel'", nightly)
@@ -118,33 +114,17 @@ class CIUnitIsolationTests(unittest.TestCase):
         )
 
     def test_nightly_resource_budget_is_passed_to_soak_container(self):
-        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
-            encoding="utf-8"
-        )
-        for key in ("DURATION_SECONDS", "INTERVAL_SECONDS",
-                    "MAX_LOG_MB", "MAX_SESSION_MB"):
-            self.assertIn('-e ' + key + '="
-        source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
-        self.assertNotIn("Generated random token: ${API_TOKEN}", source)
-        self.assertIn("value not logged", source)
-        self.assertIn('echo -n "$API_TOKEN" > /tmp/winebot_api_token', source)
-
-
-if __name__ == "__main__":
-    unittest.main()
- + key + '"', nightly)
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(encoding="utf-8")
+        for key in ("DURATION_SECONDS", "INTERVAL_SECONDS", "MAX_LOG_MB", "MAX_SESSION_MB"):
+            self.assertIn('-e ' + key + '="$' + key + '"', nightly)
 
     def test_nightly_trust_pack_remains_job_local(self):
-        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
-            encoding="utf-8"
-        )
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(encoding="utf-8")
         self.assertIn("Security hold: trust-pack evidence stays job-local", nightly)
         self.assertNotIn("actions/upload-artifact@", nightly)
 
     def test_focused_workflow_covers_runtime_safety_changes(self):
-        workflow = (ROOT / ".github/workflows/ci-unit-isolation.yml").read_text(
-            encoding="utf-8"
-        )
+        workflow = (ROOT / ".github/workflows/ci-unit-isolation.yml").read_text(encoding="utf-8")
         for path in (".github/workflows/nightly-soak.yml",
                      "scripts/ci/wait-for-container-health.sh",
                      "scripts/bin/winebotctl", "scripts/winebotctl"):
