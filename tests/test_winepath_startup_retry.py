@@ -63,6 +63,28 @@ def test_bounded_trace_path_retry(
         assert not result.stdout
 
 
+def test_crlf_terminated_winepath_output_is_normalized(tmp_path: Path) -> None:
+    tool = tmp_path / "winepath"
+    tool.write_text(
+        "#!/bin/sh\nprintf 'Z:\\\\trace.jsonl\\r\\n'\n",
+        encoding="utf-8",
+    )
+    tool.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "/synthetic/trace.jsonl"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "Z:\\trace.jsonl\n"
+    assert result.stderr == ""
+
+
 def test_no_input_rejected_without_wine_process() -> None:
     result = subprocess.run(
         ["bash", str(SCRIPT)],

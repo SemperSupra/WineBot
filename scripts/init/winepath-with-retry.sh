@@ -7,7 +7,7 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
 fi
 for attempt in 1 2 3 4; do
   translated=""
-  if translated="$(timeout 8s winepath -w "$1" 2>/dev/null)" &&
+  if translated="$(timeout 8s winepath -w "$1" 2>/dev/null | sed 's/\r$//')" &&
       [ -n "$translated" ] &&
       [[ "$translated" != *$'\n'* ]] &&
       [[ "$translated" != *$'\r'* ]]; then

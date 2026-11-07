@@ -64,6 +64,40 @@ class CIUnitIsolationTests(unittest.TestCase):
         self.assertNotIn("runs-on: ubuntu-latest", ci)
         self.assertNotIn("runs-on: ubuntu-latest", reusable)
 
+    def test_top_level_cli_resolves_shared_profile_catalog(self):
+        import os
+        import subprocess
+
+        env = os.environ.copy()
+        env["WINEBOT_API_TOKEN"] = "SYNTHETIC_TEST_TOKEN_123456"
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/winebotctl"), "--help"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr[:200])
+        self.assertIn("WineBot unified CLI", result.stdout)
+
+    def test_nightly_soak_is_pinned_to_public_qualified_venue(self):
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("runs-on: ubuntu-24.04", nightly)
+        self.assertNotIn("runs-on: ubuntu-latest", nightly)
+
+    def test_health_wait_failure_output_is_allowlisted(self):
+        source = (ROOT / "scripts/ci/wait-for-container-health.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(source.count("diagnose_health_failure"), 3)
+        self.assertIn('python3 "$classifier"', source)
+        self.assertIn('logs --no-color --tail 200 "$service" 2>/dev/null', source)
+        self.assertNotIn('logs --tail 200 "$service" || true', source)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)
