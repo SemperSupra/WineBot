@@ -77,6 +77,73 @@ def test_public_stdout_is_fixed_numeric_counts_only(tmp_path: Path) -> None:
     assert "VNEXT_PUBLIC_COUNT slice=portable_core_candidate status=missing" in result.stdout
     assert output.is_file()
 
+
+def test_failure_domain_projection_is_counts_only_and_uses_fixed_sources(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    summary = {"total": 3, "passed": 0, "failed": 3, "skipped": 0,
+               "xfailed": 0, "xpassed": 0, "errors": 0}
+    raw = {
+        "summary": summary,
+        "failures": [
+            {"test": "contracts/tests/conformance/test_automation.py::TestSensitive::PRIVATE_TITLE",
+             "message": "SECRET_HOST_SENTINEL"},
+            {"test": "contracts/tests/conformance/test_health.py::TestSensitive::PRIVATE_TITLE",
+             "message": "SECRET_TOKEN_SENTINEL"},
+            {"test": "SECRET_NODEID_SENTINEL", "message": "SECRET_RESPONSE_SENTINEL"},
+        ],
+        "environment": {"hostname": "PRIVATE_HOST_SENTINEL"},
+    }
+    (tmp_path / "vnext-internal-capability_extension_candidate.json").write_text(
+        json.dumps(raw), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "scripts/ci/project-vnext-public.py", "--raw-dir",
+         str(tmp_path), "--output", str(tmp_path / "public.json")],
+        capture_output=True, text=True, check=True, timeout=10,
+    )
+    safe = result.stdout + result.stderr
+    expected = (
+        "VNEXT_PUBLIC_FAILURE_DOMAIN slice=capability_extension_candidate "
+    )
+    assert expected + "domain=automation failed=1" in safe
+    assert expected + "domain=health failed=1" in safe
+    assert expected + "domain=other failed=1" in safe
+    for private in ("PRIVATE_TITLE", "SECRET_HOST_SENTINEL",
+                    "SECRET_TOKEN_SENTINEL", "SECRET_NODEID_SENTINEL",
+                    "SECRET_RESPONSE_SENTINEL", "PRIVATE_HOST_SENTINEL"):
+        assert private not in safe
+    # Artifact remains the original bounded count-only schema.
+    projected = json.loads((tmp_path / "public.json").read_text(encoding="utf-8"))
+    assert projected["slices"][1]["summary"] == summary
+    assert "failure_domains" not in projected["slices"][1]
+
+
+def test_failure_domain_projection_fails_closed_on_inventory_mismatch(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    raw = {
+        "summary": {"total": 2, "passed": 0, "failed": 2, "skipped": 0,
+                    "xfailed": 0, "xpassed": 0, "errors": 0},
+        "failures": [
+            {"test": "contracts/tests/conformance/test_automation.py::PRIVATE_TITLE"}
+        ],
+    }
+    (tmp_path / "vnext-internal-unresolved.json").write_text(
+        json.dumps(raw), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "scripts/ci/project-vnext-public.py", "--raw-dir",
+         str(tmp_path), "--output", str(tmp_path / "public.json")],
+        capture_output=True, text=True, check=True, timeout=10,
+    )
+    assert "VNEXT_PUBLIC_COUNT slice=unresolved status=invalid" in result.stdout
+    assert "PRIVATE_TITLE" not in result.stdout + result.stderr
+    assert "VNEXT_PUBLIC_FAILURE_DOMAIN slice=unresolved domain=" not in result.stdout
+
+
 def test_contract_checkout_uses_immutable_source_revision() -> None:
     import re
 

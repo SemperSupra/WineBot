@@ -35,6 +35,47 @@ def project_slices(raw_dir: Path) -> dict:
             "provisional": True, "native_acceptance": False, "slices": slices}
 
 
+# Only these checked-in contract test modules may identify a public failure
+# domain. The raw test node ID, assertion and response body never leave runner.
+FAILURE_MODULES = {
+    "test_automation.py": "automation",
+    "test_errors.py": "error_response",
+    "test_headers.py": "headers",
+    "test_health.py": "health",
+    "test_idempotency.py": "operations",
+    "test_input.py": "input",
+    "test_lifecycle.py": "lifecycle",
+    "test_recording.py": "recording",
+    "test_tracing.py": "tracing",
+    "test_version.py": "version",
+}
+MAX_PUBLIC_COUNT = 1_000_000
+
+
+def project_fixed_failure_domains(path: Path, expected_failures: int) -> dict[str, int]:
+    """Count source-backed failure modules; any unknown ID becomes 'other'."""
+    counts = {domain: 0 for domain in FAILURE_MODULES.values()}
+    counts["other"] = 0
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
+        raise ValueError("invalid raw source")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    # Reuse existing strict count/inventory validation. No free-form data copies.
+    projected = PROJECT(raw)
+    if projected["summary"]["failed"] != expected_failures:
+        raise ValueError("failure count mismatch")
+    for failure in raw["failures"]:
+        test = failure.get("test")
+        domain = "other"
+        if isinstance(test, str) and len(test) <= 500:
+            for module, fixed_domain in FAILURE_MODULES.items():
+                if (test.startswith(f"contracts/tests/conformance/{module}::")
+                    or test.startswith(f"tests/conformance/{module}::")):
+                    domain = fixed_domain
+                    break
+        counts[domain] += 1
+    return counts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", type=Path, required=True)
@@ -61,6 +102,20 @@ def main() -> int:
             f"{key}={summary[key]}" for key in SAN["COUNT_FIELDS"]
         )
         print(f"VNEXT_PUBLIC_COUNT slice={label} status=validated {counts}")
+        # Additional safe, fixed-domain counters identify WHICH capability
+        # area needs attention, not the raw testcase/host/window identifier.
+        raw_path = args.raw_dir / f"vnext-internal-{label}.json"
+        try:
+            domain_counts = project_fixed_failure_domains(raw_path, summary["failed"])
+        except (ValueError, UnicodeError, OSError, TypeError):
+            print(f"VNEXT_PUBLIC_FAILURE_DOMAIN slice={label} status=withheld")
+            continue
+        for domain, failed in domain_counts.items():
+            if 0 < failed <= MAX_PUBLIC_COUNT:
+                print(
+                    f"VNEXT_PUBLIC_FAILURE_DOMAIN slice={label} "
+                    f"domain={domain} failed={failed}"
+                )
     print("Safe provisional vNext numerical counts projected")
     return 0
 
