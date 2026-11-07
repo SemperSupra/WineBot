@@ -23,6 +23,21 @@ if [ -z "$API_TOKEN" ]; then
   done
 fi
 
+# Do not print hostnames, tokens, raw session paths or user-controlled budgets
+# into public CI logs. All visible counters are bounded before reporting.
+for setting in DURATION_SECONDS INTERVAL_SECONDS MAX_LOG_MB MAX_SESSION_MB MAX_PID1_RSS_MB; do
+  value="${!setting}"
+  if [[ ! "$value" =~ ^[0-9]{1,9}$ ]]; then
+    echo "[soak] INVALID_CONFIG key=$setting" >&2
+    exit 2
+  fi
+done
+if [ "$INTERVAL_SECONDS" -lt 1 ] || [ "$MAX_LOG_MB" -lt 1 ] ||
+   [ "$MAX_SESSION_MB" -lt 1 ] || [ "$MAX_PID1_RSS_MB" -lt 1 ]; then
+  echo "[soak] INVALID_CONFIG stage=nonpositive_budget" >&2
+  exit 2
+fi
+
 api_get() {
   local path="$1"
   if [ -n "$API_TOKEN" ]; then
@@ -38,7 +53,7 @@ to_bytes() {
 }
 
 echo "[soak] starting trace/recording soak checks"
-echo "[soak] api=${API_URL} duration=${DURATION_SECONDS}s interval=${INTERVAL_SECONDS}s"
+echo "[soak] duration=${DURATION_SECONDS}s interval=${INTERVAL_SECONDS}s"
 echo "[soak] thresholds: logs<=${MAX_LOG_MB}MB session<=${MAX_SESSION_MB}MB pid1_rss<=${MAX_PID1_RSS_MB}MB"
 
 started_at="$(date +%s)"
@@ -53,7 +68,9 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   recording_json="$(api_get "/health/recording")"
   session_dir="$(python3 -c 'import json,sys; print((json.load(sys.stdin).get("session_dir") or "").strip())' <<<"$recording_json")"
 
+  session_state=absent
   if [ -n "$session_dir" ] && [ -d "$session_dir" ]; then
+    session_state=present
     log_dir="${session_dir}/logs"
     log_bytes=0
     session_bytes=0
@@ -80,7 +97,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 
   now="$(date +%s)"
   elapsed=$((now - started_at))
-  echo "[soak] ok elapsed=${elapsed}s session_dir=${session_dir:-none} pid1_rss_kb=${pid1_rss_kb:-0}"
+  echo "[soak] ok elapsed=${elapsed}s session_state=${session_state} pid1_rss_kb=${pid1_rss_kb:-0}"
   sleep "$INTERVAL_SECONDS"
 done
 

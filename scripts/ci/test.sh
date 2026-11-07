@@ -27,5 +27,6 @@ pytest \
   tests/test_ci_trust_pack_provenance.py \
   tests/test_ci_public_conformance_summary.py \
   tests/test_ci_unit_isolation.py \
+  tests/test_soak_diagnostics_custody.py \
   tests/test_winepath_startup_retry.py \
   tests/test_wininspect_error_redaction.py
