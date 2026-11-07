@@ -166,6 +166,28 @@ esac
                           result.stdout + result.stderr)
             self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
 
+
+    def test_exact_nightly_rel_startup_public_qualifier(self):
+        source = (ROOT / ".github/workflows/nightly-rel-startup-qualification.yml").read_text(
+            encoding="utf-8"
+        )
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("runs-on: ubuntu-24.04", source)
+        self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", source)
+        for marker in ("target: intent-rel", "BUILD_INTENT=rel",
+                       "tags: winebot:local-rel",
+                       "--profile interactive up --no-build -d winebot-interactive",
+                       "wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2"):
+            self.assertIn(marker, source)
+            self.assertIn(marker, nightly)
+        self.assertIn("WINEBOT_INPUT_TRACE_WINDOWS: '1'", source)
+        self.assertIn("Classify failure without printing raw service logs", source)
+        self.assertIn("python3 scripts/ci/classify-startup-logs.py", source)
+        self.assertNotIn("actions/upload-artifact@", source)
+        self.assertNotIn("push: true", source)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)

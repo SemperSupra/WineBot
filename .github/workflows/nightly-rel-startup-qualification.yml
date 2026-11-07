@@ -1,0 +1,84 @@
+name: Nightly REL Startup Qualification
+
+# Reproduce scheduled BuildKit -> Compose REL startup without the 55-minute soak.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nightly-rel-startup-qualification.yml'
+      - '.github/workflows/nightly-soak.yml'
+      - 'scripts/init/winepath-with-retry.sh'
+      - 'scripts/init/30-start-services.sh'
+      - 'scripts/ci/wait-for-container-health.sh'
+      - 'scripts/ci/classify-startup-logs.py'
+      - 'docker/entrypoint.sh'
+      - 'tests/test_ci_unit_isolation.py'
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  BUILD_INTENT: 'rel'
+  WINEBOT_IMAGE_VERSION: 'local'
+  WINEBOT_RECORD: '1'
+  WINEBOT_INPUT_TRACE_WINDOWS: '1'
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: nightly-rel-startup-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  nightly-rel-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact public PR source without retained credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Buildx on public runner
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Build scheduled REL image locally
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: intent-rel
+          build-args: |
+            BASE_IMAGE=${{ vars.WINEBOT_BASE_IMAGE || 'ghcr.io/sempersupra/winebot-base:base-2026-05-04' }}
+            BUILD_INTENT=rel
+          load: true
+          push: false
+          tags: winebot:local-rel
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify exact local image before Compose
+        run: docker image inspect winebot:local-rel --format 'REL_IMAGE_DIAGNOSTIC image_present=true' >/dev/null
+
+      - name: Start exact nightly Compose service without rebuilding
+        run: |
+          if ! docker compose -f compose/docker-compose.yml --profile interactive up --no-build -d winebot-interactive >rel-startup-job-local.log 2>&1; then
+            echo 'REL_STARTUP_DIAGNOSTIC stage=compose_start_failed'
+            exit 1
+          fi
+
+      - name: Qualify scheduled container health gate
+        run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2
+
+      - name: Classify failure without printing raw service logs
+        if: ${{ failure() }}
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
+            python3 scripts/ci/classify-startup-logs.py
+
+      # No artifact publication: raw traces and image records remain job-local.
+      - name: Tear down REL qualification runtime
+        if: ${{ always() }}
+        run: docker compose -f compose/docker-compose.yml --profile interactive down --remove-orphans >/dev/null 2>&1 || true
