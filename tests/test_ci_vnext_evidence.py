@@ -64,3 +64,7 @@ def test_runtime_logs_and_raw_results_stay_job_local() -> None:
     assert '> "$local_log" 2>&1' in source
     assert "--tb=no --show-capture=no -rN" in source
     assert 'printf \'::add-mask::%s\\n\' "$token"' in source
+    assert source.count('emit_stage') == 3  # declaration + two failure gates
+    assert 'python3 winebot/scripts/ci/classify-startup-logs.py < "$health_log"' in source
+    assert 'cat "$health_log"' not in source
+    assert 'tail "$health_log"' not in source
