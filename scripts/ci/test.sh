@@ -4,6 +4,7 @@ echo "--- Running Unit Tests ---"
 pytest \
   tests/test_api.py \
   tests/test_api_contracts.py \
+  tests/test_window_inventory_contract.py \
   tests/test_conformance_runtime_policy.py \
   tests/test_config_strict_validation.py \
   tests/test_invariants.py \

@@ -168,7 +168,7 @@ async def list_windows():
             parts = line.strip().split(" ", 1)
             if len(parts) == 2:
                 windows.append({"id": parts[0], "title": parts[1]})
-    return {"windows": windows}
+    return {"windows": windows, "count": len(windows)}
 
 
 @router.get("/wininspect/capabilities")

@@ -144,6 +144,37 @@ def test_failure_domain_projection_fails_closed_on_inventory_mismatch(tmp_path: 
     assert "VNEXT_PUBLIC_FAILURE_DOMAIN slice=unresolved domain=" not in result.stdout
 
 
+
+
+def test_failure_domain_projection_accepts_pytest_local_node_ids(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    source = {
+        "summary": {"total": 2, "passed": 0, "failed": 2, "skipped": 0,
+                    "xfailed": 0, "xpassed": 0, "errors": 0},
+        "failures": [
+            {"test": "test_automation.py::TestWindows::SENSITIVE_METHOD_SENTINEL",
+             "message": "PRIVATE_HOST_SENTINEL"},
+            {"test": "test_health.py::TestHealth::SENSITIVE_METHOD_SENTINEL",
+             "message": "PRIVATE_TOKEN_SENTINEL"},
+        ],
+    }
+    (tmp_path / "vnext-internal-capability_extension_candidate.json").write_text(
+        json.dumps(source), encoding="utf-8"
+    )
+    run = subprocess.run(
+        [sys.executable, "scripts/ci/project-vnext-public.py", "--raw-dir",
+         str(tmp_path), "--output", str(tmp_path / "public.json")],
+        capture_output=True, text=True, check=True, timeout=10,
+    )
+    assert "domain=automation failed=1" in run.stdout
+    assert "domain=health failed=1" in run.stdout
+    assert "domain=other failed=" not in run.stdout
+    for private in ("SENSITIVE_METHOD_SENTINEL", "PRIVATE_HOST_SENTINEL",
+                    "PRIVATE_TOKEN_SENTINEL"):
+        assert private not in run.stdout + run.stderr
+
 def test_contract_checkout_uses_immutable_source_revision() -> None:
     import re
 

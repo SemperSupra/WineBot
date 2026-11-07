@@ -69,7 +69,8 @@ def project_fixed_failure_domains(path: Path, expected_failures: int) -> dict[st
         if isinstance(test, str) and len(test) <= 500:
             for module, fixed_domain in FAILURE_MODULES.items():
                 if (test.startswith(f"contracts/tests/conformance/{module}::")
-                    or test.startswith(f"tests/conformance/{module}::")):
+                    or test.startswith(f"tests/conformance/{module}::")
+                    or test.startswith(f"{module}::")):
                     domain = fixed_domain
                     break
         counts[domain] += 1
