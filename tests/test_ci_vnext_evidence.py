@@ -58,6 +58,14 @@ def test_legacy_gate_and_public_upload_hold() -> None:
     assert "vnext-internal-*.json" not in source
 
 
+def test_restart_health_wait_covers_docker_start_period() -> None:
+    source = Path("scripts/ci/run-vnext-slices.sh").read_text(encoding="utf-8")
+    compose = Path("compose/docker-compose.yml").read_text(encoding="utf-8")
+    assert "start_period: 30s" in compose
+    assert 'wait-for-container-health.sh "$compose" headless winebot 60 2' in source
+    assert 'wait-for-container-health.sh "$compose" headless winebot 25 1' not in source
+
+
 def test_runtime_logs_and_raw_results_stay_job_local() -> None:
     source = Path("scripts/ci/run-vnext-slices.sh").read_text(encoding="utf-8")
     assert 'raw="vnext-internal-$label.json"' in source

@@ -19,7 +19,10 @@ for label in portable_core_candidate capability_extension_candidate implementati
     emit_stage
     continue
   fi
-  if ! winebot/scripts/ci/wait-for-container-health.sh "$compose" headless winebot 25 1 >> "$health_log" 2>&1; then
+  # Docker health checks have a 30s grace period; 25s prematurely labels
+  # still-starting Wine restarts as unhealthy. Reuse the qualified initial
+  # conformance gate's bounded 120s readiness allowance.
+  if ! winebot/scripts/ci/wait-for-container-health.sh "$compose" headless winebot 60 2 >> "$health_log" 2>&1; then
     echo "VNEXT_STATUS slice=$label state=unhealthy"
     emit_stage
     continue
