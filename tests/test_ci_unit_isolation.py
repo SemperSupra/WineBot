@@ -188,6 +188,24 @@ esac
         self.assertNotIn("actions/upload-artifact@", source)
         self.assertNotIn("push: true", source)
 
+
+    def test_exact_rel_image_is_major_version_11_in_both_venues(self):
+        qualifier = (
+            ROOT / ".github/workflows/nightly-rel-startup-qualification.yml"
+        ).read_text(encoding="utf-8")
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        for source in (qualifier, nightly):
+            self.assertIn("Require verified Wine 11 runtime from exact REL image", source)
+            self.assertIn(
+                "docker run --rm --entrypoint wine winebot:local-rel --version",
+                source,
+            )
+            self.assertIn("wine-11|wine-11.*)", source)
+            self.assertIn("WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch", source)
+            self.assertNotIn('echo "$version"', source)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)

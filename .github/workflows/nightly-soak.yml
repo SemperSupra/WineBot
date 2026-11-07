@@ -47,6 +47,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Require verified Wine 11 runtime from exact REL image
+        run: |
+          version="$(docker run --rm --entrypoint wine winebot:local-rel --version 2>/dev/null | tr -d '\r')"
+          case "$version" in
+            wine-11|wine-11.*) echo 'WINE_RUNTIME_DIAGNOSTIC major=11';;
+            *) echo 'WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch'; exit 1;;
+          esac
+
       - name: Start services
         env:
           BUILD_INTENT: rel
