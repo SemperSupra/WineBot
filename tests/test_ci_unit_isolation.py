@@ -98,6 +98,94 @@ class CIUnitIsolationTests(unittest.TestCase):
         self.assertIn('logs --no-color --tail 200 "$service" 2>/dev/null', source)
         self.assertNotIn('logs --tail 200 "$service" || true', source)
 
+
+    def test_nightly_uses_exact_prebuilt_rel_image(self):
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        compose = (ROOT / "compose/docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("tags: winebot:local-rel", nightly)
+        self.assertIn("WINEBOT_IMAGE_VERSION: 'local'", nightly)
+        self.assertIn("BUILD_INTENT: 'rel'", nightly)
+        self.assertIn(
+            "image: winebot:$" + "{WINEBOT_IMAGE_VERSION:-local}-$" + "{BUILD_INTENT:-rel}",
+            compose,
+        )
+        self.assertIn(
+            "--profile interactive up --no-build -d winebot-interactive", nightly
+        )
+
+    def test_nightly_resource_budget_is_passed_to_soak_container(self):
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        for key in ("DURATION_SECONDS", "INTERVAL_SECONDS",
+                    "MAX_LOG_MB", "MAX_SESSION_MB"):
+            self.assertIn('-e ' + key + '="
+        source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
+        self.assertNotIn("Generated random token: ${API_TOKEN}", source)
+        self.assertIn("value not logged", source)
+        self.assertIn('echo -n "$API_TOKEN" > /tmp/winebot_api_token', source)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + key + '"', nightly)
+
+    def test_nightly_trust_pack_remains_job_local(self):
+        nightly = (ROOT / ".github/workflows/nightly-soak.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Security hold: trust-pack evidence stays job-local", nightly)
+        self.assertNotIn("actions/upload-artifact@", nightly)
+
+    def test_focused_workflow_covers_runtime_safety_changes(self):
+        workflow = (ROOT / ".github/workflows/ci-unit-isolation.yml").read_text(
+            encoding="utf-8"
+        )
+        for path in (".github/workflows/nightly-soak.yml",
+                     "scripts/ci/wait-for-container-health.sh",
+                     "scripts/bin/winebotctl", "scripts/winebotctl"):
+            self.assertIn(f"      - '{path}'", workflow)
+
+    def test_health_waiter_never_echoes_sensitive_service_log_content(self):
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            mock_docker = Path(directory) / "docker"
+            mock_docker.write_text(
+                """#!/bin/sh
+case "$1" in
+  inspect) printf '%s\\n' unhealthy;;
+  compose)
+    case " $* " in
+      *" ps -q "*) printf '%s\\n' mock123;;
+      *" logs "*) printf '%s\\n' SYNTHETIC_SECRET 'WINEBOT_STARTUP_ERROR stage=services/trace-log-path rc=1';;
+      *) exit 4;;
+    esac;;
+  *) exit 4;;
+esac
+""",
+                encoding="utf-8",
+            )
+            mock_docker.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = directory + os.pathsep + env["PATH"]
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/ci/wait-for-container-health.sh"),
+                 "compose/docker-compose.yml", "interactive",
+                 "winebot-interactive", "1", "1"],
+                env=env, capture_output=True, text=True, timeout=10, check=False
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("STARTUP_DIAGNOSTIC stage=failed_trace_log_path",
+                          result.stdout + result.stderr)
+            self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+
     def test_generated_api_token_is_not_ever_echoed(self):
         source = (ROOT / "scripts/init/30-start-services.sh").read_text(encoding="utf-8")
         self.assertNotIn("Generated random token: ${API_TOKEN}", source)

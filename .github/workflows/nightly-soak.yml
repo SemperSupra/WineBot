@@ -11,6 +11,10 @@ permissions:
 # Fail closed on unreviewed automatic Docker BuildKit history artifacts.
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  # Keep BuildKit and Compose on exactly the same prebuilt REL image.
+  WINEBOT_IMAGE_VERSION: 'local'
+  BUILD_INTENT: 'rel'
+  WINEBOT_RECORD: '1'
 
 defaults:
   run:
@@ -39,7 +43,7 @@ jobs:
             BUILD_INTENT=rel
           load: true
           push: false
-          tags: winebot:rel
+          tags: winebot:local-rel
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -48,7 +52,7 @@ jobs:
           BUILD_INTENT: rel
           WINEBOT_RECORD: 1
         run: |
-          docker compose -f compose/docker-compose.yml --profile interactive up -d winebot-interactive
+          docker compose -f compose/docker-compose.yml --profile interactive up --no-build -d winebot-interactive
 
       - name: Wait for service health
         run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2
@@ -63,6 +67,10 @@ jobs:
         run: |
           # Run the soak diagnostic script inside the container
           docker compose -f compose/docker-compose.yml exec -T --user winebot \
+            -e DURATION_SECONDS="$DURATION_SECONDS" \
+            -e INTERVAL_SECONDS="$INTERVAL_SECONDS" \
+            -e MAX_LOG_MB="$MAX_LOG_MB" \
+            -e MAX_SESSION_MB="$MAX_SESSION_MB" \
             winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
 
       - name: Run fault injection diagnostics
@@ -88,11 +96,8 @@ jobs:
         run: |
           scripts/ci/generate-trust-pack.sh artifacts/trust-pack-nightly
 
-      - name: Upload trust pack
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: trust-pack-nightly
-          path: artifacts/trust-pack-nightly
+      # Security hold: trust-pack evidence stays job-local during nightly runs.
+      # Only the separately governed release publication gate may upload it.
 
       - name: Collect diagnostics on failure
         id: collect_failure_diagnostics
