@@ -10,6 +10,9 @@ on:
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/wait-for-container-health.sh'
       - 'scripts/ci/classify-startup-logs.py'
+      - 'scripts/diagnostics/diagnose-trace-soak.sh'
+      - 'scripts/diagnostics/soak-resource-bounds.sh'
+      - 'tests/test_soak_diagnostics_custody.py'
       - 'docker/entrypoint.sh'
       - 'tests/test_ci_unit_isolation.py'
 
@@ -71,6 +74,18 @@ jobs:
 
       - name: Qualify scheduled container health gate
         run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2
+
+      # Bounded live sampler exercises the real nightly resource monitor.
+      # Does not substitute for the separately gated full 55-minute soak.
+      - name: Sample live REL trace resource bounds for 90 seconds
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive exec -T --user winebot \
+            -e DURATION_SECONDS=90 \
+            -e INTERVAL_SECONDS=15 \
+            -e MAX_LOG_MB=1024 \
+            -e MAX_SESSION_MB=8192 \
+            -e MAX_PID1_RSS_MB=2048 \
+            winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
 
       - name: Classify failure without printing raw service logs
         if: ${{ failure() }}
