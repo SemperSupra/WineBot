@@ -176,11 +176,15 @@ esac
         )
         self.assertIn("runs-on: ubuntu-24.04", source)
         self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", source)
+        for marker in ("--target intent-rel", "--build-arg BUILD_INTENT=rel",
+                       "--tag winebot:local-rel",
+                       "--profile interactive up --no-build -d winebot-interactive",
+                       "wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2"):
+            self.assertIn(marker, source)
         for marker in ("target: intent-rel", "BUILD_INTENT=rel",
                        "tags: winebot:local-rel",
                        "--profile interactive up --no-build -d winebot-interactive",
                        "wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2"):
-            self.assertIn(marker, source)
             self.assertIn(marker, nightly)
         self.assertIn("WINEBOT_INPUT_TRACE_WINDOWS: '1'", source)
         self.assertIn("Classify failure without printing raw service logs", source)
