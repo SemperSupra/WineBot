@@ -1,0 +1,139 @@
+{
+  "workset_id": "winebot-pandora-observation",
+  "locator": "github-file:SemperSupra/WineBot@main:worksets/agent-dispatch.json",
+  "intent": "Expose a least-authority read-only WineBot DLE/CI continuation to the existing Agent Dispatch Sidecar on Pandora. WineBot GitHub PRs/issues remain authoritative; this materialization is not a release, merge, workcell, or credential grant.",
+  "state": {
+    "source_authority": "SemperSupra/WineBot main and live pull requests own source, gates and decisions; reconcile exact current heads before using.",
+    "runtime_qualification": "SemperSupra/WineBot PR #150 owns Wine 11 REL candidate, trace startup and resource qualification; nightly release gate is separate.",
+    "contract_qualification": "SemperSupra/WineBot PR #123 owns vNext conformance, external pinned source, redaction and legacy-v1 gate.",
+    "application_qualification": "SemperSupra/WineBot PRs #132 #133 #135 #143 #144 own CPU-renderer and Windows application RDTE; preserve independent workcells.",
+    "public_runner_policy": "Only approved standard public GitHub-hosted Actions runners for automated WineBot qualification; no paid private hosted Actions minutes."
+  },
+  "unknowns": {
+    "final_wine11_acceptance": "Wine 11 is not accepted until candidate container health, resource, conformance and release gates have source-bound receipts.",
+    "observer_acceptance": "Long-running Wine 11 observer, overflow/restart and Windows parity require real runtime acceptance.",
+    "executor_binding": "No WineBot-specific Pandora execution target, actuating admission or assignment is implied by observation permission."
+  },
+  "bounds": {
+    "scope_allowed": [
+      "read WineBot public repository state",
+      "read public WineBot DLE and PR history",
+      "read public WineBot CI job status and sanitized receipts",
+      "summarize readiness and next independent workcells"
+    ],
+    "scope_prohibited": [
+      "dispatch workflows",
+      "write repositories or PRs through the delegation",
+      "read secrets or protected host configuration",
+      "publish raw execution evidence",
+      "modify runner, network or host configuration",
+      "merge or release",
+      "consume paid GitHub-hosted Actions minutes"
+    ],
+    "authority_delegable": [
+      "read repository"
+    ],
+    "authority_reserved": [
+      "dispatch approved workflow",
+      "write repository",
+      "merge",
+      "publish release",
+      "change secrets",
+      "spend money",
+      "expand architectural scope"
+    ]
+  },
+  "delegations": {
+    "winebot-observe": {
+      "responsibilities": [
+        "Reconcile exact WineBot main and active PR heads from GitHub rather than conversation state.",
+        "Read public CI statuses and sanitized source-bound results; distinguish transport green from semantic acceptance.",
+        "Produce an owner-readable frontier and next batons without mutating WineBot or Pandora."
+      ],
+      "state_refs": [
+        "source_authority",
+        "runtime_qualification",
+        "contract_qualification",
+        "application_qualification",
+        "public_runner_policy"
+      ],
+      "unknown_refs": [
+        "final_wine11_acceptance",
+        "observer_acceptance",
+        "executor_binding"
+      ],
+      "scope": {
+        "allowed": [
+          "read WineBot public repository state",
+          "read public WineBot DLE and PR history",
+          "read public WineBot CI job status and sanitized receipts",
+          "summarize readiness and next independent workcells"
+        ],
+        "prohibited": [
+          "dispatch workflows",
+          "write repositories or PRs through the delegation",
+          "read secrets or protected host configuration",
+          "publish raw execution evidence",
+          "modify runner, network or host configuration",
+          "merge or release",
+          "consume paid GitHub-hosted Actions minutes"
+        ]
+      },
+      "authority": {
+        "grants": [
+          "read repository"
+        ],
+        "reserved": [
+          "dispatch approved workflow",
+          "write repository",
+          "merge",
+          "publish release",
+          "change secrets",
+          "spend money",
+          "expand architectural scope"
+        ]
+      },
+      "capabilities": {
+        "required": [],
+        "may_acquire_free_tools": false,
+        "may_build_tools": false,
+        "may_delegate": false
+      },
+      "resources": [
+        {
+          "kind": "money",
+          "limit": 0,
+          "unit": "USD",
+          "enforcement": "hard"
+        },
+        {
+          "kind": "workflow-dispatches",
+          "limit": 0,
+          "unit": "dispatch",
+          "enforcement": "hard"
+        }
+      ],
+      "constraints": [
+        "Treat GitHub project-native DLE as authority, not this workset or ChatGPT conversation.",
+        "No active GH workflow dispatch or sidecar workcell actuation in this observation delegation.",
+        "Never publish host identifiers, private endpoints, credentials, raw logs, or protected traces.",
+        "Preserve fail-closed public-runner policy and exactly tracked source/receipt identity.",
+        "An MCP transport grant cannot override any WineBot decision or release gate."
+      ],
+      "acceptance": {
+        "criteria": [
+          "Pandora recognizes existing openai-tunnel caller for only this exact workset and delegation with observe caller class.",
+          "get_work_projection succeeds read-only and has no write/dispatch scope.",
+          "Existing unrelated Pandora grants and bearer credentials remain unchanged.",
+          "No workflow launched, repository mutated or protected data disclosed during observation qualification."
+        ],
+        "evidence_refs": [
+          "https://github.com/SemperSupra/WineBot/pull/123",
+          "https://github.com/SemperSupra/WineBot/pull/150",
+          "https://github.com/SemperSupra/WineBot/pull/132"
+        ]
+      },
+      "frontier": "Create the workset via reviewed project-native PR, then append exact read-only Pandora caller grant through the already installed trusted-host helper. After that, call get_work_projection on Pandora and record the observed receipt."
+    }
+  }
+}
