@@ -136,3 +136,58 @@ def test_trace_classifier_projects_fixed_winepath_cause_only() -> None:
         "STARTUP_DIAGNOSTIC winepath=timeout",
     ]
     assert "SENSITIVE_TOKEN_SENTINEL" not in result.stdout
+
+
+def test_prepare_trace_log_creates_private_regular_file_before_conversion(tmp_path: Path) -> None:
+    script = Path("scripts/init/prepare-trace-log.py")
+    target = tmp_path / "trace.jsonl"
+    result = subprocess.run(
+        ["python3", str(script), str(target)],
+        capture_output=True, text=True, check=False, timeout=5,
+    )
+    assert result.returncode == 0
+    assert target.is_file()
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert result.stdout == result.stderr == ""
+    target.write_text("SYNTHETIC_EXISTING_LOG\n", encoding="utf-8")
+    result2 = subprocess.run(
+        ["python3", str(script), str(target)],
+        capture_output=True, text=True, check=False, timeout=5,
+    )
+    assert result2.returncode == 0
+    assert target.read_text(encoding="utf-8") == "SYNTHETIC_EXISTING_LOG\n"
+
+
+def test_prepare_trace_log_rejects_symlink_without_modifying_target(tmp_path: Path) -> None:
+    script = Path("scripts/init/prepare-trace-log.py")
+    private = tmp_path / "PRIVATE_TARGET_SENTINEL"
+    private.write_text("PRIVATE_CONTENT_SENTINEL", encoding="utf-8")
+    link = tmp_path / "trace.jsonl"
+    link.symlink_to(private)
+    result = subprocess.run(
+        ["python3", str(script), str(link)],
+        capture_output=True, text=True, check=False, timeout=5,
+    )
+    assert result.returncode == 1
+    assert result.stderr.strip() == "WIN_TRACE_DIAGNOSTIC stage=unsafe_log_target"
+    assert "PRIVATE_TARGET_SENTINEL" not in result.stdout + result.stderr
+    assert private.read_text(encoding="utf-8") == "PRIVATE_CONTENT_SENTINEL"
+
+
+def test_prepare_trace_log_rejects_directory_without_blocking(tmp_path: Path) -> None:
+    script = Path("scripts/init/prepare-trace-log.py")
+    result = subprocess.run(
+        ["python3", str(script), str(tmp_path)],
+        capture_output=True, text=True, check=False, timeout=5,
+    )
+    assert result.returncode == 1
+    assert result.stderr.strip() == "WIN_TRACE_DIAGNOSTIC stage=unsafe_log_target"
+
+
+def test_trace_file_precedes_winepath_conversion_by_contract() -> None:
+    source = Path("scripts/init/30-start-services.sh").read_text(encoding="utf-8")
+    created = 'python3 /scripts/init/prepare-trace-log.py "$SESSION_DIR/logs/input_events_windows.jsonl"'
+    converted = 'WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"'
+    assert created in source
+    assert converted in source
+    assert source.index(created) < source.index(converted)

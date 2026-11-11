@@ -11,6 +11,9 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     WIN_TRACE_MS="${WINEBOT_INPUT_TRACE_WINDOWS_SAMPLE_MS:-5}"
     mkdir -p "$SESSION_DIR/logs"
     WINEBOT_STARTUP_STAGE="services/trace-log-path"
+    # Wine 11 path conversion may reject a missing last path component.
+    # Create a private regular file safely before asking winepath to map it.
+    python3 /scripts/init/prepare-trace-log.py "$SESSION_DIR/logs/input_events_windows.jsonl"
     WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"
     WINEBOT_STARTUP_STAGE="services/trace-script-path"
     WINE_SCRIPT_PATH="$(/scripts/init/winepath-with-retry.sh /automation/core/input_trace_windows.ahk)"
