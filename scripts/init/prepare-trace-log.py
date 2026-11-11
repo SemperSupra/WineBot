@@ -7,7 +7,6 @@ Never disclose the source path or filesystem error on a public runner.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import stat
 import sys
 
