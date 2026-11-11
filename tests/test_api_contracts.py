@@ -204,7 +204,7 @@ def test_windows_focus_endpoint():
     assert response.status_code == 200
     assert response.json()["status"] == "focused"
     mock_safe.assert_called_once_with(
-        ["/automation/bin/x11.sh", "focus-window", "0x1234"]
+        ["/automation/bin/x11.sh", "focus", "0x1234"]
     )
 
 

@@ -335,7 +335,7 @@ async def focus_window(data: FocusModel):
         if not target_id:
             return {"status": "not_found"}
 
-    if not re.fullmatch(r"[0-9]+", target_id):
+    if not re.fullmatch(r"(?:[0-9]+|0[xX][0-9a-fA-F]+)", target_id):
         return {"status": "invalid_target"}
     focused = safe_command(["/automation/bin/x11.sh", "focus", target_id])
     return {"status": "focused" if focused.get("ok") else "failed"}

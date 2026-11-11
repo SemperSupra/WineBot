@@ -28,6 +28,12 @@ def test_focus_by_id_uses_existing_x11_helper_subcommand():
     assert calls[0].args[0] == ["/automation/bin/x11.sh", "focus", "12345"]
 
 
+def test_focus_hex_xid_is_accepted_for_existing_clients():
+    result, calls = _run(FocusModel(window_id="0x1234"), focus={"ok": True})
+    assert result == {"status": "focused"}
+    assert calls[0].args[0] == ["/automation/bin/x11.sh", "focus", "0x1234"]
+
+
 def test_focus_exact_title_resolves_visible_x11_id_without_regex_interpretation():
     result, calls = _run(
         FocusModel(title="Window (Test)"),
