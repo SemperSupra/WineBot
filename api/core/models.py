@@ -131,7 +131,8 @@ class InspectWindowModel(BaseModel):
 
 
 class FocusModel(BaseModel):
-    window_id: str
+    window_id: str | None = None
+    title: str | None = None
 
 
 class RecordingStartModel(BaseModel):

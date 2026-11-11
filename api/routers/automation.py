@@ -313,11 +313,32 @@ async def wininspect_pick(x: int = Query(ge=0), y: int = Query(ge=0)):
 
 @router.post("/windows/focus")
 async def focus_window(data: FocusModel):
-    """Focus a window by ID."""
+    """Focus an X11 window by validated ID or exact visible title."""
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
-    safe_command(["/automation/bin/x11.sh", "focus-window", data.window_id])
-    return {"status": "focused"}
+
+    target_id = (data.window_id or "").strip()
+    if not target_id:
+        title = (data.title or "").strip()
+        if not title:
+            return {"status": "invalid_target"}
+        listing = safe_command(["/automation/bin/x11.sh", "list-windows"])
+        if not listing.get("ok"):
+            return {"status": "unavailable"}
+        # Deterministic exact match: never pass user-provided title to a shell,
+        # regex or xdotool argument. X11 IDs are not Wine HWNDs.
+        for line in listing.get("stdout", "").splitlines():
+            fields = line.strip().split(" ", 1)
+            if len(fields) == 2 and fields[1] == title and re.fullmatch(r"[0-9]+", fields[0]):
+                target_id = fields[0]
+                break
+        if not target_id:
+            return {"status": "not_found"}
+
+    if not re.fullmatch(r"[0-9]+", target_id):
+        return {"status": "invalid_target"}
+    focused = safe_command(["/automation/bin/x11.sh", "focus", target_id])
+    return {"status": "focused" if focused.get("ok") else "failed"}
 
 
 @router.post("/run/ahk")
