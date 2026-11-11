@@ -95,3 +95,44 @@ def test_no_input_rejected_without_wine_process() -> None:
     )
     assert result.returncode == 2
     assert result.stdout == ""
+
+
+@pytest.mark.parametrize("exit_code,expected", [(124, "timeout"), (127, "nonzero")])
+def test_failed_winepath_reports_bounded_reason_without_secret(
+    tmp_path: Path, exit_code: int, expected: str
+) -> None:
+    tool = tmp_path / "winepath"
+    tool.write_text("#!/bin/sh\necho PRIVATE_SECRET_SENTINEL >&2\nexit 1\n")
+    tool.chmod(0o755)
+    timeout_tool = tmp_path / "timeout"
+    timeout_tool.write_text(f"#!/bin/sh\nexit {exit_code}\n")
+    timeout_tool.chmod(0o755)
+    sleep_tool = tmp_path / "sleep"
+    sleep_tool.write_text("#!/bin/sh\nexit 0\n")
+    sleep_tool.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "/synthetic/SECRET_PATH_SENTINEL"],
+        env=env, capture_output=True, text=True, timeout=12, check=False
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == f"WINEPATH_DIAGNOSTIC stage={expected}"
+    assert "SECRET_PATH_SENTINEL" not in result.stdout + result.stderr
+    assert "PRIVATE_SECRET_SENTINEL" not in result.stdout + result.stderr
+
+
+def test_trace_classifier_projects_fixed_winepath_cause_only() -> None:
+    result = subprocess.run(
+        ["python3", "scripts/ci/classify-startup-logs.py"],
+        input=("SENSITIVE_TOKEN_SENTINEL\n"
+               "WINEPATH_DIAGNOSTIC stage=timeout\n"
+               "WINEBOT_STARTUP_ERROR stage=services/trace-log-path rc=1\n"),
+        text=True, capture_output=True, timeout=8, check=True
+    )
+    assert result.stdout.splitlines() == [
+        "STARTUP_DIAGNOSTIC stage=failed_trace_log_path",
+        "STARTUP_DIAGNOSTIC winepath=timeout",
+    ]
+    assert "SENSITIVE_TOKEN_SENTINEL" not in result.stdout

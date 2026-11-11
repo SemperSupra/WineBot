@@ -30,6 +30,11 @@ def main() -> int:
     for marker, code in SPECIFIC_STAGES:
         if "WINEBOT_STARTUP_ERROR stage=" + marker + " " in raw:
             print("STARTUP_DIAGNOSTIC stage=" + code)
+            if code in {"failed_trace_log_path", "failed_trace_script_path"}:
+                for cause in ("missing_binary", "timeout", "nonzero", "invalid_output"):
+                    if "WINEPATH_DIAGNOSTIC stage=" + cause in raw:
+                        print("STARTUP_DIAGNOSTIC winepath=" + cause)
+                        break
             return 0
     for marker, code in (
         ("Pass 4: Services", "reached_services"),
