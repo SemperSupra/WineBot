@@ -52,31 +52,32 @@ fi
 # (wineserver -k removed to avoid ownership noise)
 sleep 1
 
-# Check if prefix needs population from template
+# Initialize only an absent prefix; preserve already-running and existing prefixes.
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
-    if [ -d "/opt/winebot/prefix-template" ] && [ -f "/opt/winebot/prefix-template/system.reg" ]; then
+    # Wine 11's copied build-time template failed its runtime prefix update.
+    # Qualify fresh initialization at the final prefix location instead.
+    # Keep the known working Wine 10 template path unchanged.
+    if wine --version 2>/dev/null | grep -Eq '^wine-11([.]|$)'; then
+        WINEBOT_STARTUP_STAGE="wine/prefix-init"
+        if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=init_failed\n' >&2
+            exit 1
+        fi
+        WINEBOT_STARTUP_STAGE="wine"
+    elif [ -d "/opt/winebot/prefix-template" ] && [ -f "/opt/winebot/prefix-template/system.reg" ]; then
         echo "--> Populating WINEPREFIX from template..."
-        # Use -a to preserve all attributes and recurse properly.
-        # A newly copied registry is not proof of runtime prefix readiness.
         WINEBOT_STARTUP_STAGE="wine/prefix-clone"
         if ! cp -a /opt/winebot/prefix-template/. "$WINEPREFIX/" >/dev/null 2>&1; then
             printf 'WINE_PREFIX_DIAGNOSTIC stage=clone_failed\n' >&2
-            exit 1
-        fi
-        # The template was initialized at a different prefix location.
-        # Reconcile it exactly once after cloning, not on every restart.
-        WINEBOT_STARTUP_STAGE="wine/prefix-update"
-        if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
-            printf 'WINE_PREFIX_DIAGNOSTIC stage=update_failed\n' >&2
             exit 1
         fi
         WINEBOT_STARTUP_STAGE="wine"
     else
         echo "--> Initializing new WINEPREFIX (Template missing or invalid)..."
         export WINEDLLOVERRIDES="mscoree,mshtml="
-        WINEBOT_STARTUP_STAGE="wine/prefix-update"
+        WINEBOT_STARTUP_STAGE="wine/prefix-init"
         if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
-            printf 'WINE_PREFIX_DIAGNOSTIC stage=update_failed\n' >&2
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=init_failed\n' >&2
             exit 1
         fi
         WINEBOT_STARTUP_STAGE="wine"

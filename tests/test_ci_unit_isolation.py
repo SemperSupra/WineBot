@@ -247,29 +247,28 @@ esac
         self.assertIn('echo -n "$API_TOKEN" > /tmp/winebot_api_token', source)
 
 
-    def test_prefix_cloned_from_wine11_image_is_reconciled_once(self):
+    def test_wine11_new_prefix_is_initialized_without_template_clone(self):
         source = (ROOT / "scripts/init/20-setup-wine.sh").read_text(encoding="utf-8")
-        clone = 'cp -a /opt/winebot/prefix-template/. "$WINEPREFIX/"'
-        update = 'timeout -k 5s 90s wineboot -u >/dev/null 2>&1'
         self.assertIn('if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then', source)
-        self.assertIn("WINEBOT_STARTUP_STAGE=\"wine/prefix-clone\"", source)
-        self.assertIn("WINEBOT_STARTUP_STAGE=\"wine/prefix-update\"", source)
-        self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=update_failed", source)
+        self.assertIn("if wine --version 2>/dev/null | grep -Eq '^wine-11([.]|$)'; then", source)
+        self.assertIn("WINEBOT_STARTUP_STAGE=\"wine/prefix-init\"", source)
+        self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=init_failed", source)
         self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=clone_failed", source)
-        self.assertIn(clone, source)
-        self.assertEqual(source.count(update), 2)
-        self.assertLess(source.index(clone), source.index(update))
+        self.assertEqual(source.count("timeout -k 5s 90s wineboot -u >/dev/null 2>&1"), 2)
+        self.assertLess(source.index("if wine --version"), source.index('elif [ -d "/opt/winebot/prefix-template" ]'))
+        self.assertLess(source.index("WINEBOT_STARTUP_STAGE=\"wine/prefix-init\""), source.index("WINEBOT_STARTUP_STAGE=\"wine/prefix-clone\""))
         for workflow in ("ci-unit-isolation.yml", "nightly-rel-startup-qualification.yml"):
             text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
             self.assertIn("      - 'scripts/init/20-setup-wine.sh'", text)
 
-    def test_prefix_update_diagnostics_are_allowlisted_and_redacted(self):
+    def test_prefix_failure_diagnostics_are_allowlisted_and_redacted(self):
         import subprocess
         import sys
         secret = "SYNTHETIC_PRIVATE_MARKER"
         classifier = str(ROOT / "scripts/ci/classify-startup-logs.py")
         for stage, expected in (
             ("wine/prefix-clone", "failed_prefix_clone"),
+            ("wine/prefix-init", "failed_prefix_init"),
             ("wine/prefix-update", "failed_prefix_update"),
         ):
             payload = (
@@ -280,10 +279,9 @@ esac
                 [sys.executable, classifier], input=payload, text=True,
                 capture_output=True, check=True, timeout=8,
             )
-            self.assertEqual(
-                result.stdout.strip(), "STARTUP_DIAGNOSTIC stage=" + expected,
-            )
+            self.assertEqual(result.stdout.strip(), "STARTUP_DIAGNOSTIC stage=" + expected)
             self.assertNotIn(secret, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

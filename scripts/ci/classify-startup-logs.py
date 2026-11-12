@@ -20,6 +20,7 @@ SPECIFIC_STAGES = (
     ("configuration", "failed_configuration"),
     ("infrastructure", "failed_infrastructure"),
     ("wine/prefix-clone", "failed_prefix_clone"),
+    ("wine/prefix-init", "failed_prefix_init"),
     ("wine/prefix-update", "failed_prefix_update"),
     ("wine", "failed_wine"),
 )
