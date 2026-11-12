@@ -56,13 +56,34 @@ sleep 1
 if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     if [ -d "/opt/winebot/prefix-template" ] && [ -f "/opt/winebot/prefix-template/system.reg" ]; then
         echo "--> Populating WINEPREFIX from template..."
-        # Use -a to preserve all attributes and recurse properly
-        cp -a /opt/winebot/prefix-template/. "$WINEPREFIX/"
+        # Use -a to preserve all attributes and recurse properly.
+        # A newly copied registry is not proof of runtime prefix readiness.
+        WINEBOT_STARTUP_STAGE="wine/prefix-clone"
+        if ! cp -a /opt/winebot/prefix-template/. "$WINEPREFIX/" >/dev/null 2>&1; then
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=clone_failed\n' >&2
+            exit 1
+        fi
+        # The template was initialized at a different prefix location.
+        # Reconcile it exactly once after cloning, not on every restart.
+        WINEBOT_STARTUP_STAGE="wine/prefix-update"
+        if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=update_failed\n' >&2
+            exit 1
+        fi
+        WINEBOT_STARTUP_STAGE="wine"
     else
         echo "--> Initializing new WINEPREFIX (Template missing or invalid)..."
         export WINEDLLOVERRIDES="mscoree,mshtml="
-        wineboot -u >/dev/null 2>&1
-        wineserver -w
+        WINEBOT_STARTUP_STAGE="wine/prefix-update"
+        if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=update_failed\n' >&2
+            exit 1
+        fi
+        WINEBOT_STARTUP_STAGE="wine"
+        if ! timeout -k 5s 30s wineserver -w >/dev/null 2>&1; then
+            printf 'WINE_PREFIX_DIAGNOSTIC stage=server_wait_failed\n' >&2
+            exit 1
+        fi
     fi
 fi
 

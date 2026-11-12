@@ -8,6 +8,7 @@ on:
       - '.github/workflows/nightly-soak.yml'
       - '.github/workflows/nightly-rel-startup-qualification.yml'
       - 'docker/entrypoint.sh'
+      - 'scripts/init/20-setup-wine.sh'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/init/winepath-with-retry.sh'
       - 'scripts/ci/wait-for-container-health.sh'
@@ -34,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/init/winepath-with-retry.sh scripts/ci/wait-for-container-health.sh scripts/ci/test.sh
+          bash -n docker/entrypoint.sh scripts/init/20-setup-wine.sh scripts/init/30-start-services.sh scripts/init/winepath-with-retry.sh scripts/ci/wait-for-container-health.sh scripts/ci/test.sh
           python3 tests/test_ci_unit_isolation.py
           python3 -m py_compile scripts/ci/classify-startup-logs.py
       - name: Validate GitHub Actions workflow YAML

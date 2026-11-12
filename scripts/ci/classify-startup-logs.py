@@ -19,6 +19,8 @@ SPECIFIC_STAGES = (
     ("services", "failed_services"),
     ("configuration", "failed_configuration"),
     ("infrastructure", "failed_infrastructure"),
+    ("wine/prefix-clone", "failed_prefix_clone"),
+    ("wine/prefix-update", "failed_prefix_update"),
     ("wine", "failed_wine"),
 )
 
