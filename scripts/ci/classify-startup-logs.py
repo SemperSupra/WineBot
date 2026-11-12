@@ -35,6 +35,16 @@ def main() -> int:
                     if "WINEPATH_DIAGNOSTIC stage=" + cause in raw:
                         print("STARTUP_DIAGNOSTIC winepath=" + cause)
                         break
+                # Only fixed classifications from the failed trace-path probe;
+                # never reflect diagnostic text from untrusted service logs.
+                for status in ("present", "unverified"):
+                    if "WIN_TRACE_PROBE root_mapping=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC root_mapping=" + status)
+                        break
+                for status in ("pass", "fail"):
+                    if "WIN_TRACE_PROBE control_file=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC control_file=" + status)
+                        break
             return 0
     for marker, code in (
         ("Pass 4: Services", "reached_services"),

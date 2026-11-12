@@ -14,7 +14,22 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     # Wine 11 path conversion may reject a missing last path component.
     # Create a private regular file safely before asking winepath to map it.
     python3 /scripts/init/prepare-trace-log.py "$SESSION_DIR/logs/input_events_windows.jsonl"
-    WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"
+    if ! WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"; then
+      # Fail closed. Distinguish a broken Wine environment from a path-specific
+      # failure using only fixed codes; never print converted paths or Wine output.
+      if [ -L "${WINEPREFIX}/dosdevices/z:" ] &&
+         [ "$(readlink "${WINEPREFIX}/dosdevices/z:" 2>/dev/null)" = "/" ]; then
+        printf 'WIN_TRACE_PROBE root_mapping=present\n' >&2
+      else
+        printf 'WIN_TRACE_PROBE root_mapping=unverified\n' >&2
+      fi
+      if timeout 8s winepath -w /etc/hosts >/dev/null 2>&1; then
+        printf 'WIN_TRACE_PROBE control_file=pass\n' >&2
+      else
+        printf 'WIN_TRACE_PROBE control_file=fail\n' >&2
+      fi
+      return 1
+    fi
     WINEBOT_STARTUP_STAGE="services/trace-script-path"
     WINE_SCRIPT_PATH="$(/scripts/init/winepath-with-retry.sh /automation/core/input_trace_windows.ahk)"
     WINEBOT_STARTUP_STAGE="services/trace-launch"

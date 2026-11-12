@@ -165,6 +165,7 @@ esac
             self.assertIn("STARTUP_DIAGNOSTIC stage=failed_trace_log_path",
                           result.stdout + result.stderr)
             self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+            self.assertNotIn("mock123", result.stdout + result.stderr)
 
 
     def test_exact_nightly_rel_startup_public_qualifier(self):

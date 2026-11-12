@@ -39,11 +39,11 @@ for ((i=1; i<=max_attempts; i++)); do
   status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || echo unknown)"
   case "$status" in
     healthy)
-      echo "Service ${service} is healthy (${container_id})"
+      echo "Service ${service} is healthy"
       exit 0
       ;;
     unhealthy)
-      echo "ERROR: service ${service} became unhealthy (${container_id})" >&2
+      echo "ERROR: service ${service} became unhealthy" >&2
       diagnose_health_failure
       exit 1
       ;;
