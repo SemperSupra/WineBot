@@ -1,4 +1,4 @@
-"""Offline, no-credential contract for the Pandora read-only WineBot workset."""
+"""Offline, no-credential contract for the Agent Dispatch read-only WineBot workset."""
 import json
 from pathlib import Path
 
@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKSET = ROOT / "worksets" / "agent-dispatch.json"
 
 
-def test_pandora_observation_delegation_has_no_actuation():
+def test_agent_dispatch_observation_delegation_has_no_actuation():
     data = json.loads(WORKSET.read_text(encoding="utf-8"))
     assert data["locator"] == "github-file:SemperSupra/WineBot@main:worksets/agent-dispatch.json"
     assert set(data["delegations"]) == {"winebot-observe"}
@@ -24,7 +24,7 @@ def test_pandora_observation_delegation_has_no_actuation():
     assert "merge or release" in delegation["scope"]["prohibited"]
 
 
-def test_pandora_workset_contains_no_credential_material():
+def test_agent_dispatch_workset_contains_no_credential_material():
     raw = WORKSET.read_text(encoding="utf-8").lower()
     for secret_indicator in ("-----begin", "private_key", "bearer_token",
                              "api_token", "tailscale_auth", "ssh-rsa "):
@@ -32,3 +32,10 @@ def test_pandora_workset_contains_no_credential_material():
     data = json.loads(raw)
     assert data["state"]["source_authority"]
     assert data["delegations"]["winebot-observe"]["acceptance"]["evidence_refs"]
+
+
+def test_workset_has_no_deployment_identity_fields():
+    data = json.loads(WORKSET.read_text(encoding="utf-8"))
+    assert "client_id" not in data and "host_name" not in data
+    assert data["delegations"]["winebot-observe"]["authority"]["grants"] == ["read repository"]
+    assert data["delegations"]["winebot-observe"]["capabilities"]["may_delegate"] is False

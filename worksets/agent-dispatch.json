@@ -1,7 +1,7 @@
 {
-  "workset_id": "winebot-pandora-observation",
+  "workset_id": "winebot-agent-dispatch-observation",
   "locator": "github-file:SemperSupra/WineBot@main:worksets/agent-dispatch.json",
-  "intent": "Expose a least-authority read-only WineBot DLE/CI continuation to the existing Agent Dispatch Sidecar on Pandora. WineBot GitHub PRs/issues remain authoritative; this materialization is not a release, merge, workcell, or credential grant.",
+  "intent": "Expose a least-authority read-only WineBot DLE/CI continuation through an authorized Agent Dispatch client. WineBot public GitHub PRs/issues remain authoritative; this materialization is not a release, merge, workcell, or credential grant.",
   "state": {
     "source_authority": "SemperSupra/WineBot main and live pull requests own source, gates and decisions; reconcile exact current heads before using.",
     "runtime_qualification": "SemperSupra/WineBot PR #150 owns Wine 11 REL candidate, trace startup and resource qualification; nightly release gate is separate.",
@@ -12,7 +12,7 @@
   "unknowns": {
     "final_wine11_acceptance": "Wine 11 is not accepted until candidate container health, resource, conformance and release gates have source-bound receipts.",
     "observer_acceptance": "Long-running Wine 11 observer, overflow/restart and Windows parity require real runtime acceptance.",
-    "executor_binding": "No WineBot-specific Pandora execution target, actuating admission or assignment is implied by observation permission."
+    "executor_binding": "No WineBot-specific execution target, actuating admission or assignment is implied by observation permission."
   },
   "bounds": {
     "scope_allowed": [
@@ -48,7 +48,7 @@
       "responsibilities": [
         "Reconcile exact WineBot main and active PR heads from GitHub rather than conversation state.",
         "Read public CI statuses and sanitized source-bound results; distinguish transport green from semantic acceptance.",
-        "Produce an owner-readable frontier and next batons without mutating WineBot or Pandora."
+        "Produce an owner-readable frontier and next batons without mutating WineBot or the connected control host."
       ],
       "state_refs": [
         "source_authority",
@@ -122,9 +122,9 @@
       ],
       "acceptance": {
         "criteria": [
-          "Pandora recognizes existing openai-tunnel caller for only this exact workset and delegation with observe caller class.",
+          "The authorized caller recognizes only this exact workset and delegation with read-only observe class.",
           "get_work_projection succeeds read-only and has no write/dispatch scope.",
-          "Existing unrelated Pandora grants and bearer credentials remain unchanged.",
+          "All pre-existing unrelated caller admissions and credentials remain unchanged.",
           "No workflow launched, repository mutated or protected data disclosed during observation qualification."
         ],
         "evidence_refs": [
@@ -133,7 +133,7 @@
           "https://github.com/SemperSupra/WineBot/pull/132"
         ]
       },
-      "frontier": "Create the workset via reviewed project-native PR, then append exact read-only Pandora caller grant through the already installed trusted-host helper. After that, call get_work_projection on Pandora and record the observed receipt."
+      "frontier": "Review and merge public-source workset after security qualification. In a separate private trusted-host workcell, preview and append only the exact read-only caller grant; reload the existing sidecar and read back get_work_projection. No execution admission is implied."
     }
   }
 }
