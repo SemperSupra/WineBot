@@ -23,6 +23,16 @@ if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
       else
         printf 'WIN_TRACE_PROBE root_mapping=unverified\n' >&2
       fi
+      if [ -f "${WINEPREFIX}/system.reg" ]; then
+        printf 'WIN_TRACE_PROBE prefix_registry=present\n' >&2
+      else
+        printf 'WIN_TRACE_PROBE prefix_registry=missing\n' >&2
+      fi
+      if timeout 12s wine cmd /c exit 0 >/dev/null 2>&1; then
+        printf 'WIN_TRACE_PROBE wine_command=pass\n' >&2
+      else
+        printf 'WIN_TRACE_PROBE wine_command=fail\n' >&2
+      fi
       if timeout 8s winepath -w /etc/hosts >/dev/null 2>&1; then
         printf 'WIN_TRACE_PROBE control_file=pass\n' >&2
       else

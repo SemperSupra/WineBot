@@ -41,6 +41,14 @@ def main() -> int:
                     if "WIN_TRACE_PROBE root_mapping=" + status in raw:
                         print("STARTUP_DIAGNOSTIC root_mapping=" + status)
                         break
+                for status in ("present", "missing"):
+                    if "WIN_TRACE_PROBE prefix_registry=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC prefix_registry=" + status)
+                        break
+                for status in ("pass", "fail"):
+                    if "WIN_TRACE_PROBE wine_command=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC wine_command=" + status)
+                        break
                 for status in ("pass", "fail"):
                     if "WIN_TRACE_PROBE control_file=" + status in raw:
                         print("STARTUP_DIAGNOSTIC control_file=" + status)

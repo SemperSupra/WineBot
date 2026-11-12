@@ -198,6 +198,10 @@ def test_trace_path_failure_runs_only_bounded_control_probe() -> None:
     assert "timeout 8s winepath -w /etc/hosts >/dev/null 2>&1" in source
     assert "WIN_TRACE_PROBE root_mapping=present" in source
     assert "WIN_TRACE_PROBE root_mapping=unverified" in source
+    assert 'if [ -f "${WINEPREFIX}/system.reg" ]; then' in source
+    assert "WIN_TRACE_PROBE prefix_registry=missing" in source
+    assert "timeout 12s wine cmd /c exit 0 >/dev/null 2>&1" in source
+    assert "WIN_TRACE_PROBE wine_command=fail" in source
     assert "WIN_TRACE_PROBE control_file=pass" in source
     assert "WIN_TRACE_PROBE control_file=fail" in source
     assert source.index("return 1") < source.index('WINEBOT_STARTUP_STAGE="services/trace-script-path"')
@@ -210,6 +214,8 @@ def test_trace_control_probe_classifier_only_emits_fixed_markers() -> None:
         input=(marker + "\\n"
                "WINEPATH_DIAGNOSTIC stage=nonzero\\n"
                "WIN_TRACE_PROBE root_mapping=unverified\\n"
+               "WIN_TRACE_PROBE prefix_registry=missing\\n"
+               "WIN_TRACE_PROBE wine_command=fail\\n"
                "WIN_TRACE_PROBE control_file=fail\\n"
                "WINEBOT_STARTUP_ERROR stage=services/trace-log-path rc=1\\n").replace("\\n", "\n"),
         text=True, capture_output=True, check=True, timeout=8,
@@ -218,6 +224,8 @@ def test_trace_control_probe_classifier_only_emits_fixed_markers() -> None:
         "STARTUP_DIAGNOSTIC stage=failed_trace_log_path",
         "STARTUP_DIAGNOSTIC winepath=nonzero",
         "STARTUP_DIAGNOSTIC root_mapping=unverified",
+        "STARTUP_DIAGNOSTIC prefix_registry=missing",
+        "STARTUP_DIAGNOSTIC wine_command=fail",
         "STARTUP_DIAGNOSTIC control_file=fail",
     ]
     assert marker not in result.stdout + result.stderr
