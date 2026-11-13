@@ -11,6 +11,7 @@ on:
       - 'docker/Dockerfile'
       - 'scripts/init/winepath-with-retry.sh'
       - 'scripts/init/20-setup-wine.sh'
+      - 'scripts/ci/probe-wine11-prefix.sh'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/wait-for-container-health.sh'
       - 'scripts/ci/classify-startup-logs.py'
@@ -92,6 +93,9 @@ jobs:
             wine-11|wine-11.*) echo 'WINE_RUNTIME_DIAGNOSTIC major=11';;
             *) echo 'WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch'; exit 1;;
           esac
+
+      - name: Probe WineHQ 11 cold prefix in isolated non-root modes
+        run: bash scripts/ci/probe-wine11-prefix.sh
 
       - name: Start exact nightly Compose service without rebuilding
         run: |
