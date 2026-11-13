@@ -265,6 +265,31 @@ esac
             text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
             self.assertIn("      - 'scripts/init/20-setup-wine.sh'", text)
 
+    def test_wine11_preflight_is_disposable_redacted_and_before_compose(self):
+        workflow = (ROOT / ".github/workflows/nightly-rel-startup-qualification.yml").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "scripts/ci/probe-wine11-prefix.sh").read_text(encoding="utf-8")
+        self.assertIn("      - 'scripts/ci/probe-wine11-prefix.sh'", workflow)
+        self.assertIn("bash scripts/ci/probe-wine11-prefix.sh", workflow)
+        self.assertLess(
+            workflow.index("bash scripts/ci/probe-wine11-prefix.sh"),
+            workflow.index("Start exact nightly Compose service"),
+        )
+        for required in (
+            "for arch in win64 wow64",
+            "--rm --network none --cpus=2 --memory=3g --pids-limit=256",
+            "--cap-drop=ALL --security-opt=no-new-privileges",
+            "--user 1000:1000",
+            "timeout -k 5s 90s wineboot -i",
+            "timeout -k 5s 15s wine cmd /c exit 0",
+            "WINE_PREFIX_PROBE arch=%s stage=%s",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("docker push", probe)
+        self.assertNotIn("actions/upload-artifact", probe)
+        self.assertNotIn("docker logs", probe)
+
     def test_prefix_failure_diagnostics_are_allowlisted_and_redacted(self):
         import subprocess
         import sys
