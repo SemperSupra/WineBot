@@ -23,8 +23,11 @@ for arch in win64 wow64; do
         sleep 0.2
       done
       [ "$display_ok" -eq 1 ] || exit 23
-      timeout -k 5s 90s wineboot -i >/dev/null 2>&1
-      code=$?
+      if timeout -k 5s 90s wineboot -i >/dev/null 2>&1; then
+        code=0
+      else
+        code=$?
+      fi
       if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then exit 21; fi
       [ "$code" -eq 0 ] || exit 22
       timeout -k 5s 15s wine cmd /c exit 0 >/dev/null 2>&1 || exit 24
