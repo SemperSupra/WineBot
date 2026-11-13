@@ -254,7 +254,11 @@ esac
         self.assertIn("WINEBOT_STARTUP_STAGE=\"wine/prefix-init\"", source)
         self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=init_failed", source)
         self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=clone_failed", source)
-        self.assertEqual(source.count("timeout -k 5s 90s wineboot -u >/dev/null 2>&1"), 2)
+        self.assertEqual(source.count("timeout -k 5s 90s wineboot -i >/dev/null 2>&1"), 1)
+        self.assertEqual(source.count("timeout -k 5s 90s wineboot -u >/dev/null 2>&1"), 1)
+        base = (ROOT / "docker/base.Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("&& wineboot -i " + "\\", base)
+        self.assertNotIn("&& wineboot -u " + "\\", base)
         self.assertLess(source.index("if wine --version"), source.index('elif [ -d "/opt/winebot/prefix-template" ]'))
         self.assertLess(source.index("WINEBOT_STARTUP_STAGE=\"wine/prefix-init\""), source.index("WINEBOT_STARTUP_STAGE=\"wine/prefix-clone\""))
         for workflow in ("ci-unit-isolation.yml", "nightly-rel-startup-qualification.yml"):
