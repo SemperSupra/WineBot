@@ -65,7 +65,7 @@ RUN chmod +x /scripts/setup/install-theme.sh \
     && mkdir -p /opt/winebot/prefix-template \
     && Xvfb :95 -screen 0 1280x720x24 >/dev/null 2>&1 & XVFB_PID=$! \
     && export DISPLAY=:95 \
-    && wineboot -u \
+    && wineboot -i \
     && wineserver -w \
     && /scripts/setup/install-theme.sh \
     && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f \
