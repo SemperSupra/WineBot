@@ -58,8 +58,10 @@ if [ "${INIT_PREFIX:-1}" = "1" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
     # Qualify fresh initialization at the final prefix location instead.
     # Keep the known working Wine 10 template path unchanged.
     if wine --version 2>/dev/null | grep -Eq '^wine-11([.]|$)'; then
+        # A missing Wine 11 prefix needs creation, not an update of an
+        # already initialized prefix. Keep the mature/legacy paths unchanged.
         WINEBOT_STARTUP_STAGE="wine/prefix-init"
-        if ! timeout -k 5s 90s wineboot -u >/dev/null 2>&1; then
+        if ! timeout -k 5s 90s wineboot -i >/dev/null 2>&1; then
             printf 'WINE_PREFIX_DIAGNOSTIC stage=init_failed\n' >&2
             exit 1
         fi
