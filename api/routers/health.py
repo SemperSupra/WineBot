@@ -314,7 +314,14 @@ def health_system():
     }
     with contextlib.suppress(OSError):
         info["loadavg"] = os.getloadavg()
-    info.update(meminfo_summary())
+    memory_kb = meminfo_summary()
+    info.update(memory_kb)
+    # Portable read-only resource shape. Retain legacy flat Linux fields for
+    # existing clients while offering bytes to Windows/Wine consumers.
+    info["memory"] = {
+        "total_bytes": memory_kb.get("mem_total_kb", 0) * 1024,
+        "available_bytes": memory_kb.get("mem_available_kb", 0) * 1024,
+    }
     return info
 
 
