@@ -279,13 +279,16 @@ esac
             workflow.index("Start exact nightly Compose service"),
         )
         for required in (
-            "for arch in win64 wow64",
+            "for caps in standard hardened",
+            "for arch in default win64 win32",
             "--rm --network none --cpus=2 --memory=3g --pids-limit=256",
-            "--cap-drop=ALL --security-opt=no-new-privileges",
+            "--security-opt=no-new-privileges --user 1000:1000",
+            "options+=(--cap-drop=ALL)",
             "--user 1000:1000",
             "timeout -k 5s 90s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i",
             "timeout -k 5s 15s wine cmd /c exit 0",
-            "WINE_PREFIX_PROBE arch=%s stage=%s",
+            "WINE_PREFIX_PROBE caps=%s arch=%s stage=%s",
+            "WINE_PREFIX_PROBE stage=target_mode_unqualified",
         ):
             self.assertIn(required, probe)
         self.assertNotIn("docker push", probe)
