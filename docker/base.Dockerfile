@@ -61,19 +61,44 @@ FROM base-system AS prefix-warmer
 USER winebot
 ENV WINEPREFIX=/opt/winebot/prefix-template
 COPY --chown=winebot:winebot scripts/setup/install-theme.sh /scripts/setup/install-theme.sh
-RUN chmod +x /scripts/setup/install-theme.sh \
-    && mkdir -p /opt/winebot/prefix-template \
-    && Xvfb :95 -screen 0 1280x720x24 >/dev/null 2>&1 & XVFB_PID=$! \
-    && export DISPLAY=:95 \
-    && wineboot -i \
-    && wineserver -w \
-    && /scripts/setup/install-theme.sh \
-    && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f \
-    && wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f \
-    && wineserver -k \
-    && sleep 5 \
-    && kill $XVFB_PID || true \
-    && rm -rf /tmp/.X95-lock /tmp/.X11-unix/X95
+# Preserve failure causality: an &&/background/||-true chain can mask
+# wineboot failure while Docker reports a successful prewarmed layer.
+RUN set -eu; \
+    chmod +x /scripts/setup/install-theme.sh; \
+    mkdir -p /opt/winebot/prefix-template; \
+    export DISPLAY=:95; \
+    Xvfb "$DISPLAY" -screen 0 1280x720x24 -noreset >/dev/null 2>&1 & \
+    XVFB_PID=$!; \
+    trap 'kill "$XVFB_PID" >/dev/null 2>&1 || :; wait "$XVFB_PID" 2>/dev/null || :' EXIT; \
+    ready=0; \
+    for attempt in $(seq 1 40); do \
+        if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then ready=1; break; fi; \
+        sleep 0.25; \
+    done; \
+    if [ "$ready" -ne 1 ]; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=xvfb_unready' >&2; exit 1; \
+    fi; \
+    if ! timeout -k 5s 120s wineboot -i >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=wineboot_failed' >&2; exit 1; \
+    fi; \
+    if ! timeout -k 5s 60s wineserver -w >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=wineserver_wait_failed' >&2; exit 1; \
+    fi; \
+    if [ ! -s "$WINEPREFIX/system.reg" ]; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=registry_missing' >&2; exit 1; \
+    fi; \
+    if ! /scripts/setup/install-theme.sh >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=theme_failed' >&2; exit 1; \
+    fi; \
+    if ! wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v UseXInput2 /t REG_SZ /d "N" /f >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=registry_tune_failed' >&2; exit 1; \
+    fi; \
+    if ! wine reg add "HKEY_CURRENT_USER\Software\Wine\X11 Driver" /v Managed /t REG_SZ /d "Y" /f >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=registry_tune_failed' >&2; exit 1; \
+    fi; \
+    if ! timeout -k 5s 30s wineserver -k >/dev/null 2>&1; then \
+        echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=wineserver_stop_failed' >&2; exit 1; \
+    fi
 
 # 4. Final Base Layer
 FROM base-system AS final
