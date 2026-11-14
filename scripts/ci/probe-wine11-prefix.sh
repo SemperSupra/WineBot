@@ -4,16 +4,18 @@
 set -euo pipefail
 
 image="winebot:local-rel"
-win64_pass=0
-wow64_pass=0
-for arch in win64 wow64; do
-  set +e
-  docker run --rm --network none --cpus=2 --memory=3g --pids-limit=256 \
-    --cap-drop=ALL --security-opt=no-new-privileges \
-    --user 1000:1000 --entrypoint /bin/sh \
-    --env HOME=/home/winebot --env DISPLAY=:97 \
-    --env WINEPREFIX=/tmp/winebot-cold-prefix --env WINEARCH="$arch" \
-    "$image" -ec '
+target_pass=0
+for caps in standard hardened; do
+  for arch in default win64 win32; do
+    # Every cell is network-disabled; compare capability and supported arch.
+    options=(--rm --network none --cpus=2 --memory=3g --pids-limit=256
+      --security-opt=no-new-privileges --user 1000:1000
+      --entrypoint /bin/sh --env HOME=/home/winebot
+      --env DISPLAY=:97 --env WINEPREFIX=/tmp/winebot-cold-prefix)
+    if [ "$caps" = hardened ]; then options+=(--cap-drop=ALL); fi
+    if [ "$arch" != default ]; then options+=(--env "WINEARCH=$arch"); fi
+    set +e
+    docker run "${options[@]}" "$image" -ec '
       Xvfb :97 -screen 0 1280x720x24 -noreset >/dev/null 2>&1 &
       display_ok=0
       i=0
@@ -42,19 +44,16 @@ for arch in win64 wow64; do
     24) stage=command_failed ;;
     *) stage=container_failed ;;
   esac
-  printf 'WINE_PREFIX_PROBE arch=%s stage=%s\n' "$arch" "$stage"
-  if [ "$arch" = win64 ] && [ "$result" -eq 0 ]; then win64_pass=1; fi
-  if [ "$arch" = wow64 ] && [ "$result" -eq 0 ]; then wow64_pass=1; fi
+    printf 'WINE_PREFIX_PROBE caps=%s arch=%s stage=%s\n' "$caps" "$arch" "$stage"
+    if [ "$caps" = standard ] && [ "$arch" = win64 ] && [ "$result" -eq 0 ]; then
+      target_pass=1
+    fi
+  done
 done
 
-# Never infer the main Compose runtime is qualified from an isolated probe.
-# Only the current win64 Compose configuration can proceed to actual health.
-if [ "$win64_pass" -eq 0 ]; then
-  if [ "$wow64_pass" -eq 1 ]; then
-    echo 'WINE_PREFIX_PROBE stage=win64_config_unqualified'
-  else
-    echo 'WINE_PREFIX_PROBE stage=no_qualified_mode'
-  fi
+# Only the Compose target win64 mode qualifies the actual startup path.
+if [ "$target_pass" -ne 1 ]; then
+  echo 'WINE_PREFIX_PROBE stage=target_mode_unqualified'
   exit 1
 fi
-echo 'WINE_PREFIX_PROBE stage=win64_preflight_pass'
+echo 'WINE_PREFIX_PROBE stage=target_preflight_pass'
