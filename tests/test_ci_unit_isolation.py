@@ -71,5 +71,51 @@ class CIUnitIsolationTests(unittest.TestCase):
         self.assertIn('echo -n "$API_TOKEN" > /tmp/winebot_api_token', source)
 
 
+    def test_health_wait_failure_output_is_allowlisted(self):
+        source = (ROOT / "scripts/ci/wait-for-container-health.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(source.count("diagnose_health_failure"), 3)
+        self.assertIn('python3 "$classifier"', source)
+        self.assertIn('logs --no-color --tail 200 "$service" 2>/dev/null', source)
+        self.assertNotIn('logs --tail 200 "$service" || true', source)
+
+    def test_health_waiter_never_echoes_sensitive_service_log_content(self):
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            mock_docker = Path(directory) / "docker"
+            mock_docker.write_text(
+                """#!/bin/sh
+case "$1" in
+  inspect) printf '%s\\n' unhealthy;;
+  compose)
+    case " $* " in
+      *" ps -q "*) printf '%s\\n' mock123;;
+      *" logs "*) printf '%s\\n' SYNTHETIC_SECRET 'WINEBOT_STARTUP_ERROR stage=services/trace-log-path rc=1';;
+      *) exit 4;;
+    esac;;
+  *) exit 4;;
+esac
+""",
+                encoding="utf-8",
+            )
+            mock_docker.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = directory + os.pathsep + env["PATH"]
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/ci/wait-for-container-health.sh"),
+                 "compose/docker-compose.yml", "interactive",
+                 "winebot-interactive", "1", "1"],
+                env=env, capture_output=True, text=True, timeout=10, check=False
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("STARTUP_DIAGNOSTIC stage=failed_trace_log_path",
+                          result.stdout + result.stderr)
+            self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+            self.assertNotIn("mock123", result.stdout + result.stderr)
+
 if __name__ == "__main__":
     unittest.main()
