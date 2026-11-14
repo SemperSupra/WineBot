@@ -30,4 +30,5 @@ pytest \
   tests/test_soak_diagnostics_custody.py \
   tests/test_winepath_startup_retry.py \
   tests/test_wininspect_error_redaction.py \
-  tests/test_wine11_base_prefix_prewarmer.py
+  tests/test_wine11_base_prefix_prewarmer.py \
+  tests/test_health_system_memory.py
