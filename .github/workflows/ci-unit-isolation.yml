@@ -18,6 +18,8 @@ on:
       - 'scripts/ci/test.sh'
       - 'scripts/ci/classify-startup-logs.py'
       - 'tests/test_ci_unit_isolation.py'
+      - 'tests/test_wine11_base_prefix_prewarmer.py'
+      - 'docker/base.Dockerfile'
 
 permissions:
   contents: read
@@ -37,6 +39,7 @@ jobs:
           set -euo pipefail
           bash -n docker/entrypoint.sh scripts/init/20-setup-wine.sh scripts/init/30-start-services.sh scripts/init/winepath-with-retry.sh scripts/ci/wait-for-container-health.sh scripts/ci/test.sh
           python3 tests/test_ci_unit_isolation.py
+          python3 -m py_compile tests/test_wine11_base_prefix_prewarmer.py
           python3 -m py_compile scripts/ci/classify-startup-logs.py
       - name: Validate GitHub Actions workflow YAML
         shell: bash
