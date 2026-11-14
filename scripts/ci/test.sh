@@ -4,6 +4,8 @@ echo "--- Running Unit Tests ---"
 pytest \
   tests/test_api.py \
   tests/test_api_contracts.py \
+  tests/test_window_inventory_contract.py \
+  tests/test_window_focus_contract.py \
   tests/test_conformance_runtime_policy.py \
   tests/test_config_strict_validation.py \
   tests/test_invariants.py \
@@ -29,4 +31,6 @@ pytest \
   tests/test_ci_unit_isolation.py \
   tests/test_winepath_startup_retry.py \
   tests/test_wininspect_error_redaction.py \
+  tests/test_ci_vnext_evidence.py \
+  tests/test_lifecycle_cancel_window.py \
   tests/test_health_system_memory.py
