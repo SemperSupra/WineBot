@@ -28,7 +28,7 @@ def _fake_tool(directory: Path, name: str, source: str) -> None:
 def test_base_prefix_warmer_is_fail_closed_and_bounded() -> None:
     source = _prewarm_command()
     assert "|| true" not in source
-    assert "timeout -k 5s 120s wineboot -i" in source
+    assert "timeout -k 5s 120s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i" in source
     assert "timeout -k 5s 60s wineserver -w" in source
     assert 'if [ ! -s "$WINEPREFIX/system.reg" ]; then' in source
     assert "WINE_BASE_PREFIX_DIAGNOSTIC stage=wineboot_failed" in source

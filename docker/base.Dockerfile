@@ -78,7 +78,7 @@ RUN set -eu; \
     if [ "$ready" -ne 1 ]; then \
         echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=xvfb_unready' >&2; exit 1; \
     fi; \
-    if ! timeout -k 5s 120s wineboot -i >/dev/null 2>&1; then \
+    if ! timeout -k 5s 120s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i >/dev/null 2>&1; then \
         echo 'WINE_BASE_PREFIX_DIAGNOSTIC stage=wineboot_failed' >&2; exit 1; \
     fi; \
     if ! timeout -k 5s 60s wineserver -w >/dev/null 2>&1; then \

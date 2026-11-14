@@ -254,10 +254,10 @@ esac
         self.assertIn("WINEBOT_STARTUP_STAGE=\"wine/prefix-init\"", source)
         self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=init_failed", source)
         self.assertIn("WINE_PREFIX_DIAGNOSTIC stage=clone_failed", source)
-        self.assertEqual(source.count("timeout -k 5s 90s wineboot -i >/dev/null 2>&1"), 1)
+        self.assertEqual(source.count("timeout -k 5s 90s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i >/dev/null 2>&1"), 1)
         self.assertEqual(source.count("timeout -k 5s 90s wineboot -u >/dev/null 2>&1"), 1)
         base = (ROOT / "docker/base.Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("if ! timeout -k 5s 120s wineboot -i >/dev/null 2>&1; then", base)
+        self.assertIn("if ! timeout -k 5s 120s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i >/dev/null 2>&1; then", base)
         self.assertIn("WINE_BASE_PREFIX_DIAGNOSTIC stage=wineboot_failed", base)
         self.assertIn("WINE_BASE_PREFIX_DIAGNOSTIC stage=registry_missing", base)
         self.assertNotIn("&& wineboot -u " + "\\", base)
@@ -283,7 +283,7 @@ esac
             "--rm --network none --cpus=2 --memory=3g --pids-limit=256",
             "--cap-drop=ALL --security-opt=no-new-privileges",
             "--user 1000:1000",
-            "timeout -k 5s 90s wineboot -i",
+            "timeout -k 5s 90s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i",
             "timeout -k 5s 15s wine cmd /c exit 0",
             "WINE_PREFIX_PROBE arch=%s stage=%s",
         ):
