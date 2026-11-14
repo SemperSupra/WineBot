@@ -20,6 +20,7 @@ on:
       - 'tests/test_soak_diagnostics_custody.py'
       - 'docker/entrypoint.sh'
       - 'tests/test_ci_unit_isolation.py'
+      - 'tests/test_wine11_base_prefix_prewarmer.py'
 
 permissions:
   contents: read
