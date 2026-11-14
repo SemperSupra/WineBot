@@ -19,6 +19,9 @@ SPECIFIC_STAGES = (
     ("services", "failed_services"),
     ("configuration", "failed_configuration"),
     ("infrastructure", "failed_infrastructure"),
+    ("wine/prefix-clone", "failed_prefix_clone"),
+    ("wine/prefix-init", "failed_prefix_init"),
+    ("wine/prefix-update", "failed_prefix_update"),
     ("wine", "failed_wine"),
 )
 
@@ -30,6 +33,29 @@ def main() -> int:
     for marker, code in SPECIFIC_STAGES:
         if "WINEBOT_STARTUP_ERROR stage=" + marker + " " in raw:
             print("STARTUP_DIAGNOSTIC stage=" + code)
+            if code in {"failed_trace_log_path", "failed_trace_script_path"}:
+                for cause in ("missing_binary", "timeout", "nonzero", "invalid_output"):
+                    if "WINEPATH_DIAGNOSTIC stage=" + cause in raw:
+                        print("STARTUP_DIAGNOSTIC winepath=" + cause)
+                        break
+                # Only fixed classifications from the failed trace-path probe;
+                # never reflect diagnostic text from untrusted service logs.
+                for status in ("present", "unverified"):
+                    if "WIN_TRACE_PROBE root_mapping=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC root_mapping=" + status)
+                        break
+                for status in ("present", "missing"):
+                    if "WIN_TRACE_PROBE prefix_registry=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC prefix_registry=" + status)
+                        break
+                for status in ("pass", "fail"):
+                    if "WIN_TRACE_PROBE wine_command=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC wine_command=" + status)
+                        break
+                for status in ("pass", "fail"):
+                    if "WIN_TRACE_PROBE control_file=" + status in raw:
+                        print("STARTUP_DIAGNOSTIC control_file=" + status)
+                        break
             return 0
     for marker, code in (
         ("Pass 4: Services", "reached_services"),

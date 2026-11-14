@@ -27,7 +27,7 @@ defaults:
 
 jobs:
   publish-base:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -71,6 +71,16 @@ jobs:
           tags: winebot-base:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # This manual release workflow must never publish an older runtime
+      # under a Wine 11 base tag, even when an operator supplies custom tags.
+      - name: Require Wine 11 base identity before image publication
+        run: |
+          version="$(docker run --rm --entrypoint wine "winebot-base:${{ steps.meta.outputs.version }}" --version 2>/dev/null | tr -d '\r')"
+          case "$version" in
+            wine-11|wine-11.*) echo 'WINE_RUNTIME_DIAGNOSTIC major=11';;
+            *) echo 'WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch'; exit 1;;
+          esac
 
       - name: Scan base image (Trivy)
         run: |

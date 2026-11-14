@@ -1,0 +1,132 @@
+name: Nightly REL Startup Qualification
+
+# Build a local Wine 11 base candidate and qualify its REL runtime without publishing images.
+# Scheduled production nightly still uses the last promoted base until owner-gated promotion.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nightly-rel-startup-qualification.yml'
+      - '.github/workflows/nightly-soak.yml'
+      - 'docker/base.Dockerfile'
+      - 'docker/Dockerfile'
+      - 'scripts/init/winepath-with-retry.sh'
+      - 'scripts/init/20-setup-wine.sh'
+      - 'scripts/ci/probe-wine11-prefix.sh'
+      - 'scripts/init/30-start-services.sh'
+      - 'scripts/ci/wait-for-container-health.sh'
+      - 'scripts/ci/classify-startup-logs.py'
+      - 'scripts/diagnostics/diagnose-trace-soak.sh'
+      - 'scripts/diagnostics/soak-resource-bounds.sh'
+      - 'tests/test_soak_diagnostics_custody.py'
+      - 'docker/entrypoint.sh'
+      - 'tests/test_ci_unit_isolation.py'
+      - 'tests/test_wine11_base_prefix_prewarmer.py'
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  BUILD_INTENT: 'rel'
+  WINEBOT_IMAGE_VERSION: 'local'
+  WINEBOT_RECORD: '1'
+  WINEBOT_INPUT_TRACE_WINDOWS: '1'
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: nightly-rel-startup-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  nightly-rel-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact public PR source without retained credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Buildx on public runner
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Free disposable public runner disk before candidate build
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+          df -h
+
+      - name: Build signed Wine 11 base candidate locally
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: .
+          file: docker/base.Dockerfile
+          target: final
+          load: true
+          push: false
+          tags: winebot-base:wine11-candidate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build REL runtime from local Wine 11 candidate base
+        env:
+          WINEBOT_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docker buildx build --builder default \
+            --file docker/Dockerfile --target intent-rel \
+            --build-arg BASE_IMAGE=winebot-base:wine11-candidate \
+            --build-arg BUILD_INTENT=rel \
+            --build-arg VCS_REF="$WINEBOT_SOURCE_HEAD_SHA" \
+            --build-arg BUILD_DATE="$GITHUB_RUN_ID" \
+            --build-arg SOURCE_REPO="https://github.com/$GITHUB_REPOSITORY" \
+            --load --tag winebot:local-rel .
+
+      - name: Verify exact local image before Compose
+        run: docker image inspect winebot:local-rel --format 'REL_IMAGE_DIAGNOSTIC image_present=true' >/dev/null
+
+      - name: Require verified Wine 11 runtime from exact REL image
+        run: |
+          version="$(docker run --rm --entrypoint wine winebot:local-rel --version 2>/dev/null | tr -d '\r')"
+          case "$version" in
+            wine-11|wine-11.*) echo 'WINE_RUNTIME_DIAGNOSTIC major=11';;
+            *) echo 'WINE_RUNTIME_DIAGNOSTIC stage=major_mismatch'; exit 1;;
+          esac
+
+      - name: Probe WineHQ 11 cold prefix in isolated non-root modes
+        run: bash scripts/ci/probe-wine11-prefix.sh
+
+      - name: Start exact nightly Compose service without rebuilding
+        run: |
+          if ! docker compose -f compose/docker-compose.yml --profile interactive up --no-build -d winebot-interactive >rel-startup-job-local.log 2>&1; then
+            echo 'REL_STARTUP_DIAGNOSTIC stage=compose_start_failed'
+            exit 1
+          fi
+
+      - name: Qualify scheduled container health gate
+        run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 120 2
+
+      # Bounded live sampler exercises the real nightly resource monitor.
+      # Does not substitute for the separately gated full 55-minute soak.
+      - name: Sample live REL trace resource bounds for 90 seconds
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive exec -T --user winebot \
+            -e DURATION_SECONDS=90 \
+            -e INTERVAL_SECONDS=15 \
+            -e MAX_LOG_MB=1024 \
+            -e MAX_SESSION_MB=8192 \
+            -e MAX_PID1_RSS_MB=2048 \
+            winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
+
+      - name: Classify failure without printing raw service logs
+        if: ${{ failure() }}
+        run: |
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null |
+            python3 scripts/ci/classify-startup-logs.py
+
+      # No artifact publication: raw traces and image records remain job-local.
+      - name: Tear down REL qualification runtime
+        if: ${{ always() }}
+        run: docker compose -f compose/docker-compose.yml --profile interactive down --remove-orphans >/dev/null 2>&1 || true
