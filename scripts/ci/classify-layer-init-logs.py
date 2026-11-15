@@ -29,13 +29,17 @@ def classify(service: str, lines) -> str:
     if service not in STAGES:
         raise ValueError("unrecognized service")
     match = re.compile(rf"^{PREFIX[service]} stage=([a-z_]+)$")
-    found = "unclassified"
+    found = ""
+    any_log_lines = False
     for line in lines:
+        any_log_lines = True
         if len(line) > 256:
             continue
         category = match.fullmatch(line.rstrip("\r\n"))
         if category and category.group(1) in STAGES[service]:
             found = category.group(1)
+    if not found:
+        found = "unclassified_nonempty" if any_log_lines else "unclassified_empty"
     return f"WINE11_LAYER_HIL service={service} cause={found}"
 
 
