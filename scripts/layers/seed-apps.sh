@@ -37,7 +37,12 @@ if [ -f "$stamp" ]; then
   exit 0
 fi
 [ -z "$(find "$volume" -mindepth 1 -maxdepth 1 -print -quit)" ] || fail incomplete_volume
-mkdir "$lock" >/dev/null 2>&1 || fail concurrent_init
+# A failed lock creation can mean a competing seeder OR an unwritable
+# volume. Keep those causes distinct; never overwrite an existing volume.
+if ! mkdir "$lock" >/dev/null 2>&1; then
+  [ -e "$lock" ] && fail concurrent_init
+  fail permissions_failed
+fi
 cp -a "$source_dir"/. "$volume"/ >/dev/null 2>&1 || fail copy_failed
 verify_inventory
 rmdir "$lock" >/dev/null 2>&1 || fail incomplete_volume
