@@ -60,10 +60,19 @@ export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect --format '{{.Id}}' wineb
   fail image_identity_invalid
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
   fail compose_invalid
+# Qualify the OCI image's actual script contract without mutating external volumes.
+# A missing script or invalid local image reference must fail before Compose.
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --entrypoint /bin/sh \
+  "$WINEBOT_APP_BUNDLE_IMAGE" -ec '
+    test -r /usr/local/bin/winebot-seed-apps
+    test -r /usr/local/bin/winebot-prepare-state
+    test -s /opt/winebot/app-manifest.sha256
+  ' >/dev/null 2>&1 || fail app_bundle_script_contract
 # Project container state and fixed-domain diagnostics only. Never print raw
 # Compose logs, environment variables, container IDs, mounts or user paths.
 classify_startup() {
-  local service cid state exit_code health
+  local service cid state exit_code health expected_image actual_image image_match entrypoint actual_entrypoint expected_entrypoint
   for service in app-seed state-init winebot-interactive; do
     cid="$(docker compose -f compose/layered.yml ps -a -q "$service" 2>/dev/null || true)"
     if [ -z "$cid" ]; then
@@ -77,6 +86,25 @@ classify_startup() {
     case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
     [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || exit_code=unknown
     printf 'WINE11_LAYER_HIL service=%s state=%s exit=%s health=%s\n' "$service" "$state" "$exit_code" "$health" >&2
+    # Print only source-exact equality verdicts. Raw inspect image IDs,
+    # entrypoint paths, container IDs, and Docker error strings stay private.
+    expected_image="$WINEBOT_APP_BUNDLE_IMAGE"
+    [ "$service" = winebot-interactive ] && expected_image="$WINEBOT_RUNTIME_IMAGE"
+    actual_image="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
+    image_match=no
+    [ "$actual_image" = "$expected_image" ] && image_match=yes
+    entrypoint=not_applicable
+    case "$service" in
+      app-seed|state-init)
+        expected_entrypoint='["/bin/sh","/usr/local/bin/winebot-seed-apps"]'
+        [ "$service" = state-init ] &&
+          expected_entrypoint='["/bin/sh","/usr/local/bin/winebot-prepare-state"]'
+        actual_entrypoint="$(docker inspect --format '{{json .Config.Entrypoint}}' "$cid" 2>/dev/null || true)"
+        entrypoint=unexpected
+        [ "$actual_entrypoint" = "$expected_entrypoint" ] && entrypoint=expected
+        ;;
+    esac
+    printf 'WINE11_LAYER_HIL service=%s image_match=%s entrypoint=%s\n' "$service" "$image_match" "$entrypoint" >&2
     # The scripts emit fixed-domain markers on failure. Process container logs
     # privately; the classifier emits ONLY one enumerated category, not raw text.
     case "$service" in
