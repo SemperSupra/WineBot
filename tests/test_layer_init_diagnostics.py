@@ -1,9 +1,8 @@
 """Zero-secret regression tests for public composite startup classification."""
+import importlib.util
 import io
-import sys
 import unittest
 from pathlib import Path
-import importlib.util
 
 MODULE = Path(__file__).resolve().parents[1] / "scripts/ci/classify-layer-init-logs.py"
 spec = importlib.util.spec_from_file_location("layer_init", MODULE)
