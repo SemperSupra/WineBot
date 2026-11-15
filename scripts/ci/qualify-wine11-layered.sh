@@ -77,6 +77,14 @@ classify_startup() {
     case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
     [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || exit_code=unknown
     printf 'WINE11_LAYER_HIL service=%s state=%s exit=%s health=%s\n' "$service" "$state" "$exit_code" "$health" >&2
+    # The scripts emit fixed-domain markers on failure. Process container logs
+    # privately; the classifier emits ONLY one enumerated category, not raw text.
+    case "$service" in
+      app-seed|state-init)
+        docker logs --tail 80 "$cid" 2>/dev/null |
+          python3 scripts/ci/classify-layer-init-logs.py "$service" >&2 || true
+        ;;
+    esac
   done
 }
 if ! docker compose -f compose/layered.yml up --no-build -d winebot-interactive >/dev/null 2>&1; then
