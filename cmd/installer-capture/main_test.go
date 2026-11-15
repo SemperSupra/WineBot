@@ -47,6 +47,11 @@ func TestCLIAndPrivateOutput(t *testing.T) {
  dir := t.TempDir()
  root := filepath.Join(dir, "prefix")
  if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+ cwd, err := os.Getwd()
+ if err != nil { t.Fatal(err) }
+ relativeRoot, err := filepath.Rel(cwd, root)
+ if err != nil { t.Fatal(err) }
+ if !outOutsideRoot(relativeRoot, filepath.Join(dir, "before.json")) { t.Fatal("relative root should be supported") }
  if err := os.WriteFile(filepath.Join(root, "sample.reg"), []byte("value"), 0600); err != nil { t.Fatal(err) }
  inside := filepath.Join(root, "manifest.json")
  if err := run([]string{"snapshot", "-root", root, "-out", inside}); err == nil { t.Fatal("output inside root accepted") }
