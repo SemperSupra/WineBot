@@ -217,3 +217,45 @@ def test_runtime_logs_and_raw_results_stay_job_local() -> None:
     assert 'python3 winebot/scripts/ci/classify-startup-logs.py < "$health_log"' in source
     assert 'cat "$health_log"' not in source
     assert 'tail "$health_log"' not in source
+
+
+def test_fixed_case_enums_reveal_only_whitelisted_contracts(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    summary = {"total": 3, "passed": 0, "failed": 3, "skipped": 0,
+               "xfailed": 0, "xpassed": 0, "errors": 0}
+    raw = {"summary": summary, "failures": [
+        {"test": "contracts/tests/conformance/test_lifecycle.py::"
+                 "TestLifecycleShutdown::test_shutdown_has_required_fields",
+         "message": "SYNTHETIC_SECRET_SENTINEL"},
+        {"test": "test_automation.py::TestAppRun::test_app_run_with_valid_path",
+         "message": "SYNTHETIC_HOST_SENTINEL"},
+        {"test": "test_automation.py::TestAppRun::test_app_run_with_valid_path_PRIVATE",
+         "message": "SYNTHETIC_CREDENTIAL_SENTINEL"},
+    ]}
+    (tmp_path / "vnext-internal-capability_extension_candidate.json").write_text(
+        json.dumps(raw), encoding="utf-8"
+    )
+    r = subprocess.run(
+        [sys.executable, "scripts/ci/project-vnext-public.py", "--raw-dir",
+         str(tmp_path), "--output", str(tmp_path / "safe.json")],
+        capture_output=True, text=True, check=True, timeout=10,
+    )
+    text = r.stdout + r.stderr
+    assert "case=lifecycle_shutdown_fields failed=1" in text
+    assert "case=automation_app_valid failed=1" in text
+    assert text.count("VNEXT_PUBLIC_FAILURE_CASE") == 2
+    for forbidden in ("PRIVATE", "SYNTHETIC_SECRET_SENTINEL",
+                      "SYNTHETIC_HOST_SENTINEL", "SYNTHETIC_CREDENTIAL_SENTINEL"):
+        assert forbidden not in text
+    artifact = (tmp_path / "safe.json").read_text(encoding="utf-8")
+    assert "failure_cases" not in artifact
+    assert "lifecycle_shutdown_fields" not in artifact
+
+
+def test_fixed_case_source_contains_only_pinned_contract_names() -> None:
+    data = Path("scripts/ci/project-vnext-public.py").read_text(encoding="utf-8")
+    assert 'FAILURE_CASES = {' in data
+    assert 'FAILURE_CASES.get(test[len(prefix):])' in data
+    assert 'print(f"VNEXT_PUBLIC_FAILURE_CASE slice={label} status=withheld")' in data
