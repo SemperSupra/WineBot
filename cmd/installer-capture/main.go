@@ -178,7 +178,9 @@ func writeJSON(out string, v any) error {
  return os.Link(name, out)
 }
 func outOutsideRoot(root, out string) bool {
- r, err1 := filepath.EvalSymlinks(root)
+ absRoot, err0 := filepath.Abs(root)
+ if err0 != nil { return false }
+ r, err1 := filepath.EvalSymlinks(absRoot)
  o, err2 := filepath.Abs(out)
  if err1 != nil || err2 != nil { return false }
  dir, err3 := filepath.EvalSymlinks(filepath.Dir(o))
