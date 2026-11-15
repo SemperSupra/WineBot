@@ -31,6 +31,9 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("fail unexpected_files", src)
         self.assertIn("fail unexpected_symlink", src)
         self.assertIn('mkdir "$lock"', src)
+        self.assertIn('fail concurrent_init', src)
+        self.assertIn('fail permissions_failed', src)
+        self.assertIn('[ -e "$lock" ] && fail concurrent_init', src)
         self.assertLess(src.index('verify_inventory() {'),
                         src.index('if [ -f "$stamp" ]; then'))
         for forbidden in ("rm -rf", "curl ", "wget ", "docker push"):
@@ -43,7 +46,12 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("condition: service_completed_successfully", source)
         self.assertIn("read_only: true", source)
         self.assertIn("user: \"1000:1000\"", source)
-        self.assertIn("app-store:/apps:ro", source)
+        self.assertIn("source: app-store", source)
+        self.assertIn("target: /apps", source)
+        self.assertIn("read_only: true", source)
+        # Every runtime state/app volume refuses Docker image copy-up, or
+        # Compose may initialize/chown it before one-shot seed/state services.
+        self.assertEqual(source.count("nocopy: true"), 7)
         self.assertIn("WINEBOT_STATE_MODEL: layered", source)
         self.assertIn("WINEBOT_INPUT_TRACE_WINDOWS: \"1\"", source)
         self.assertIn("127.0.0.1:8000:8000", source)
