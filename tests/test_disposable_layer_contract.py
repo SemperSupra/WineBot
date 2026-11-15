@@ -28,6 +28,11 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
             self.assertIn(marker, src)
         self.assertLess(src.index('if [ -f "$stamp" ]; then'),
                         src.index('cp -a "$source_dir"/.'))
+        self.assertIn("fail unexpected_files", src)
+        self.assertIn("fail unexpected_symlink", src)
+        self.assertIn('mkdir "$lock"', src)
+        self.assertLess(src.index('verify_inventory() {'),
+                        src.index('if [ -f "$stamp" ]; then'))
         for forbidden in ("rm -rf", "curl ", "wget ", "docker push"):
             self.assertNotIn(forbidden, src)
 

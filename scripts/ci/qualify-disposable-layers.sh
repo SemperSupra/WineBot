@@ -55,6 +55,26 @@ docker run --rm --network none --read-only --cap-drop ALL \
   -v "$WINEBOT_APP_VOLUME:/winebot-apps" "$app_image" >/dev/null 2>&1 ||
   fail app_seed_idempotency
 
+# Fail closed on an unauthorized extra executable or symlink in an app volume.
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --entrypoint /bin/sh \
+  -v "$WINEBOT_APP_VOLUME:/winebot-apps" "$app_image" -ec '
+    printf "UNTRUSTED" >/winebot-apps/unexpected.exe
+  ' >/dev/null 2>&1 || fail tamper_fixture
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges -v "$WINEBOT_APP_VOLUME:/winebot-apps" \
+  "$app_image" >/dev/null 2>&1; then
+  fail tamper_not_rejected
+fi
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --entrypoint /bin/sh \
+  -v "$WINEBOT_APP_VOLUME:/winebot-apps" "$app_image" -ec '
+    rm /winebot-apps/unexpected.exe
+  ' >/dev/null 2>&1 || fail tamper_cleanup
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges -v "$WINEBOT_APP_VOLUME:/winebot-apps" \
+  "$app_image" >/dev/null 2>&1 || fail reverified_app
+
 # One-shot root task prepares only volume root ownership, never user contents.
 docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN \
   --security-opt no-new-privileges --memory 256m --pids-limit 64 \
