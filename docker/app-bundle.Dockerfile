@@ -5,8 +5,9 @@ ARG APP_PACK_BUILDER_IMAGE=debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90
 FROM ${APP_PACK_BUILDER_IMAGE}
 COPY apps/ /opt/winebot/app-payload/
 COPY scripts/layers/seed-apps.sh /usr/local/bin/winebot-seed-apps
+COPY scripts/layers/prepare-state.sh /usr/local/bin/winebot-prepare-state
 RUN set -eu; \
-    chmod 0555 /usr/local/bin/winebot-seed-apps; \
+    chmod 0555 /usr/local/bin/winebot-seed-apps /usr/local/bin/winebot-prepare-state; \
     test -d /opt/winebot/app-payload; \
     test -z "$(find /opt/winebot/app-payload -type l -print -quit)"; \
     cd /opt/winebot/app-payload; \

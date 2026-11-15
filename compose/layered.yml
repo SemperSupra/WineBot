@@ -1,0 +1,129 @@
+# Opt-in three-layer deployment. Use this file ALONE, never as an
+# override of the legacy Compose stack; there are no build: directives.
+# All state and app volumes are EXTERNAL and cannot be deleted by down -v.
+name: winebot-layered
+services:
+  app-seed:
+    image: ${WINEBOT_APP_BUNDLE_IMAGE:?pin application pack to sha256 digest}
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    volumes:
+      - app-store:/winebot-apps
+    restart: "no"
+
+  state-init:
+    image: ${WINEBOT_APP_BUNDLE_IMAGE:?pin application pack to sha256 digest}
+    entrypoint: ["/bin/sh", "/usr/local/bin/winebot-prepare-state"]
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    volumes:
+      - wineprefix:/state/prefix
+      - user-home:/state/home
+      - config:/state/config
+      - userdata:/state/userdata
+      - artifacts:/state/artifacts
+      - shared:/state/shared
+    restart: "no"
+
+  winebot-interactive:
+    image: ${WINEBOT_RUNTIME_IMAGE:?pin WineBot runtime to sha256 digest}
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    pids_limit: 512
+    mem_limit: 3g
+    cpus: 2
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777,size=256m
+      - /run:rw,nosuid,nodev,mode=0755,size=64m
+      - /var/tmp:rw,nosuid,nodev,mode=1777,size=64m
+    depends_on:
+      app-seed:
+        condition: service_completed_successfully
+      state-init:
+        condition: service_completed_successfully
+    environment:
+      HOME: /home/winebot
+      WINEBOT_STATE_MODEL: layered
+      WINEBOT_CONFIG_ROOT: /config
+      WINEBOT_SYNC_OPENBOX_CONFIG: "0"
+      WINEPREFIX: /wineprefix
+      DISPLAY: ":99"
+      SCREEN: 1280x720x24
+      WINEARCH: win64
+      MODE: interactive
+      BUILD_INTENT: rel
+      INIT_PREFIX: "1"
+      ENABLE_VNC: "1"
+      WINEBOT_RECORD: "1"
+      WINEBOT_INPUT_TRACE: "1"
+      WINEBOT_INPUT_TRACE_WINDOWS: "1"
+      WINEBOT_INPUT_TRACE_NETWORK: "0"
+      WINEBOT_LOADOUT: ""
+      WINE_WINETRICKS: ""
+      WINE_INSTALL_MS_FONTS: "0"
+      API_TOKEN: ${WINEBOT_API_TOKEN:?provide an API token via deployment secret delivery}
+      VNC_PASSWORD: ${WINEBOT_VNC_PASSWORD:?provide a VNC password via secret delivery}
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - app-store:/apps:ro
+      - wineprefix:/wineprefix
+      - user-home:/home/winebot
+      - config:/config
+      - userdata:/userdata
+      - artifacts:/artifacts
+      - shared:/winebot-shared
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          TOKENS="$$(cat /tmp/winebot_api_token 2>/dev/null || true)";
+          for TOKEN in $$TOKENS; do
+            [ -z "$$TOKEN" ] && continue;
+            curl -fsS -H "X-API-Key: $$TOKEN"
+            http://127.0.0.1:8000/health >/dev/null && exit 0;
+          done;
+          exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  app-store:
+    external: true
+    name: ${WINEBOT_APP_VOLUME:?provide version-specific application volume name}
+  wineprefix:
+    external: true
+    name: ${WINEBOT_PREFIX_VOLUME:?provide persistent Wine profile volume name}
+  user-home:
+    external: true
+    name: ${WINEBOT_HOME_VOLUME:?provide persistent home volume name}
+  config:
+    external: true
+    name: ${WINEBOT_CONFIG_VOLUME:?provide persistent configuration volume name}
+  userdata:
+    external: true
+    name: ${WINEBOT_USERDATA_VOLUME:?provide persistent user files volume name}
+  artifacts:
+    external: true
+    name: ${WINEBOT_ARTIFACT_VOLUME:?provide persistent evidence volume name}
+  shared:
+    external: true
+    name: ${WINEBOT_SHARED_VOLUME:?provide persistent shared state volume name}
