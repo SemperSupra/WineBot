@@ -81,7 +81,7 @@ classify_startup() {
     # privately; the classifier emits ONLY one enumerated category, not raw text.
     case "$service" in
       app-seed|state-init)
-        docker logs --tail 80 "$cid" 2>/dev/null |
+        docker logs --tail 80 "$cid" 2>&1 |
           python3 scripts/ci/classify-layer-init-logs.py "$service" >&2 || true
         ;;
     esac

@@ -40,6 +40,14 @@ class LayerDiagnosticsTest(unittest.TestCase):
             "WINE11_LAYER_HIL service=app-seed cause=unclassified",
         )
 
+    def test_hil_classifies_stderr_without_publishing_raw_logs(self):
+        source = (MODULE.parents[2] / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('docker logs --tail 80 "$cid" 2>&1 |', source)
+        self.assertNotIn('docker logs --tail 80 "$cid" 2>/dev/null |', source)
+        self.assertIn('classify-layer-init-logs.py "$service"', source)
+
     def test_invalid_service_refused(self):
         with self.assertRaises(ValueError):
             layer.classify("winebot-interactive", io.StringIO("APP_LAYER_DIAGNOSTIC stage=copy_failed\n"))
