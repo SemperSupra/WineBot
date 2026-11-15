@@ -68,5 +68,15 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertNotIn("docker volume rm", src)
         self.assertNotIn("docker system prune", src)
 
+    def test_tool_builder_uses_immutable_image_digest(self):
+        src = (ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("TOOL_BUILDER_BASE_IMAGE=debian@sha256:", src)
+        self.assertIn("FROM ${TOOL_BUILDER_BASE_IMAGE} AS tool-base", src)
+        self.assertNotIn("FROM debian:trixie-slim AS tool-base", src)
+
+    def test_actual_unit_manifest_includes_layer_contract(self):
+        src = (ROOT / "scripts/ci/test.sh").read_text(encoding="utf-8")
+        self.assertIn("tests/test_disposable_layer_contract.py", src)
+
 if __name__ == "__main__":
     unittest.main()

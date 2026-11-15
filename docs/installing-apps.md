@@ -1,3 +1,9 @@
+> **Legacy mutable-prefix instructions only.** The opt-in disposable
+> runtime/application/persistent-state architecture is documented in
+> [Disposable Layer Architecture](disposable-layer-architecture.md).
+> Never use the legacy `down -v` reset on persistent user data; layered
+> deployments use external volumes and immutable application packages.
+>
 # Installing Apps
 
 This workflow separates installation (into the persistent Wine prefix) from running the app for automation.
