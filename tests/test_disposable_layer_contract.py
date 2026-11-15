@@ -85,5 +85,27 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         src = (ROOT / "scripts/ci/test.sh").read_text(encoding="utf-8")
         self.assertIn("tests/test_disposable_layer_contract.py", src)
 
+
+    def test_wine11_hil_is_public_disposable_and_provenance_bound(self):
+        wf = (ROOT / ".github/workflows/wine11-disposable-layer-hil.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("runs-on: ubuntu-24.04", wf)
+        self.assertIn("d2304d2b2e096a097ffa76b79aeaeef85b72d702", wf)
+        self.assertIn("persist-credentials: false", wf)
+        self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", wf)
+        self.assertNotIn("actions/upload-artifact@", wf)
+        self.assertNotIn("push: true", wf)
+        self.assertIn("stage=health_recreate", script)
+        self.assertIn("stage=state_replay", script)
+        self.assertIn("DURATION_SECONDS=90", script)
+        self.assertIn("--read-only", (ROOT / "compose/layered.yml").read_text(
+            encoding="utf-8"
+        ).replace("read_only: true", "--read-only"))
+        self.assertNotIn("docker volume prune", script)
+
 if __name__ == "__main__":
     unittest.main()

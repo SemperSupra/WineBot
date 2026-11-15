@@ -1,0 +1,55 @@
+name: Wine 11 Disposable-Layer Composite HIL
+
+# Public PR source snapshots only; never publishes images/diagnostics.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wine11-disposable-layer-hil.yml'
+      - 'compose/layered.yml'
+      - 'docker/Dockerfile'
+      - 'docker/entrypoint.sh'
+      - 'scripts/layers/**'
+      - 'scripts/ci/qualify-wine11-layered.sh'
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+concurrency:
+  group: wine11-layer-hil-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  composite-wine11-hil:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact layered architecture PR source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: layered
+      - name: Checkout exact separately qualified Wine11 source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          persist-credentials: false
+          ref: d2304d2b2e096a097ffa76b79aeaeef85b72d702
+          path: wine11-candidate
+      - name: Free disposable runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+      - name: Source syntax and frozen composite ownership
+        working-directory: layered
+        run: |
+          bash -n scripts/ci/qualify-wine11-layered.sh
+          test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+      - name: Build ephemeral candidate and qualify read-only Wine11 replay
+        working-directory: layered
+        run: bash scripts/ci/qualify-wine11-layered.sh
+      - name: Report only fixed result
+        if: success()
+        run: echo 'WINE11_LAYER_HIL stage=qualified_composite'
