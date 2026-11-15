@@ -13,6 +13,8 @@ on:
       - 'scripts/init/20-setup-wine.sh'
       - 'scripts/ci/probe-wine11-prefix.sh'
       - 'scripts/ci/wine11-prefix-cell.sh'
+      - 'scripts/ci/classify-wine11-soak.py'
+      - 'tests/test_wine11_soak_redaction.py'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/wait-for-container-health.sh'
       - 'scripts/ci/classify-startup-logs.py'
@@ -120,6 +122,25 @@ jobs:
             -e MAX_SESSION_MB=8192 \
             -e MAX_PID1_RSS_MB=2048 \
             winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly
+
+      # Independent 55-minute stability gate; keep raw output job-local.
+      - name: Qualify Wine 11 sustained resource bounds for 55 minutes
+        run: |
+          if ! docker compose -f compose/docker-compose.yml --profile interactive exec -T --user winebot \
+            -e DURATION_SECONDS=3300 \
+            -e INTERVAL_SECONDS=30 \
+            -e MAX_LOG_MB=1024 \
+            -e MAX_SESSION_MB=8192 \
+            -e MAX_PID1_RSS_MB=2048 \
+            winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly \
+            >rel-long-soak-job-local.log 2>&1; then
+            python3 scripts/ci/classify-wine11-soak.py rel-long-soak-job-local.log
+            exit 1
+          fi
+          echo 'WINE11_SOAK_DIAGNOSTIC stage=passed'
+
+      - name: Verify container remains healthy after sustained soak
+        run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 30 2
 
       - name: Classify failure without printing raw service logs
         if: ${{ failure() }}

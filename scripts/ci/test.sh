@@ -32,4 +32,5 @@ pytest \
   tests/test_wininspect_error_redaction.py \
   tests/test_wine11_base_prefix_prewarmer.py \
   tests/test_wine11_probe_differential.py \
+  tests/test_wine11_soak_redaction.py \
   tests/test_health_system_memory.py
