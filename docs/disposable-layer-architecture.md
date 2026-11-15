@@ -23,6 +23,19 @@ CHOWN, modifies top-level volume directory ownership but does not recursively
 rewrite or delete user files. The app seeder is root inside its container but
 has no Linux capabilities and no network. Neither preparer sees credentials.
 
+The disposable runtime mounts all seven external application/state volumes with
+`volume.nocopy: true`. Docker's default initial volume population can copy
+image directory contents **and metadata/ownership** into a newly created
+external volume when multiple dependent Compose containers are created.
+Prevent runtime image copy-up before the independent one-shot app seeder and
+state initializer execute. Do not use runtime image copy-up as an installer,
+migration, backup or profile-provisioning mechanism. The build and deployment
+must be qualified together: the composite startup test specifically tests this
+ownership race and keeps its proof volumes isolated to one disposable runner.
+Failure to acquire a seeder lock is not automatically a concurrent installation;
+a separately classified unwritable app volume must fail without modifying user
+data. This correction remains experimental until composite HIL demonstrates it.
+
 The original `/wineprefix` retains Wine registry and per-user installed-app
 state; this is **not** yet a clean separation of arbitrary Windows MSI/EXE
 installation mutations. The new app layer is fully usable for portable packages
