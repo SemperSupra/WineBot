@@ -5,6 +5,7 @@ import (
  "os"
  "path/filepath"
  "strings"
+ "syscall"
  "testing"
 )
 
@@ -92,4 +93,11 @@ func TestFailClosedSpecialObjects(t *testing.T) {
  m, err := snapshot(root)
  if err != nil { t.Fatal(err) }
  if len(m.Entries) != 1 || m.Entries[0].Kind != "symlink" { t.Fatalf("symlink not recorded correctly: %+v", m) }
+}
+
+func TestRejectFIFOWithoutBlocking(t *testing.T) {
+ root := t.TempDir()
+ fifo := filepath.Join(root, "transient-pipe")
+ if err := syscall.Mkfifo(fifo, 0600); err != nil { t.Skipf("named pipes unsupported: %v", err) }
+ if _, err := snapshot(root); err == nil { t.Fatal("named pipe accepted as a regular installation file") }
 }
