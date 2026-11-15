@@ -59,6 +59,8 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("chown 1000:1000", source)
         self.assertNotIn("chown -R", source)
         self.assertNotIn("rm -rf", source)
+        self.assertLess(source.index('chmod u+rwx "$dir"'),
+                        source.index('chown 1000:1000 "$dir"'))
 
     def test_deployment_preflight_never_prunes_external_volumes(self):
         src = (ROOT / "scripts/layers/preflight.sh").read_text(encoding="utf-8")

@@ -10,7 +10,9 @@ fail() {
 [ "$(id -u)" = 0 ] || fail invalid_identity
 for dir in /state/prefix /state/home /state/config /state/userdata /state/artifacts /state/shared; do
   [ -d "$dir" ] && [ ! -L "$dir" ] || fail mount_unavailable
-  chown 1000:1000 "$dir" >/dev/null 2>&1 || fail ownership_failed
+  # chmod while the directory is still owned by root: after chown to
+  # uid 1000, root with only CAP_CHOWN cannot use chmod (needs CAP_FOWNER).
   chmod u+rwx "$dir" >/dev/null 2>&1 || fail permissions_failed
+  chown 1000:1000 "$dir" >/dev/null 2>&1 || fail ownership_failed
 done
 echo 'STATE_LAYER_DIAGNOSTIC stage=ready'
