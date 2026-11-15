@@ -58,3 +58,14 @@ def test_only_exact_target_can_qualify(tmp_path: Path) -> None:
     assert "WINE_PREFIX_PROBE profile=alternate_prefix stage=pass" in result.stdout
     assert "WINE_PREFIX_PROBE profile=prewarmed_control stage=pass" in result.stdout
     assert "WINE_PREFIX_PROBE stage=target_mode_unqualified" in result.stdout
+
+
+def test_image_cell_requires_owner_preparation_then_identity_drop() -> None:
+    cell = (ROOT / "scripts/ci/wine11-prefix-cell.sh").read_text(encoding="utf-8")
+    assert 'chown winebot:winebot "$WINEPREFIX"' in cell
+    assert 'exec gosu winebot /bin/sh "$0" "$profile"' in cell
+    assert '[ "$(id -u)" -eq 1000 ] || exit 31' in cell
+    assert cell.index('exec gosu winebot') < cell.index('Xvfb :97')
+    assert "wineboot -i >/dev/null 2>&1" in cell
+    assert "exit 30" in cell and "exit 31" in cell
+    assert "echo $WINEPREFIX" not in cell

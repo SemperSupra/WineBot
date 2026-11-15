@@ -272,7 +272,9 @@ esac
             encoding="utf-8"
         )
         probe = (ROOT / "scripts/ci/probe-wine11-prefix.sh").read_text(encoding="utf-8")
-        self.assertIn("      - 'scripts/ci/probe-wine11-prefix.sh'", workflow)
+        cell = (ROOT / "scripts/ci/wine11-prefix-cell.sh").read_text(encoding="utf-8")
+        for path in ("scripts/ci/probe-wine11-prefix.sh", "scripts/ci/wine11-prefix-cell.sh"):
+            self.assertIn(f"      - '{path}'", workflow)
         self.assertIn("bash scripts/ci/probe-wine11-prefix.sh", workflow)
         self.assertLess(
             workflow.index("bash scripts/ci/probe-wine11-prefix.sh"),
@@ -282,14 +284,21 @@ esac
             "for profile in target alternate_prefix prewarmed_control relaxed_pid",
             "--rm --network none --cpus=2 --memory=3g",
             '--pids-limit="$pid_limit" --security-opt=no-new-privileges',
-            "--user 1000:1000",
+            '--user "$identity"',
             "--env WINEARCH=win64",
-            "timeout -k 5s 90s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i",
-            "timeout -k 5s 15s wine cmd /c exit 0",
+            "/scripts/ci/wine11-prefix-cell.sh",
             "WINE_PREFIX_PROBE profile=%s stage=%s",
             "WINE_PREFIX_PROBE stage=target_mode_unqualified",
         ):
             self.assertIn(required, probe)
+        for required in (
+            'chown winebot:winebot "$WINEPREFIX"',
+            'exec gosu winebot /bin/sh "$0" "$profile"',
+            '[ "$(id -u)" -eq 1000 ]',
+            "timeout -k 5s 90s env WINEDLLOVERRIDES=mscoree,mshtml= wineboot -i",
+            "timeout -k 5s 15s wine cmd /c exit 0",
+        ):
+            self.assertIn(required, cell)
         self.assertNotIn("docker push", probe)
         self.assertNotIn("actions/upload-artifact", probe)
         self.assertNotIn("docker logs", probe)

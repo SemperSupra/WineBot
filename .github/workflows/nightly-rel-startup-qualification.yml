@@ -12,6 +12,7 @@ on:
       - 'scripts/init/winepath-with-retry.sh'
       - 'scripts/init/20-setup-wine.sh'
       - 'scripts/ci/probe-wine11-prefix.sh'
+      - 'scripts/ci/wine11-prefix-cell.sh'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/wait-for-container-health.sh'
       - 'scripts/ci/classify-startup-logs.py'
