@@ -18,7 +18,6 @@ import (
  "reflect"
  "sort"
  "strings"
- "syscall"
 )
 
 const schemaVersion = 1
@@ -75,26 +74,25 @@ func snapshot(root string) (Manifest, error) {
  m := Manifest{Schema: schemaVersion, Entries: []Entry{}}
  canonical, err := filepath.EvalSymlinks(root)
  if err != nil { return m, err }
- info, err := os.Stat(canonical)
+ // Root confines every file and directory access to the selected prefix,
+ // even if an ancestor is changed into a symlink during traversal.
+ confined, err := os.OpenRoot(canonical)
+ if err != nil { return m, err }
+ defer confined.Close()
+ info, err := confined.Stat(".")
  if err != nil || !info.IsDir() { return m, errors.New("root must exist and be directory") }
- err = filepath.WalkDir(canonical, func(p string, d fs.DirEntry, incoming error) error {
+ err = fs.WalkDir(confined, ".", func(name string, d fs.DirEntry, incoming error) error {
   if incoming != nil { return incoming }
-  if p == canonical { return nil }
+  if name == "." { return nil }
   if len(m.Entries) >= maxEntries { return errors.New("entry limit reached") }
-  rel, err := filepath.Rel(canonical, p)
-  if err != nil { return err }
-  name := filepath.ToSlash(rel)
   if !validPath(name) { return errors.New("invalid relative path") }
   e := Entry{Path: name}
   switch {
   case d.Type().IsRegular():
-   // Linux prefix capture: refuse symlink traversal and non-regular file
-   // replacement at the final path; NONBLOCK avoids FIFO hangs if a file
-   // changes type during capture. A quiesced trusted prefix is still required
-   // to protect against concurrent ancestor-directory replacement.
-   fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+   // Never os.Open(hostPath): opened files are constrained by os.Root.
+   // Root.Open also refuses symlink changes that escape the prefix.
+   file, err := confined.Open(name)
    if err != nil { return errors.New("file could not be opened safely") }
-   file := os.NewFile(uintptr(fd), p)
    before, err := file.Stat()
    if err != nil { file.Close(); return err }
    if !before.Mode().IsRegular() { file.Close(); return errors.New("file type changed during snapshot") }
@@ -105,15 +103,19 @@ func snapshot(root string) (Manifest, error) {
    if err != nil { return err }
    if statErr != nil { return statErr }
    if closeErr != nil { return closeErr }
-   if !after.Mode().IsRegular() || n != before.Size() || n != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+   current, statErr := confined.Lstat(name)
+   if statErr != nil || !current.Mode().IsRegular() || !os.SameFile(before, current) ||
+       n != before.Size() || n != after.Size() || !before.ModTime().Equal(after.ModTime()) {
     return errors.New("file changed during snapshot; quiesce the prefix")
    }
    e.Kind, e.Size, e.SHA256 = "file", n, hex.EncodeToString(h.Sum(nil))
   case d.IsDir():
+   current, err := confined.Lstat(name)
+   if err != nil || !current.IsDir() { return errors.New("directory changed during snapshot") }
    e.Kind = "dir"
   case d.Type()&os.ModeSymlink != 0:
-   target, err := os.Readlink(p)
-   if err != nil { return err }
+   target, err := confined.Readlink(name)
+   if err != nil { return errors.New("symlink could not be read safely") }
    sum := sha256.Sum256([]byte(target))
    e.Kind, e.SHA256 = "symlink", hex.EncodeToString(sum[:])
   default:

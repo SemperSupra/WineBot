@@ -1,6 +1,8 @@
 package main
 
 import (
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/json"
  "os"
  "path/filepath"
@@ -100,4 +102,25 @@ func TestRejectFIFOWithoutBlocking(t *testing.T) {
  fifo := filepath.Join(root, "transient-pipe")
  if err := syscall.Mkfifo(fifo, 0600); err != nil { t.Skipf("named pipes unsupported: %v", err) }
  if _, err := snapshot(root); err == nil { t.Fatal("named pipe accepted as a regular installation file") }
+}
+
+
+func TestConfinedSnapshotNeverHashesOutsideSymlink(t *testing.T) {
+ root := t.TempDir()
+ outside := t.TempDir()
+ canary := "PRIVATE_OUTSIDE_CONTENT_CANARY"
+ if err := os.WriteFile(filepath.Join(outside, "sensitive.txt"), []byte(canary), 0600); err != nil { t.Fatal(err) }
+ if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil { t.Skipf("symlink unsupported: %v", err) }
+ m, err := snapshot(root)
+ if err != nil { t.Fatal(err) }
+ if len(m.Entries) != 1 || m.Entries[0].Path != "escape" || m.Entries[0].Kind != "symlink" {
+  t.Fatalf("outside symlink must be metadata-only: %+v", m)
+ }
+ b, err := json.Marshal(m)
+ if err != nil { t.Fatal(err) }
+ contentHash := sha256.Sum256([]byte(canary))
+ if strings.Contains(string(b), hex.EncodeToString(contentHash[:])) ||
+    strings.Contains(string(b), "sensitive.txt") || strings.Contains(string(b), canary) {
+  t.Fatal("outside file was scanned")
+ }
 }

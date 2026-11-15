@@ -42,6 +42,7 @@ jobs:
           go vet ./...
           go test -count=1 ./...
           go build -trimpath -o "$RUNNER_TEMP/winebot-capture" .
+          GOOS=windows GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/winebot-capture.exe" .
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
           mkdir -p "$work/prefix"
