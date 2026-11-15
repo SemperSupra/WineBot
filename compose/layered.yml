@@ -81,14 +81,45 @@ services:
       - "127.0.0.1:8000:8000"
       - "127.0.0.1:6080:6080"
       - "127.0.0.1:5900:5900"
+    # The dependent runtime must never populate fresh state/app volumes from
+    # its image: that can race one-shot initialization and change ownership.
     volumes:
-      - app-store:/apps:ro
-      - wineprefix:/wineprefix
-      - user-home:/home/winebot
-      - config:/config
-      - userdata:/userdata
-      - artifacts:/artifacts
-      - shared:/winebot-shared
+      - type: volume
+        source: app-store
+        target: /apps
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: wineprefix
+        target: /wineprefix
+        volume:
+          nocopy: true
+      - type: volume
+        source: user-home
+        target: /home/winebot
+        volume:
+          nocopy: true
+      - type: volume
+        source: config
+        target: /config
+        volume:
+          nocopy: true
+      - type: volume
+        source: userdata
+        target: /userdata
+        volume:
+          nocopy: true
+      - type: volume
+        source: artifacts
+        target: /artifacts
+        volume:
+          nocopy: true
+      - type: volume
+        source: shared
+        target: /winebot-shared
+        volume:
+          nocopy: true
     healthcheck:
       test:
         - CMD-SHELL
