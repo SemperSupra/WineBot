@@ -30,14 +30,14 @@ class LayerDiagnosticsTest(unittest.TestCase):
             "STATE_LAYER_DIAGNOSTIC stage=invalid_identity extra\n"
         )
         output = layer.classify("state-init", io.StringIO(text))
-        self.assertEqual(output, "WINE11_LAYER_HIL service=state-init cause=unclassified")
+        self.assertEqual(output, "WINE11_LAYER_HIL service=state-init cause=unclassified_nonempty")
         self.assertNotIn(secret, output)
         self.assertNotIn("/home", output)
 
     def test_foreign_service_marker_is_ignored(self):
         self.assertEqual(
             layer.classify("app-seed", io.StringIO("STATE_LAYER_DIAGNOSTIC stage=ownership_failed\n")),
-            "WINE11_LAYER_HIL service=app-seed cause=unclassified",
+            "WINE11_LAYER_HIL service=app-seed cause=unclassified_nonempty",
         )
 
     def test_hil_classifies_stderr_without_publishing_raw_logs(self):
@@ -47,6 +47,12 @@ class LayerDiagnosticsTest(unittest.TestCase):
         self.assertIn('docker logs --tail 80 "$cid" 2>&1 |', source)
         self.assertNotIn('docker logs --tail 80 "$cid" 2>/dev/null |', source)
         self.assertIn('classify-layer-init-logs.py "$service"', source)
+
+    def test_empty_logs_classified_without_raw_output(self):
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("")),
+            "WINE11_LAYER_HIL service=app-seed cause=unclassified_empty",
+        )
 
     def test_invalid_service_refused(self):
         with self.assertRaises(ValueError):
