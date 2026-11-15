@@ -81,7 +81,7 @@ func snapshot(root string) (Manifest, error) {
  defer confined.Close()
  info, err := confined.Stat(".")
  if err != nil || !info.IsDir() { return m, errors.New("root must exist and be directory") }
- err = fs.WalkDir(confined, ".", func(name string, d fs.DirEntry, incoming error) error {
+ err = fs.WalkDir(confined.FS(), ".", func(name string, d fs.DirEntry, incoming error) error {
   if incoming != nil { return incoming }
   if name == "." { return nil }
   if len(m.Entries) >= maxEntries { return errors.New("entry limit reached") }
