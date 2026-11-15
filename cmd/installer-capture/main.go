@@ -130,7 +130,13 @@ func snapshot(root string) (Manifest, error) {
 }
 func readManifest(filename string) (Manifest, error) {
  m := Manifest{}
- f, err := os.Open(filename)
+ // The expected manifest is never trusted to redirect access to a
+ // candidate profile or arbitrary host data through a final symlink.
+ // os.Root confines the manifest open to its parent directory.
+ directory, err := os.OpenRoot(filepath.Dir(filename))
+ if err != nil { return m, err }
+ defer directory.Close()
+ f, err := directory.Open(filepath.Base(filename))
  if err != nil { return m, err }
  defer f.Close()
  info, err := f.Stat()

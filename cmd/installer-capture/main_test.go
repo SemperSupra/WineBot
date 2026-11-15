@@ -96,6 +96,23 @@ func TestVerifyReconstructedPrefixPostconditions(t *testing.T) {
  if err := run([]string{"verify", "-root", root, "-manifest", manifest}); err != nil { t.Fatalf("restored state did not verify: %v", err) }
 }
 
+func TestVerifyDoesNotFollowExpectedManifestOutsideDirectory(t *testing.T) {
+ dir := t.TempDir()
+ root := filepath.Join(dir, "prefix")
+ if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+ if err := os.WriteFile(filepath.Join(root, "sample.reg"), []byte("private"), 0600); err != nil { t.Fatal(err) }
+ // The manifest path's parent is outside root, but the symlink points into it.
+ link := filepath.Join(dir, "manifest-symlink.json")
+ if err := os.Symlink(filepath.Join(root, "sample.reg"), link); err != nil { t.Skipf("symlink unsupported: %v", err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", link}); err == nil {
+  t.Fatal("verify followed a manifest symlink into the selected prefix")
+ }
+ // A normal private manifest outside the candidate is still accepted.
+ expected := filepath.Join(dir, "actual-manifest.json")
+ if err := run([]string{"snapshot", "-root", root, "-out", expected}); err != nil { t.Fatal(err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", expected}); err != nil { t.Fatal(err) }
+}
+
 func TestRejectMaliciousManifest(t *testing.T) {
  h := strings.Repeat("a", 64)
  cases := []Manifest{
