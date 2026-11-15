@@ -136,7 +136,7 @@ wait_health() {
 # state/enumerated probes, without leaking runtime logs, tokens, host paths or
 # Docker inspection payloads into the public runner stream.
 classify_health_failure() {
-  local cid state health code
+  local cid state health
   cid="$(docker compose -f compose/layered.yml ps -a -q winebot-interactive 2>/dev/null || true)"
   if [ -z "$cid" ]; then
     echo 'WINE11_LAYER_HEALTH state=absent'
@@ -146,7 +146,7 @@ classify_health_failure() {
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
   case "$state" in created|running|restarting|exited|dead|paused) ;; *) state=unknown ;; esac
   case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
-  printf 'WINE11_LAYER_HEALTH state=%s health=%s\\n' "$state" "$health"
+  printf 'WINE11_LAYER_HEALTH state=%s health=%s\n' "$state" "$health"
   # Existing allowlist-only classifier consumes stdout/stderr privately.
   docker logs --tail 200 "$cid" 2>&1 |
     python3 scripts/ci/classify-startup-logs.py || true
