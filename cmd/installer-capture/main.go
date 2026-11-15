@@ -211,6 +211,26 @@ func run(argv []string) error {
   m, err := snapshot(*root)
   if err != nil { return err }
   return writeJSON(*out, m)
+ case "verify":
+  // Verify a reconstructed installation's current prefix against a known
+  // after-install snapshot. Never print the changed paths or content.
+  flags := flag.NewFlagSet("verify", flag.ContinueOnError)
+  flags.SetOutput(io.Discard)
+  root := flags.String("root", "", "quiesced candidate Wine prefix root")
+  manifest := flags.String("manifest", "", "private expected snapshot outside root")
+  if err := flags.Parse(argv[1:]); err != nil || flags.NArg() != 0 || *root == "" || *manifest == "" {
+   return errors.New("invalid verify arguments")
+  }
+  if !outOutsideRoot(*root, *manifest) { return errors.New("verify manifest must be outside root") }
+  expected, err := readManifest(*manifest)
+  if err != nil { return err }
+  actual, err := snapshot(*root)
+  if err != nil { return err }
+  // Canonicalize the validated expected inventory; entry order in private
+  // JSON must not cause a false negative or weaken the exact comparison.
+  sort.Slice(expected.Entries, func(i,j int) bool { return expected.Entries[i].Path < expected.Entries[j].Path })
+  if !reflect.DeepEqual(expected, actual) { return errors.New("postcondition mismatch") }
+  return nil
  case "diff":
   flags := flag.NewFlagSet("diff", flag.ContinueOnError)
   flags.SetOutput(io.Discard)

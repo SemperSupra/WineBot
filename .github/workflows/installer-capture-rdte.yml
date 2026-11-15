@@ -50,6 +50,13 @@ jobs:
           "$RUNNER_TEMP/winebot-capture" snapshot -root "$work/prefix" -out "$work/before.json"
           printf 'two' > "$work/prefix/sample.reg"
           "$RUNNER_TEMP/winebot-capture" snapshot -root "$work/prefix" -out "$work/after.json"
+          "$RUNNER_TEMP/winebot-capture" verify -root "$work/prefix" -manifest "$work/after.json"
+          printf 'changed-again' > "$work/prefix/sample.reg"
+          if "$RUNNER_TEMP/winebot-capture" verify -root "$work/prefix" -manifest "$work/after.json" >/dev/null 2>&1; then
+            echo 'INSTALLER_CAPTURE_RDTE stage=postcondition_false_positive'
+            exit 1
+          fi
+          printf 'two' > "$work/prefix/sample.reg"
           "$RUNNER_TEMP/winebot-capture" diff -before "$work/before.json" -after "$work/after.json" -out "$work/delta.json"
           python3 - "$work/delta.json" <<'PY'
           import json, sys

@@ -56,6 +56,12 @@ A source-only Go stdlib CLI captures deterministic quiesced Wine-prefix inventor
 
 Follow-on recorder: Wine registry `.reg` semantic parser, `reg query` snapshots, Linux inotify/fanotify/strace where permitted, process tree, wineserver/winedebug logs, MSI and setup metadata, time-ordered events. Capture network behavior only with explicit privacy/legal authorization. Reconstructor: manifest + dependency graph + idempotent recipe + rollback snapshot + Windows/Wine application-level postcondition oracle. Replaying clicks alone is not reconstruction.
 
+## Reconstructed-install postcondition gate
+
+The `cmd/installer-capture` CLI now supports `verify -root <candidate-prefix> -manifest <captured-after.json>`.
+It compares the entire quiesced candidate filesystem/registry-file inventory with a separately retained expected post-install manifest, using names, file kinds, sizes and SHA-256; unknown extra files and changed registry files fail closed.
+The CLI prints only fixed success/failure markers. The manifest is private and must remain outside the prefix. This is a deterministic **inventory** postcondition, not evidence that the installer can be rebuilt or that GUI, DLL, registry semantics or performance are equivalent. A real installer still requires a rights-cleared isolated test environment, quiescence, and application-level postconditions.
+
 ## Qualification levels and evidence custody
 
 Use ordered, non-interchangeable evidence classes:

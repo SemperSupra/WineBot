@@ -75,6 +75,27 @@ func TestCLIAndPrivateOutput(t *testing.T) {
  if len(d.Changes) != 0 { t.Fatalf("unchanged prefix has %d changes", len(d.Changes)) }
 }
 
+func TestVerifyReconstructedPrefixPostconditions(t *testing.T) {
+ dir := t.TempDir()
+ root := filepath.Join(dir, "replay")
+ if err := os.Mkdir(root, 0700); err != nil { t.Fatal(err) }
+ if err := os.WriteFile(filepath.Join(root, "user.reg"), []byte("PRIVATE_TEST_VALUE"), 0600); err != nil { t.Fatal(err) }
+ manifest := filepath.Join(dir, "expected.json")
+ if err := run([]string{"snapshot", "-root", root, "-out", manifest}); err != nil { t.Fatal(err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", manifest}); err != nil { t.Fatalf("equivalent replay failed: %v", err) }
+ // The private manifest must be stored outside the untrusted prefix.
+ if err := run([]string{"verify", "-root", root, "-manifest", filepath.Join(root,"user.reg")}); err == nil {
+  t.Fatal("verify accepted manifest path within replay root")
+ }
+ if err := os.WriteFile(filepath.Join(root, "user.reg"), []byte("DIFFERENT_PRIVATE_VALUE"), 0600); err != nil { t.Fatal(err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", manifest}); err == nil { t.Fatal("changed file passed postcondition") }
+ if err := os.WriteFile(filepath.Join(root, "user.reg"), []byte("PRIVATE_TEST_VALUE"), 0600); err != nil { t.Fatal(err) }
+ if err := os.WriteFile(filepath.Join(root,"unexpected.exe"), []byte("new"), 0600); err != nil { t.Fatal(err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", manifest}); err == nil { t.Fatal("unapproved new application accepted") }
+ if err := os.Remove(filepath.Join(root,"unexpected.exe")); err != nil { t.Fatal(err) }
+ if err := run([]string{"verify", "-root", root, "-manifest", manifest}); err != nil { t.Fatalf("restored state did not verify: %v", err) }
+}
+
 func TestRejectMaliciousManifest(t *testing.T) {
  h := strings.Repeat("a", 64)
  cases := []Manifest{
