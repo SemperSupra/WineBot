@@ -20,6 +20,10 @@ class LayerDiagnosticsTest(unittest.TestCase):
             layer.classify("state-init", io.StringIO("STATE_LAYER_DIAGNOSTIC stage=ownership_failed\n")),
             "WINE11_LAYER_HIL service=state-init cause=ownership_failed",
         )
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("APP_LAYER_DIAGNOSTIC stage=permissions_failed\n")),
+            "WINE11_LAYER_HIL service=app-seed cause=permissions_failed",
+        )
 
     def test_does_not_reflect_raw_or_malformed_sensitive_output(self):
         secret = "private-token-should-not-appear"
