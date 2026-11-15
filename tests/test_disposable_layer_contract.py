@@ -99,8 +99,8 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", wf)
         self.assertNotIn("actions/upload-artifact@", wf)
         self.assertNotIn("push: true", wf)
-        self.assertIn("stage=health_recreate", script)
-        self.assertIn("stage=state_replay", script)
+        self.assertIn("fail health_recreate", script)
+        self.assertIn("fail state_replay", script)
         self.assertIn("DURATION_SECONDS=90", script)
         self.assertIn("--read-only", (ROOT / "compose/layered.yml").read_text(
             encoding="utf-8"
