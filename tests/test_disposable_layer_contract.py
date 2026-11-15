@@ -3,8 +3,8 @@
 These tests use only stdlib and deliberately do not provision real users.
 An independent public Actions job performs disposable Docker replay.
 """
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
