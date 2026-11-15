@@ -1,0 +1,61 @@
+name: Installer Capture RDTE
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/installer-capture-rdte.yml'
+      - 'cmd/installer-capture/**'
+      - 'docs/roadmaps/2026-11-autonomous-rdte-hardware-gates.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/installer-capture-rdte.yml'
+      - 'cmd/installer-capture/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-capture-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR content without credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Use pinned Go toolchain
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: cmd/installer-capture/go.mod
+          cache: false
+      - name: Offline Go qualification (no secrets or uploads)
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          GOTOOLCHAIN: 'local'
+        run: |
+          cd cmd/installer-capture
+          go vet ./...
+          go test -count=1 ./...
+          go build -trimpath -o "$RUNNER_TEMP/winebot-capture" .
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          mkdir -p "$work/prefix"
+          printf 'one' > "$work/prefix/sample.reg"
+          "$RUNNER_TEMP/winebot-capture" snapshot -root "$work/prefix" -out "$work/before.json"
+          printf 'two' > "$work/prefix/sample.reg"
+          "$RUNNER_TEMP/winebot-capture" snapshot -root "$work/prefix" -out "$work/after.json"
+          "$RUNNER_TEMP/winebot-capture" diff -before "$work/before.json" -after "$work/after.json" -out "$work/delta.json"
+          python3 - "$work/delta.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert data["schema"] == 1
+          assert [(c["path"], c["operation"]) for c in data["changes"]] == [("sample.reg", "changed")]
+          PY
+      - name: Report only synthetic results
+        if: success()
+        run: echo 'INSTALLER_CAPTURE_RDTE stage=synthetic_snapshot_diff_passed'
