@@ -58,6 +58,28 @@ class LayerDiagnosticsTest(unittest.TestCase):
             "WINE11_LAYER_HIL service=app-seed cause=unclassified_empty",
         )
 
+    def test_composite_health_failure_remains_fail_closed_and_private(self):
+        source = (MODULE.parents[2] / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        for expected in (
+            "classify_health_failure()",
+            "if ! wait_health; then",
+            "fail health_initial",
+            "WINE11_LAYER_HEALTH state=%s health=%s",
+            "WINE11_LAYER_HEALTH token_file=present",
+            "WINE11_LAYER_HEALTH token_file=missing",
+            "WINE11_LAYER_HEALTH registry=present",
+            "WINE11_LAYER_HEALTH authorized_api=pass",
+            "WINE11_LAYER_HEALTH authorized_api=fail",
+            "python3 scripts/ci/classify-startup-logs.py",
+        ):
+            self.assertIn(expected, source)
+        self.assertIn('docker logs --tail 200 "$cid" 2>&1 |', source)
+        self.assertIn('http://127.0.0.1:8000/health >/dev/null 2>&1', source)
+        self.assertNotIn("docker logs --tail 200 \"$cid\" >&2", source)
+        self.assertNotIn("set -x", source)
+
     def test_invalid_service_refused(self):
         with self.assertRaises(ValueError):
             layer.classify("winebot-interactive", io.StringIO("APP_LAYER_DIAGNOSTIC stage=copy_failed\n"))

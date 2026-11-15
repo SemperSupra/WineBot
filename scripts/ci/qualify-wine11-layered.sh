@@ -132,7 +132,49 @@ wait_health() {
   done
   return 1
 }
-wait_health || fail health_initial
+# A failed real health gate must remain a failure. Classify only immutable
+# state/enumerated probes, without leaking runtime logs, tokens, host paths or
+# Docker inspection payloads into the public runner stream.
+classify_health_failure() {
+  local cid state health code
+  cid="$(docker compose -f compose/layered.yml ps -a -q winebot-interactive 2>/dev/null || true)"
+  if [ -z "$cid" ]; then
+    echo 'WINE11_LAYER_HEALTH state=absent'
+    return
+  fi
+  state="$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
+  case "$state" in created|running|restarting|exited|dead|paused) ;; *) state=unknown ;; esac
+  case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
+  printf 'WINE11_LAYER_HEALTH state=%s health=%s\\n' "$state" "$health"
+  # Existing allowlist-only classifier consumes stdout/stderr privately.
+  docker logs --tail 200 "$cid" 2>&1 |
+    python3 scripts/ci/classify-startup-logs.py || true
+  [ "$state" = running ] || return
+  if docker exec --user 1000 "$cid" test -s /tmp/winebot_api_token >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH token_file=present'
+  else
+    echo 'WINE11_LAYER_HEALTH token_file=missing'
+  fi
+  if docker exec --user 1000 "$cid" test -s /wineprefix/system.reg >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH registry=present'
+  else
+    echo 'WINE11_LAYER_HEALTH registry=missing'
+  fi
+  if docker exec --user 1000 "$cid" /bin/sh -c '
+    token="$(cat /tmp/winebot_api_token 2>/dev/null || true)"
+    [ -n "$token" ] || exit 1
+    curl --max-time 6 -fsS -H "X-API-Key: $token" http://127.0.0.1:8000/health >/dev/null 2>&1
+  ' >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH authorized_api=pass'
+  else
+    echo 'WINE11_LAYER_HEALTH authorized_api=fail'
+  fi
+}
+if ! wait_health; then
+  classify_health_failure
+  fail health_initial
+fi
 docker compose -f compose/layered.yml exec -T winebot-interactive wine --version \
   2>/dev/null | grep -Eq '^wine-11([.]|$)' || fail wine11_version
 
