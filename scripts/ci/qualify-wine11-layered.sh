@@ -60,8 +60,29 @@ export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect --format '{{.Id}}' wineb
   fail image_identity_invalid
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
   fail compose_invalid
-docker compose -f compose/layered.yml up --no-build -d winebot-interactive \
-  >/dev/null 2>&1 || fail startup
+# Project container state and fixed-domain diagnostics only. Never print raw
+# Compose logs, environment variables, container IDs, mounts or user paths.
+classify_startup() {
+  local service cid state exit_code health
+  for service in app-seed state-init winebot-interactive; do
+    cid="$(docker compose -f compose/layered.yml ps -a -q "$service" 2>/dev/null || true)"
+    if [ -z "$cid" ]; then
+      printf 'WINE11_LAYER_HIL service=%s state=absent\n' "$service" >&2
+      continue
+    fi
+    state="$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+    exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$cid" 2>/dev/null || true)"
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
+    case "$state" in created|running|restarting|exited|dead|paused) ;; *) state=unknown ;; esac
+    case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
+    [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || exit_code=unknown
+    printf 'WINE11_LAYER_HIL service=%s state=%s exit=%s health=%s\n' "$service" "$state" "$exit_code" "$health" >&2
+  done
+}
+if ! docker compose -f compose/layered.yml up --no-build -d winebot-interactive >/dev/null 2>&1; then
+  classify_startup
+  fail startup
+fi
 
 wait_health() {
   local attempt cid status
