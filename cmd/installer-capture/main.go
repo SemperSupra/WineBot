@@ -18,6 +18,7 @@ import (
  "reflect"
  "sort"
  "strings"
+ "syscall"
 )
 
 const schemaVersion = 1
@@ -87,10 +88,16 @@ func snapshot(root string) (Manifest, error) {
   e := Entry{Path: name}
   switch {
   case d.Type().IsRegular():
-   file, err := os.Open(p)
-   if err != nil { return err }
+   // Linux prefix capture: refuse symlink traversal and non-regular file
+   // replacement at the final path; NONBLOCK avoids FIFO hangs if a file
+   // changes type during capture. A quiesced trusted prefix is still required
+   // to protect against concurrent ancestor-directory replacement.
+   fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+   if err != nil { return errors.New("file could not be opened safely") }
+   file := os.NewFile(uintptr(fd), p)
    before, err := file.Stat()
    if err != nil { file.Close(); return err }
+   if !before.Mode().IsRegular() { file.Close(); return errors.New("file type changed during snapshot") }
    h := sha256.New()
    n, err := io.Copy(h, file)
    after, statErr := file.Stat()
@@ -98,7 +105,7 @@ func snapshot(root string) (Manifest, error) {
    if err != nil { return err }
    if statErr != nil { return statErr }
    if closeErr != nil { return closeErr }
-   if n != before.Size() || n != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+   if !after.Mode().IsRegular() || n != before.Size() || n != after.Size() || !before.ModTime().Equal(after.ModTime()) {
     return errors.New("file changed during snapshot; quiesce the prefix")
    }
    e.Kind, e.Size, e.SHA256 = "file", n, hex.EncodeToString(h.Sum(nil))
