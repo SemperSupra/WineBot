@@ -10,6 +10,8 @@ on:
       - 'docker/entrypoint.sh'
       - 'scripts/layers/**'
       - 'scripts/ci/qualify-wine11-layered.sh'
+      - 'scripts/ci/classify-layer-init-logs.py'
+      - 'tests/test_layer_init_diagnostics.py'
 
 permissions:
   contents: read
@@ -46,6 +48,7 @@ jobs:
         working-directory: layered
         run: |
           bash -n scripts/ci/qualify-wine11-layered.sh
+          python3 -m unittest discover -s tests -p 'test_layer_init_diagnostics.py' -v
           test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
       - name: Build ephemeral candidate and qualify read-only Wine11 replay
         working-directory: layered
