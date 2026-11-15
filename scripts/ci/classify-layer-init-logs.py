@@ -11,7 +11,7 @@ STAGES = {
     "app-seed": {
         "unavailable", "invalid_mount", "invalid_manifest", "version_mismatch",
         "unexpected_files", "unexpected_symlink", "integrity_mismatch",
-        "incomplete_volume", "concurrent_init", "copy_failed", "stamp_failed",
+        "incomplete_volume", "concurrent_init", "permissions_failed", "copy_failed", "stamp_failed",
         "existing_verified", "created_verified",
     },
     "state-init": {
