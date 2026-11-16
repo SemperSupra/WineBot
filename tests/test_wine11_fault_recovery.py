@@ -58,6 +58,16 @@ def test_failed_injection_fails_closed_without_sensitive_output(tmp_path: Path) 
     assert "PRIVATE_CANARY" not in result.stdout + result.stderr
 
 
+def test_missing_window_manager_fails_without_unsafe_retry(tmp_path: Path) -> None:
+    result = _invoke(
+        tmp_path,
+        'echo PRIVATE_CANARY >&2; exit 1',
+    )
+    assert result.returncode == 1
+    assert result.stdout.strip() == "WINE11_FAULT_DIAGNOSTIC stage=baseline_window_manager_missing"
+    assert "PRIVATE_CANARY" not in result.stdout + result.stderr
+
+
 def test_fault_qualification_is_ordered_after_full_soak() -> None:
     wf = (ROOT / ".github/workflows/nightly-rel-startup-qualification.yml").read_text(
         encoding="utf-8"
