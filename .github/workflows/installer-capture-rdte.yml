@@ -73,6 +73,30 @@ jobs:
           assert data["schema"] == 1
           assert [(c["path"], c["operation"]) for c in data["changes"]] == [("sample.reg", "changed")]
           PY
+          # This is synthetic Wine registry v2 data, never a real user prefix.
+          cat > "$work/registry-before.reg" <<'REG_BEFORE'
+          WINE REGISTRY Version 2
+          ;; All keys relative to \Machine
+          #arch=win64
+          [Software\Test] 100
+          "State"=dword:00000001
+          REG_BEFORE
+          cat > "$work/registry-after.reg" <<'REG_AFTER'
+          WINE REGISTRY Version 2
+          ;; All keys relative to \Machine
+          #arch=win64
+          [Software\Test] 200
+          "State"=dword:00000002
+          REG_AFTER
+          "$RUNNER_TEMP/winebot-capture" regdiff -before "$work/registry-before.reg" -after "$work/registry-after.reg" -out "$work/registry-delta.json"
+          python3 - "$work/registry-delta.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert data["schema"] == 1
+          assert [(c["name"], c["operation"]) for c in data["changes"]] == [("State", "changed")]
+          assert 'dword:00000001' not in json.dumps(data)
+          assert 'dword:00000002' not in json.dumps(data)
+          PY
       - name: Report only synthetic results
         if: success()
         run: echo 'INSTALLER_CAPTURE_RDTE stage=synthetic_snapshot_diff_passed'
