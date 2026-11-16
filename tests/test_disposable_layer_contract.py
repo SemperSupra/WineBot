@@ -58,6 +58,19 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertNotIn("    build:", source)
         self.assertNotIn("actions/upload-artifact@", source)
 
+    def test_layered_api_is_enabled_without_unauthenticated_fallback(self):
+        compose = (ROOT / "compose/layered.yml").read_text(encoding="utf-8")
+        start = (ROOT / "scripts/init/30-start-services.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('if [ "${ENABLE_API:-0}" = "1" ]; then', start)
+        self.assertIn('      ENABLE_API: "1"', compose)
+        self.assertIn("API_TOKEN: ${WINEBOT_API_TOKEN:", compose)
+        self.assertIn("TOKENS=\"$(cat /tmp/winebot_api_token", compose)
+        self.assertIn('X-API-Key: $TOKEN', compose)
+        self.assertNotIn('curl -fsS http://127.0.0.1:8000/health', compose)
+        self.assertNotIn('curl -fsS http://localhost:8000/health', compose)
+
     def test_layered_entrypoint_fail_closed_without_legacy_impact(self):
         source = (ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
         self.assertIn('WINEBOT_STATE_MODEL:-legacy', source)

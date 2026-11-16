@@ -66,6 +66,9 @@ services:
       WINEARCH: win64
       MODE: interactive
       BUILD_INTENT: rel
+      # 30-start-services.sh launches the API only when explicitly enabled.
+      # Keep the private token-file healthcheck authenticated, never bypass it.
+      ENABLE_API: "1"
       INIT_PREFIX: "1"
       ENABLE_VNC: "1"
       WINEBOT_RECORD: "1"
