@@ -18,8 +18,10 @@ import tempfile
 import time
 from pathlib import Path
 
+import elf_map_probe
+
 SCHEMA = "freeciv-surrogate-native/v0.1"
-REQUIRED_SIGNALS = ("server_started", "loopback_tcp", "memory_maps", "file_syscalls", "save_created", "clean_stop", "no_external_ipv4_connect")
+REQUIRED_SIGNALS = ("server_started", "loopback_tcp", "memory_maps", "elf_load_map", "file_syscalls", "save_created", "clean_stop", "no_external_ipv4_connect")
 
 
 def digest(p):
@@ -55,7 +57,7 @@ def proc_descendant_pids(ppid):
     return result
 
 
-def safe_proc_snapshot(trace_pid):
+def safe_proc_snapshot(trace_pid, executable, expected_sha256):
     """Counts only. Never export raw addresses, maps, env, fds, or command lines."""
     for pid in proc_descendant_pids(trace_pid):
         try:
@@ -65,10 +67,19 @@ def safe_proc_snapshot(trace_pid):
             lines = Path(f"/proc/{pid}/maps").read_text().splitlines()
             status = Path(f"/proc/{pid}/status").read_text()
             rss = re.search(r"^VmRSS:\s*(\d+) kB$", status, re.M)
-            return {"observed": True, "map_regions": len(lines), "rss_kib": int(rss.group(1)) if rss else None}
+            try:
+                correlation = elf_map_probe.observe_pid(pid, executable, expected_sha256)
+            except (OSError, ValueError) as exc:
+                # Never export process map/address/path detail or exception strings.
+                correlation = {"status": "NOT_CORRELATED", "reason_type": type(exc).__name__,
+                               "raw_addresses_exported": False, "pc_observed": False}
+            return {"observed": True, "map_regions": len(lines),
+                    "rss_kib": int(rss.group(1)) if rss else None,
+                    "elf_load_map": correlation}
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
-    return {"observed": False, "map_regions": 0, "rss_kib": None}
+    return {"observed": False, "map_regions": 0, "rss_kib": None,
+            "elf_load_map": {"status": "TARGET_NOT_OBSERVED", "raw_addresses_exported": False, "pc_observed": False}}
 
 
 def loopback_ready(port, deadline=4):
@@ -143,10 +154,12 @@ def run_native(scratch, seed, port=5557):
     # The package-installed executable must be real and nonempty.
     binary = Path(server).resolve()
     version = capture_version(server)
+    binary_sha256 = digest(binary)
     trace_cmd = [trace, "-ff", "-qq", "-s", "96", "-o", str(root / "syscalls"),
                  "-e", "trace=%file,%network,%process"] + args
     log_path = root / "server.log"
     observed = {"server_started": False, "loopback_tcp": False, "memory_maps": False,
+                "elf_load_map": False,
                 "file_syscalls": False, "save_created": False, "clean_stop": False,
                 "no_external_ipv4_connect": False}
     snapshots = []
@@ -159,8 +172,9 @@ def run_native(scratch, seed, port=5557):
                                 env={**os.environ, "HOME": str(root), "LANG": "C.UTF-8", "TZ": "UTC"})
         try:
             observed["server_started"] = loopback_ready(port)
-            snap = safe_proc_snapshot(proc.pid)
+            snap = safe_proc_snapshot(proc.pid, binary, binary_sha256)
             observed["memory_maps"] = snap["observed"] and snap["map_regions"] > 0
+            observed["elf_load_map"] = snap["elf_load_map"]["status"] == "CORRELATED_ELF_LOAD_MAP_NOT_PC"
             snapshots.append(snap)
             for cmd in ("set minplayers 0", "set aifill 2", f"set gameseed {seed}",
                         f"set mapseed {seed}", "set timeout 1", "create Caesar",
@@ -202,7 +216,7 @@ def run_native(scratch, seed, port=5557):
         "execution_class": "REAL_OPEN_SOURCE_NATIVE_ELF_NOT_SMAC_ORACLE",
         "source": "https://github.com/freeciv/freeciv",
         "license": "GPL-2.0-or-later",
-        "binary_sha256": digest(binary),
+        "binary_sha256": binary_sha256,
         "version": version,
         "seed": seed,
         "loopback_only": observed["no_external_ipv4_connect"],
@@ -214,6 +228,7 @@ def run_native(scratch, seed, port=5557):
         "exit_code": exit_code,
         "limitations": [
             "No source-matched symbol binding or original-1999 binary parity",
+            "ELF load-map correlation is source identity, not program-counter or Ghidra function attribution",
             "No Ghidra/Trace RMI, Wine, UI pixels, or full packet payload capture",
             "Kernel/file/network syscall counts are not semantic game-state proof",
             "No proprietary game/OS files or private observatory source were used",
