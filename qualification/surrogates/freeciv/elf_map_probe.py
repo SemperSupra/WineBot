@@ -86,7 +86,7 @@ def correlate_map_text(text, segments, device, inode, kind, page_size=4096):
     if not rows:
         raise CorrelationError("NO_EXACT_INODE_DEVICE_EXECUTABLE_MAPPING")
     votes = {}
-    for index, (start, end, mapoff, perms) in enumerate(rows):
+    for index, (start, _end, mapoff, _perms) in enumerate(rows):
         for off, vaddr, filesz, _flags in segments:
             seg_start = off & ~(page_size - 1)
             seg_end = (off + filesz + page_size - 1) & ~(page_size - 1)
