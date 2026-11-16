@@ -51,6 +51,21 @@ class ContractTests(unittest.TestCase):
             counts = probe.trace_classification(td)
             self.assertEqual(counts["non_loopback_ipv4_connects"], 1)
 
+    def test_version_collected_from_stderr(self):
+        with tempfile.TemporaryDirectory() as td:
+            script = Path(td) / "version-script"
+            script.write_text('#!/bin/sh\nprintf "Version 3.1.0\\n" >&2\n')
+            script.chmod(0o700)
+            self.assertEqual(probe.capture_version(str(script)), ["Version 3.1.0"])
+
+    def test_blank_version_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            script = Path(td) / "blank-version-script"
+            script.write_text('#!/bin/sh\nexit 0\n')
+            script.chmod(0o700)
+            with self.assertRaisesRegex(RuntimeError, "FREECIV_VERSION_UNOBSERVED"):
+                probe.capture_version(str(script))
+
     def test_non_save_exclusion(self):
         with tempfile.TemporaryDirectory() as td:
             Path(td,"metadata.json").write_text("{}")
