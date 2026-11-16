@@ -41,6 +41,7 @@ def _reset_synthetic_transition():
     lifecycle._shutdown_mode = ""
     lifecycle._shutdown_started_at = 0.0
     lifecycle._shutdown_due_at = 0.0
+    lifecycle._shutdown_requested_delay = 0.0
     lifecycle._shutdown_generation += 1
 
 
