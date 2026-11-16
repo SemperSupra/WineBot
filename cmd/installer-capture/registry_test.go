@@ -59,6 +59,44 @@ func TestWineRegistryRejectsBadOrAmbiguousInput(t *testing.T) {
  }
 }
 
+func TestRegistrySummaryFixedCategoriesWithoutSensitiveData(t *testing.T) {
+ before:=strings.NewReader("WINE REGISTRY Version 2\n;; All keys relative to \\Machine\n#arch=win64\n[Software\\SensitiveKey] 100\n\"PRIVATE_NAME\"=dword:00000001\n")
+ after:=strings.NewReader("WINE REGISTRY Version 2\n;; All keys relative to \\Machine\n#arch=win64\n[Software\\SensitiveKey] 200\n\"PRIVATE_NAME\"=dword:00000002\n[Software\\NewKey] 300\n\"SecretName\"=\"PRIVATE_VALUE\"\n")
+ a,err:=parseWineRegistry(before);if err!=nil {t.Fatal(err)}
+ b,err:=parseWineRegistry(after);if err!=nil {t.Fatal(err)}
+ delta,err:=diffRegistry(a,b);if err!=nil {t.Fatal(err)}
+ summary,err:=registrySummary(delta);if err!=nil {t.Fatal(err)}
+ if len(summary.Groups)!=3 ||
+  summary.Groups[0].Operation!="added" ||
+  summary.Groups[0].Keys!=1 ||
+  summary.Groups[0].Values!=1 ||
+  summary.Groups[2].Operation!="changed" ||
+  summary.Groups[2].Values!=1 {t.Fatalf("incorrect registry summary: %+v",summary)}
+ raw,err:=json.Marshal(summary);if err!=nil {t.Fatal(err)}
+ for _,canary:=range []string{"SensitiveKey","PRIVATE_NAME","SecretName","PRIVATE_VALUE","Software","Machine","dword"} {
+  if strings.Contains(string(raw),canary) {t.Fatal("sensitive registry name leaked")}
+ }
+}
+
+func TestRegistrySummaryCLIIsPrivateAndFailClosed(t *testing.T) {
+ dir:=t.TempDir()
+ src:=filepath.Join(dir,"before.reg")
+ dst:=filepath.Join(dir,"after.reg")
+ output:=filepath.Join(dir,"summary.json")
+ before:="WINE REGISTRY Version 2\n;; All keys relative to \\Machine\n#arch=win64\n[Software\\Example] 100\n\"SENSITIVE\"=dword:00000001\n"
+ after:="WINE REGISTRY Version 2\n;; All keys relative to \\Machine\n#arch=win64\n[Software\\Example] 200\n\"SENSITIVE\"=dword:00000002\n"
+ if err:=os.WriteFile(src,[]byte(before),0600);err!=nil {t.Fatal(err)}
+ if err:=os.WriteFile(dst,[]byte(after),0600);err!=nil {t.Fatal(err)}
+ if err:=run([]string{"regsummary","-before",src,"-after",dst,"-out",output});err!=nil {t.Fatal(err)}
+ got,err:=os.ReadFile(output);if err!=nil {t.Fatal(err)}
+ for _,private:=range []string{"SENSITIVE","Example","Software","Machine"} {
+  if strings.Contains(string(got),private) {t.Fatal("private registry metadata escaped")}
+ }
+ if err:=run([]string{"regsummary","-before",src,"-after",dst,"-out",output});err==nil {
+  t.Fatal("overwrote a prior summary")
+ }
+}
+
 func TestWineRegistryRootAndArchMismatchesFailClosed(t *testing.T) {
  base:="WINE REGISTRY Version 2\n;; All keys relative to \\\\Machine\n#arch=win64\n[Software\\\\X]\n"
  a,err:=parseWineRegistry(strings.NewReader(base))

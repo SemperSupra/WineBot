@@ -17,10 +17,17 @@ installer, application-launcher, or a privilege boundary.
    `verify -root RECONSTRUCTED_PREFIX -manifest PRIVATE_AFTER.json` checks
    byte-for-byte filesystem metadata/content hashes against the intended
    post-installation state without displaying changed file contents.
+   For a **path-free summary** suitable for guarded review, use
+   `summary -before PRIVATE_BEFORE.json -after PRIVATE_AFTER.json -out PRIVATE_SUMMARY.json`.
+   This counts only fixed file-installation categories, not individual paths.
 4. Copy Wine's native `system.reg`, `user.reg`, or `userdef.reg` to *private
    evidence outside the source prefix* before and after. Use
    `regdiff -before PRIVATE_BEFORE.reg -after PRIVATE_AFTER.reg -out PRIVATE_REG_DELTA.json`.
    Do not mix files with different Wine registry roots or architectures.
+   Use `regsummary -before PRIVATE_BEFORE.reg -after PRIVATE_AFTER.reg
+   -out PRIVATE_REG_SUMMARY.json` for fixed counts of added/removed/changed
+   registry keys and values. Unlike `regdiff`, the summary contains no
+   names, paths, root identity, or value digests.
 5. Compare application-level postconditions with the original installer and
    reconstructed install. Only then propose a versioned, declarative recipe.
 

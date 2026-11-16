@@ -293,6 +293,28 @@ func run(argv []string) error {
   if err != nil { return err }
   if len(d.Changes) != 0 { return errors.New("registry postcondition mismatch") }
   return nil
+ case "regsummary":
+  // Aggregate semantic key/value additions, removals and changes without
+  // publishing registry names or value hashes. Detailed output stays private.
+  flags:=flag.NewFlagSet("regsummary",flag.ContinueOnError)
+  flags.SetOutput(io.Discard)
+  before:=flags.String("before","","private before Wine registry")
+  after:=flags.String("after","","private after Wine registry")
+  out:=flags.String("out","","private path-free summary output")
+  if err:=flags.Parse(argv[1:]);err!=nil||flags.NArg()!=0||
+   *before==""||*after==""||*out=="" {
+   return errors.New("invalid regsummary arguments")
+  }
+  if *out==*before||*out==*after {return errors.New("refuse registry input overwrite")}
+  a,err:=readPrivateRegistry(*before)
+  if err!=nil {return err}
+  b,err:=readPrivateRegistry(*after)
+  if err!=nil {return err}
+  d,err:=diffRegistry(a,b)
+  if err!=nil {return err}
+  summary,err:=registrySummary(d)
+  if err!=nil {return err}
+  return writeJSON(*out,summary)
  case "regdiff":
   // Compare Wine-native registry v2 files after a quiesced installer replay.
   // Value bytes never enter the emitted record; this remains private evidence.

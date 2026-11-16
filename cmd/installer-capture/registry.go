@@ -181,6 +181,49 @@ func parseRegistryValue(v string) (string,string,error) {
  return "","",errors.New("unsupported registry value encoding")
 }
 
+// RegistrySummary exposes only fixed-domain counts for safe public review.
+// The original registry delta retains full private keys and value names.
+type RegistrySummaryRow struct {
+ Operation string `json:"operation"`
+ Keys int `json:"keys"`
+ Values int `json:"values"`
+}
+type RegistrySummary struct {
+ Schema int `json:"schema"`
+ Groups []RegistrySummaryRow `json:"groups"`
+}
+
+func registrySummary(d RegistryDelta) (RegistrySummary, error) {
+ out := RegistrySummary{Schema:schemaVersion,Groups:[]RegistrySummaryRow{}}
+ if d.Schema!=schemaVersion || len(d.Changes)>registryMaxRecords*2 {
+  return out, errors.New("invalid registry delta")
+ }
+ for _,operation := range []string{"added","removed","changed"} {
+  row:=RegistrySummaryRow{Operation:operation}
+  for _,change:=range d.Changes {
+   if change.Operation!=operation {continue}
+   var record *RegistryRecord
+   if change.After!=nil {record=change.After} else {record=change.Before}
+   if record==nil || record.Key=="" || change.Key!=record.Key ||
+    change.Name!=record.Name {
+    return out, errors.New("invalid registry summary source")
+   }
+   switch record.Kind {
+   case "key": row.Keys++
+   case "value": row.Values++
+   default: return out, errors.New("invalid registry record class")
+   }
+  }
+  out.Groups=append(out.Groups,row)
+ }
+ // No silent omission of unsupported operation labels.
+ for _,change:=range d.Changes {
+  if change.Operation!="added" && change.Operation!="removed" &&
+   change.Operation!="changed" {return out,errors.New("invalid registry operation")}
+ }
+ return out,nil
+}
+
 func registryID(r RegistryRecord) string {
  return r.Kind+"\x00"+r.Key+"\x00"+r.Name
 }
