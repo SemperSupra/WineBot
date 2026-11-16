@@ -40,3 +40,9 @@ classify the first concrete failure and adapt only with source-grounded evidence
 
 `python3 qualification/surrogates/freeciv/test_save_oracle.py -v` is safe offline
 and is no substitute for the native Freeciv server workcell.
+
+## R051 — Independent AI-only turn-state transition (candidate, requires native evidence)
+
+A separate public-safe, stdlib-only `turn_oracle.py` starts a **new native Freeciv server** with two AI participants, bounded timeout and seeded map/game inputs. It samples actual serialized `[game] turn/year/phase/state` before and after AI progression, then independently starts a **second native process** to reload the later save and verifies selected semantic fields. No private observatory code is present.
+
+This is scored independently from source-known process/load-map and selected save/reload baselines. If the real server does not advance, the new step fails and writes a **minimal `UNQUALIFIED` receipt** rather than inventing turn success. The current candidate has **9 source-neutral/offline tests**, but no native turn-advancement evidence until an exact-head runner reports. A positive test proves only selected AI turn progression plus reload stability, not full game-world equivalence, Ghidra PC attribution, Windows 98 or SMAC parity. Default CI has an upload-always allowlisted JSON receipt and retains both independent seeds.

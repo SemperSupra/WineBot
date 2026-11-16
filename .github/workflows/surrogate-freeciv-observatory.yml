@@ -33,6 +33,7 @@ jobs:
           python3 qualification/surrogates/freeciv/test_contract.py -v
           python3 qualification/surrogates/freeciv/test_elf_map_probe.py -v
           python3 qualification/surrogates/freeciv/test_save_oracle.py -v
+          python3 qualification/surrogates/freeciv/test_turn_oracle.py -v
 
       - name: Install game and sensors on disposable runner
         env:
@@ -55,6 +56,12 @@ jobs:
           set -euo pipefail
           python3 qualification/surrogates/freeciv/save_oracle.py \
             --seed "${{ matrix.seed }}" --output "$RUNNER_TEMP/surrogate-public/freeciv-save-reload-${{ matrix.seed }}.json"
+
+      - name: Real Freeciv AI-only turn advancement and save reload oracle
+        run: |
+          set -euo pipefail
+          python3 qualification/surrogates/freeciv/turn_oracle.py \
+            --seed "${{ matrix.seed }}" --output "$RUNNER_TEMP/surrogate-public/freeciv-ai-turn-${{ matrix.seed }}.json"
 
       - name: Emit sanitized source-known evidence only
         if: always()
