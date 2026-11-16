@@ -43,9 +43,8 @@ class TurnOracleContracts(unittest.TestCase):
         self.assertFalse(oracle.is_advanced(state(), state(2, -3900, 0), state(2, -3900, 0)))
 
     def test_missing_save_is_not_silent_success(self):
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaisesRegex(RuntimeError, "TURN_SAVE_COUNT_UNEXPECTED"):
-                oracle.only_save(d, "before-turn")
+        with tempfile.TemporaryDirectory() as d, self.assertRaisesRegex(RuntimeError, "TURN_SAVE_COUNT_UNEXPECTED"):
+            oracle.only_save(d, "before-turn")
 
     def test_multiple_save_candidates_are_rejected(self):
         with tempfile.TemporaryDirectory() as d:
