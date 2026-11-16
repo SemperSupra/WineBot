@@ -102,11 +102,29 @@ jobs:
             wineserver -k >/dev/null 2>&1 || true
             test -s "$WINEPREFIX/user.reg" || exit 31
             cp "$WINEPREFIX/user.reg" "$WORK/before.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-before.json" >/dev/null || exit 33
             timeout 120 wine "$WIN_FIXTURE" install >/dev/null 2>&1
             wineserver -k >/dev/null 2>&1 || true
             test -s "$WINEPREFIX/user.reg" || exit 32
             cp "$WINEPREFIX/user.reg" "$WORK/after.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-after.json" >/dev/null || exit 34
           ' || { echo 'WIN_INSTALL_FIXTURE stage=wine_execution_failed'; exit 1; }
+          "$work/capture" diff -before "$work/fs-before.json" -after "$work/fs-after.json" -out "$work/fs-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=filesystem_diff_failed'; exit 1; }
+          python3 - "$work/fs-delta.json" <<'PY'
+          import hashlib
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              changes = json.load(f)["changes"]
+          proof_hash = hashlib.sha256(b"synthetic-v1\n").hexdigest()
+          assert any(
+              c.get("path", "").endswith("WineBotInstallerFixture/installed.txt")
+              and c.get("operation") == "added"
+              and c.get("after", {}).get("sha256") == proof_hash
+              for c in changes
+          ), "WIN_INSTALL_FIXTURE stage=installed_file_not_observed"
+          PY
           "$work/capture" regdiff -before "$work/before.reg" -after "$work/after.reg" -out "$work/delta.json" ||
             { echo 'WIN_INSTALL_FIXTURE stage=wine_registry_parse_failed'; exit 1; }
           if "$work/capture" regverify -actual "$work/before.reg" -expected "$work/after.reg" >/dev/null 2>&1; then
