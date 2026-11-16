@@ -14,6 +14,8 @@ on:
       - 'scripts/ci/probe-wine11-prefix.sh'
       - 'scripts/ci/wine11-prefix-cell.sh'
       - 'scripts/ci/classify-wine11-soak.py'
+      - 'scripts/ci/qualify-wine11-fault-recovery.sh'
+      - 'tests/test_wine11_fault_recovery.py'
       - 'tests/test_wine11_soak_redaction.py'
       - 'scripts/init/30-start-services.sh'
       - 'scripts/ci/wait-for-container-health.sh'
@@ -140,6 +142,12 @@ jobs:
           echo 'WINE11_SOAK_DIAGNOSTIC stage=passed'
 
       - name: Verify container remains healthy after sustained soak
+        run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 30 2
+
+      - name: Inject bounded openbox fault and verify supervisor recovery
+        run: bash scripts/ci/qualify-wine11-fault-recovery.sh
+
+      - name: Verify runtime health after window manager fault recovery
         run: scripts/ci/wait-for-container-health.sh compose/docker-compose.yml interactive winebot-interactive 30 2
 
       - name: Classify failure without printing raw service logs
