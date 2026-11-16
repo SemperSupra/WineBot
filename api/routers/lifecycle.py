@@ -59,6 +59,7 @@ _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
 _shutdown_due_at = 0.0
+_shutdown_requested_delay = 0.0
 _shutdown_generation = 0
 _pending_shutdown_task: asyncio.Task[None] | None = None
 _pending_shutdown_operation: str | None = None
@@ -536,8 +537,8 @@ async def lifecycle_shutdown(
     if delay > 300:
         raise HTTPException(status_code=422, detail="delay must not exceed 300 seconds")
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
-    global _shutdown_due_at, _shutdown_generation, _pending_shutdown_task
-    global _pending_shutdown_operation
+    global _shutdown_due_at, _shutdown_requested_delay, _shutdown_generation
+    global _pending_shutdown_task, _pending_shutdown_operation
     op_started = time.perf_counter()
     session_dir = read_session_dir()
     operation_id = await create_operation(
@@ -556,7 +557,7 @@ async def lifecycle_shutdown(
                 # claim teardown already happened.
                 payload = {
                     "status": "shutting_down",
-                    "delay_seconds": max(0.0, _shutdown_due_at - _shutdown_started_at),
+                    "delay_seconds": _shutdown_requested_delay,
                     "cancel_before": int(_shutdown_due_at),
                     "cancel_command": "POST /lifecycle/cancel",
                     "human_present": False,
@@ -582,6 +583,7 @@ async def lifecycle_shutdown(
         _shutdown_mode = "power_off" if power_off else "graceful"
         _shutdown_started_at = now
         _shutdown_due_at = now + delay
+        _shutdown_requested_delay = delay
         _shutdown_generation += 1
         generation = _shutdown_generation
         _pending_shutdown_operation = operation_id
@@ -642,7 +644,7 @@ async def lifecycle_shutdown(
     shutdown_payload: dict[str, Any] = {
         "status": "shutting_down",
         "delay_seconds": delay,
-        "cancel_before": int(time.time() + delay),
+        "cancel_before": int(_shutdown_due_at),
         "cancel_command": "POST /lifecycle/cancel",
         "human_present": False,
     }
@@ -677,6 +679,7 @@ async def lifecycle_cancel():
         _shutdown_mode = ""
         _shutdown_started_at = 0.0
         _shutdown_due_at = 0.0
+        _shutdown_requested_delay = 0.0
         _pending_shutdown_task = None
         _pending_shutdown_operation = None
         if task is not None:
