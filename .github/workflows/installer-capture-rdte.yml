@@ -89,6 +89,11 @@ jobs:
           "State"=dword:00000002
           REG_AFTER
           "$RUNNER_TEMP/winebot-capture" regdiff -before "$work/registry-before.reg" -after "$work/registry-after.reg" -out "$work/registry-delta.json"
+          "$RUNNER_TEMP/winebot-capture" regverify -actual "$work/registry-after.reg" -expected "$work/registry-after.reg"
+          if "$RUNNER_TEMP/winebot-capture" regverify -actual "$work/registry-before.reg" -expected "$work/registry-after.reg" >/dev/null 2>&1; then
+            echo 'INSTALLER_CAPTURE_RDTE stage=registry_postcondition_false_positive'
+            exit 1
+          fi
           python3 - "$work/registry-delta.json" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1], encoding="utf-8"))
