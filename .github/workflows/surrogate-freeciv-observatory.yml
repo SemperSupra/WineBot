@@ -28,8 +28,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Offline synthetic contract negatives
-        run: python3 qualification/surrogates/freeciv/test_contract.py -v
+      - name: Offline synthetic contract and actual ELF mapping negatives
+        run: |
+          python3 qualification/surrogates/freeciv/test_contract.py -v
+          python3 qualification/surrogates/freeciv/test_elf_map_probe.py -v
 
       - name: Install game and sensors on disposable runner
         env:
