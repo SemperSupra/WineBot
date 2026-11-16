@@ -6,13 +6,15 @@
 
 **Target:** Ubuntu 24.04 official `freeciv-server` apt package (a current descendant of a 1990s turn-based Civilization-style game). Requires package and binary digest in each receipt; do not confuse with 1999 Freeciv 1.9.0, for which source archives exist. License: GPL-2.0-or-later.
 
-**Vantage points:** source-known ELF identity, native live process and Linux memory-map region count/RSS, loopback TCP listen/connect, `strace` file/IPC/network/process operations, real in-game `save` command and on-disk output digest, clean termination/cleanup. Sensor data is aggregated into a minimal, no-private-bytes JSON receipt. A positive receipt is a qualified native process/I/O sensor chain, *not* a validated game turn or semantic game-state equivalence.
+**Vantage points:** source-known ELF identity, **ELF64 PT_LOAD segments correlated to actual Linux file-backed /proc/PID/maps by exact executable SHA256 and device/inode, one unambiguous ASLR load bias** (sanitized metadata only; no PC observed), native live process and Linux memory-map region count/RSS, loopback TCP listen/connect, `strace` file/IPC/network/process operations, real in-game `save` command and on-disk output digest, clean termination/cleanup. Sensor data is aggregated into a minimal, no-private-bytes JSON receipt. A positive receipt is a qualified native process/I/O sensor chain, *not* a validated game turn or semantic game-state equivalence.
 
 **Execution:** disposable public `ubuntu-24.04` GitHub-hosted job. Build/runtime dependencies installed only inside that ephemeral runner; game binds `127.0.0.1` and does not announce itself; non-loopback IPv4 connect observations fail; process is timed out and all raw syscall paths/logs/saves are disposed. Public artifact contains only source-known version, hashes and aggregate counts; no raw game files, process memory, private paths, credentials or runtime captures.
 
 **Local synthetic regression:** `python3 qualification/surrogates/freeciv/test_contract.py`.
 
 **Native runner:** `python3 qualification/surrogates/freeciv/probe.py --seed 42 --output "$RUNNER_TEMP/freeciv42.json"` after installing `freeciv-server strace` in an Ubuntu 24.04 ephemeral environment. It intentionally exits nonzero if game startup, loopback, memory sensing, syscall trace, save, or clean shutdown cannot be proven. Check GitHub Actions artifacts/receipts before claiming success; do not silently mark failed native probes green.
+
+**ELF load-map qualification:** `python3 qualification/surrogates/freeciv/test_elf_map_probe.py -v` runs six offline/public-safe tests including a real `/usr/bin/sleep` process, wrong-hash/device-inode, ASLR and malformed-ELF negatives. Success on a live Freeciv job proves the loader's file-backed mappings agree with the observed ELF; it does **not** prove program-counter sensing, Ghidra function provenance, source-line coverage, or same-era/SMAC parity. Public receipts include only status and counts, not raw addresses or paths. An ambiguous or missing map fails the native signal.
 
 **Next independent experiment:** add a real client to generate packet payloads and UI observations; qualify Ghidra headless mapping of source-matched ELF; migrate from native Linux to Wine/PE as a separate differential workcell. Do not execute licensed SMAC/SMAX or Windows 98 binaries until `reverse-smac#37` authorizes that phase.
 
