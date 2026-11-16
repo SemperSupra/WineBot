@@ -1,0 +1,111 @@
+name: Layered + Frozen Conformance Integration RDTE
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/layered-contract-integration-rdte.yml'
+permissions:
+  contents: read
+concurrency:
+  group: layered-conformance-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-integrated-frozen-v1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Checkout exact layered PR with Git ancestry
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: winebot
+      - name: Test-only source merge with pinned successful conformance PR
+        working-directory: winebot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'WineBot Public RDTE'
+          git config user.email 'winebot-rdte@users.noreply.github.com'
+          git fetch --no-tags --quiet origin 3acc219a1627a74bdcea6388144cc391ec2b57b4
+          if ! git merge --no-commit --no-ff --no-edit 3acc219a1627a74bdcea6388144cc391ec2b57b4 >"$RUNNER_TEMP/merge-local.log" 2>&1; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=merge_conflict'
+            exit 1
+          fi
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=unresolved_files'
+            exit 1
+          fi
+          echo 'LAYERED_CONFORMANCE_RDTE stage=source_merge_pass'
+      - name: Existing bounded unit tests on combined source
+        working-directory: winebot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker compose -f compose/docker-compose.yml --profile test --profile interactive run \
+            --rm --no-deps test-runner scripts/ci/test.sh >"$RUNNER_TEMP/unit-local.log" 2>&1; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=merged_unit_fail'
+            exit 1
+          fi
+          echo 'LAYERED_CONFORMANCE_RDTE stage=merged_unit_pass'
+      - name: Checkout pinned frozen public contract suite
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: mark-e-deyoung/winebot-contracts
+          ref: 205666f7f0235cb0fc51ca8a5af84f9f67831a74
+          persist-credentials: false
+          path: contracts
+      - name: Install frozen suite requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install -q -r contracts/tests/conformance/requirements.txt \
+            >"$RUNNER_TEMP/deps-local.log" 2>&1 ||
+            { echo 'LAYERED_CONFORMANCE_RDTE stage=contract_deps_fail'; exit 1; }
+      - name: Start actual source-integrated WineBot API
+        working-directory: winebot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker compose -f compose/docker-compose.yml --profile headless \
+            up --build -d winebot >"$RUNNER_TEMP/runtime-local.log" 2>&1; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=runtime_start_failed'
+            exit 1
+          fi
+          if ! scripts/ci/wait-for-container-health.sh compose/docker-compose.yml headless winebot 60 2 \
+            >"$RUNNER_TEMP/health-local.log" 2>&1; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=runtime_health_failed'
+            exit 1
+          fi
+          echo 'LAYERED_CONFORMANCE_RDTE stage=runtime_ready'
+      - name: Run pinned frozen v1 against source-integrated runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd winebot
+          cid="$(docker compose -f compose/docker-compose.yml ps -q winebot)"
+          [ -n "$cid" ] || { echo 'LAYERED_CONFORMANCE_RDTE stage=runtime_absent'; exit 1; }
+          ip="$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$cid")"
+          token="$(docker compose -f compose/docker-compose.yml exec -T winebot cat /tmp/winebot_api_token 2>/dev/null || true)"
+          if [[ ! "$token" =~ ^[A-Za-z0-9._~-]{16,512}$ ]]; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=token_invalid'
+            exit 1
+          fi
+          printf '::add-mask::%s\n' "$token"
+          cd ..
+          if ! python3 -m pytest contracts/tests/conformance/ \
+            --api-url "http://$ip:8000" --api-token "$token" \
+            --results-file "$RUNNER_TEMP/conformance-local.json" \
+            -q --tb=no --show-capture=no -rN \
+            >"$RUNNER_TEMP/conformance-local.log" 2>&1; then
+            echo 'LAYERED_CONFORMANCE_RDTE stage=frozen_v1_failed'
+            exit 1
+          fi
+          echo 'LAYERED_CONFORMANCE_RDTE stage=frozen_v1_pass'
+      - name: Remove only disposable service containers
+        if: always()
+        working-directory: winebot
+        run: docker compose -f compose/docker-compose.yml --profile headless down --remove-orphans >/dev/null 2>&1 || true
