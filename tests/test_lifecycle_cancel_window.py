@@ -94,7 +94,11 @@ def test_duplicate_shutdown_does_not_schedule_second_worker():
             first = await lifecycle.lifecycle_shutdown(delay=0.08)
             duplicate = await lifecycle.lifecycle_shutdown(delay=0.08)
             assert first["status"] == "shutting_down"
-            assert duplicate["status"] == "already_shutting_down"
+            assert duplicate["status"] == "shutting_down"
+            assert duplicate["reused_pending"] is True
+            assert duplicate["operation_id"] == first["operation_id"]
+            assert duplicate["delay_seconds"] == first["delay_seconds"]
+            assert duplicate["cancel_before"] == first["cancel_before"]
             assert await lifecycle.lifecycle_cancel() == {"status": "cancelled"}
             await asyncio.sleep(0.09)
             atomic.assert_not_awaited()
