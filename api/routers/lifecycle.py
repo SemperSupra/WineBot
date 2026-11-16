@@ -548,6 +548,29 @@ async def lifecycle_shutdown(
     async with shutdown_transition_lock:
         now = time.time()
         if _shutdown_in_progress:
+            if _shutdown_mode == "graceful":
+                # Frozen v1 clients expect the original pending shutdown
+                # envelope on repeated requests, not a new shutdown. Return
+                # the actual pending deadline and action identity unchanged.
+                # Never restart the grace timer, schedule another task, or
+                # claim teardown already happened.
+                payload = {
+                    "status": "shutting_down",
+                    "delay_seconds": max(0.0, _shutdown_due_at - _shutdown_started_at),
+                    "cancel_before": int(_shutdown_due_at),
+                    "cancel_command": "POST /lifecycle/cancel",
+                    "human_present": False,
+                    "operation_id": _pending_shutdown_operation,
+                    "reused_pending": True,
+                }
+                await complete_operation(
+                    operation_id,
+                    result={
+                        "status": "already_shutting_down",
+                        "pending_operation_id": _pending_shutdown_operation,
+                    },
+                )
+                return payload
             payload = {
                 "status": "already_shutting_down",
                 "mode": _shutdown_mode or "unknown",
