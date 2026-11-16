@@ -12,7 +12,7 @@ spec.loader.exec_module(probe)
 
 class ContractTests(unittest.TestCase):
     def test_required_signal_contract(self):
-        self.assertEqual(len(probe.REQUIRED_SIGNALS), 7)
+        self.assertEqual(len(probe.REQUIRED_SIGNALS), 8)
         self.assertEqual(len(set(probe.REQUIRED_SIGNALS)), len(probe.REQUIRED_SIGNALS))
 
     def test_digest_mutation(self):
