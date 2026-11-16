@@ -75,6 +75,48 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertNotIn('curl -fsS http://127.0.0.1:8000/health', compose)
         self.assertNotIn('curl -fsS http://localhost:8000/health', compose)
 
+    def test_layered_extended_soak_and_window_manager_fault_are_fail_closed(self):
+        script = (ROOT / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        workflow = (
+            ROOT / ".github/workflows/wine11-disposable-layer-hil.yml"
+        ).read_text(encoding="utf-8")
+        expected = (
+            "DURATION_SECONDS=3300",
+            "INTERVAL_SECONDS=30",
+            "MAX_LOG_MB=1024",
+            "MAX_SESSION_MB=8192",
+            "MAX_PID1_RSS_MB=2048",
+            "classify-wine11-soak.py",
+            "fail layered_long_soak",
+            "fail layered_post_soak_health",
+            "fail layered_openbox_missing",
+            "fail layered_openbox_injection",
+            "fail layered_openbox_recovery_timeout",
+            "fail layered_openbox_health",
+            "fail fault_state_replay",
+        )
+        for marker in expected:
+            self.assertIn(marker, script)
+        self.assertLess(
+            script.index("DURATION_SECONDS=90"),
+            script.index("DURATION_SECONDS=3300"),
+        )
+        self.assertLess(
+            script.index("DURATION_SECONDS=3300"),
+            script.index("pkill -x openbox"),
+        )
+        self.assertLess(
+            script.index("pkill -x openbox"),
+            script.index("kill -s SIGKILL winebot-interactive"),
+        )
+        self.assertIn('    timeout-minutes: 115', workflow)
+        self.assertIn('ref: 8c5ed8019a3518cf534b158662755172bfce7c59', workflow)
+        self.assertNotIn("actions/upload-artifact@", workflow)
+        self.assertIn('>"$long_soak_log" 2>&1', script)
+        self.assertIn('rm -f "$long_soak_log"', script)
+
     def test_layered_entrypoint_fail_closed_without_legacy_impact(self):
         source = (ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
         self.assertIn('WINEBOT_STATE_MODEL:-legacy', source)
@@ -119,7 +161,7 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("runs-on: ubuntu-24.04", wf)
-        self.assertIn("d2304d2b2e096a097ffa76b79aeaeef85b72d702", wf)
+        self.assertIn("8c5ed8019a3518cf534b158662755172bfce7c59", wf)
         self.assertIn("persist-credentials: false", wf)
         self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", wf)
         self.assertNotIn("actions/upload-artifact@", wf)

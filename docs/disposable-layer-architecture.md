@@ -115,12 +115,26 @@ version overwrite, fresh versioned app volume and retained profile data.
 Only fixed-category results are published. Disposable CI volumes and images
 are cleaned without ever touching real deployment volumes.
 
-This verifies architectural primitives, **not** actual layered Wine 11 GUI
-startup or an arbitrary Windows installer. Remaining release gates: real
-Wine 11 read-only rootfs + mounted state HIL, 55-minute soak/restart/fault
-recovery with layer mount replay, Windows app install semantics, WinInspect
-observer and human accessibility, external state backups, access controls,
-legacy-v1 conformance, secrets handling, and source/security acceptance.
+The composite source-pinned Wine 11 HIL has now passed real read-only-root
+startup, authenticated API health, 90-second resource sampling, container
+recreation with retained prefix/home/configuration/user/evidence state, and a
+forced SIGKILL with retained state and health. That was a public RDTE milestone
+and does **not** by itself qualify a production deployment.
+
+The next gate, qualified in the same disposable public-runner composite,
+extends the source-pinned Wine 11 candidate to a **55-minute sustained resource
+soak**, an authenticated post-soak health check, bounded in-container Openbox
+termination/recovery and another health check, followed by the previously
+qualified container restart and SIGKILL persistent-state replay. The soak
+records raw output only within the disposable runner; a fixed-enum classifier
+from the pinned candidate reports failures. This gate is pending until its
+exact-head public Actions result is terminal green.
+
+Still required for release: arbitrary Windows installer/registry overlays and
+safe migration, WinInspect real application observer and human accessibility
+acceptance, user-data external-volume backup/restore and disaster recovery,
+secure secret delivery, mandatory legacy-v1 conformance, and rights/security
+reviews.
 
 Human UI: recognizable profiles/app-pack versions, explicit backup/rollback
 warnings, and desktop settings that survive replacement. Automation DX:

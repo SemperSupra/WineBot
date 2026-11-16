@@ -26,7 +26,7 @@ concurrency:
 jobs:
   composite-wine11-hil:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 115
     steps:
       - name: Checkout exact layered architecture PR source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -39,7 +39,7 @@ jobs:
         with:
           repository: SemperSupra/WineBot
           persist-credentials: false
-          ref: d2304d2b2e096a097ffa76b79aeaeef85b72d702
+          ref: 8c5ed8019a3518cf534b158662755172bfce7c59
           path: wine11-candidate
       - name: Free disposable runner disk
         run: |
@@ -50,6 +50,7 @@ jobs:
           bash -n scripts/ci/qualify-wine11-layered.sh
           python3 -m unittest discover -s tests -p 'test_layer_init_diagnostics.py' -v
           test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+          test -f ../wine11-candidate/scripts/ci/classify-wine11-soak.py
       - name: Build ephemeral candidate and qualify read-only Wine11 replay
         working-directory: layered
         run: bash scripts/ci/qualify-wine11-layered.sh

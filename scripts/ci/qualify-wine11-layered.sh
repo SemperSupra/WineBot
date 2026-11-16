@@ -199,6 +199,57 @@ docker compose -f compose/layered.yml exec -T --user 1000 \
   winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly \
   >/dev/null 2>&1 || fail resource_sample
 
+# Qualify the same exact layered service and persistent mounts through the
+# full 55-minute sustained resource gate, not merely the independent #150
+# mutable-runtime qualifier. Raw output stays on this disposable public runner.
+long_soak_log="$(mktemp)"
+if ! docker compose -f compose/layered.yml exec -T --user 1000 \
+  -e DURATION_SECONDS=3300 -e INTERVAL_SECONDS=30 \
+  -e MAX_LOG_MB=1024 -e MAX_SESSION_MB=8192 \
+  -e MAX_PID1_RSS_MB=2048 \
+  winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly \
+  >"$long_soak_log" 2>&1; then
+  python3 ../wine11-candidate/scripts/ci/classify-wine11-soak.py "$long_soak_log" ||
+    echo 'WINE11_SOAK_DIAGNOSTIC stage=unknown'
+  rm -f "$long_soak_log"
+  fail layered_long_soak
+fi
+rm -f "$long_soak_log"
+if ! wait_health; then
+  classify_health_failure
+  fail layered_post_soak_health
+fi
+echo 'WINE11_LAYER_HIL stage=long_soak_passed'
+
+# Use the running layered service for bounded supervisor recovery, not a
+# production host process. Do not reveal PID values or any application logs.
+read_openbox_pid() {
+  docker compose -f compose/layered.yml exec -T --user 1000 \
+    winebot-interactive pgrep -o -x openbox 2>/dev/null || true
+}
+openbox_before="$(read_openbox_pid)"
+[[ "$openbox_before" =~ ^[0-9]+$ ]] || fail layered_openbox_missing
+if ! docker compose -f compose/layered.yml exec -T --user 1000 \
+  winebot-interactive pkill -x openbox >/dev/null 2>&1; then
+  fail layered_openbox_injection
+fi
+openbox_deadline=$((SECONDS + 75))
+openbox_recovered=0
+while ((SECONDS < openbox_deadline)); do
+  openbox_after="$(read_openbox_pid)"
+  if [[ "$openbox_after" =~ ^[0-9]+$ ]] && [ "$openbox_after" != "$openbox_before" ]; then
+    openbox_recovered=1
+    break
+  fi
+  sleep 2
+done
+[ "$openbox_recovered" = 1 ] || fail layered_openbox_recovery_timeout
+if ! wait_health; then
+  classify_health_failure
+  fail layered_openbox_health
+fi
+echo 'WINE11_LAYER_HIL stage=openbox_recovery_passed'
+
 # Destroy/recreate only disposable runtime containers; never remove state.
 docker compose -f compose/layered.yml up --no-build --force-recreate -d winebot-interactive \
   >/dev/null 2>&1 || fail runtime_recreate
