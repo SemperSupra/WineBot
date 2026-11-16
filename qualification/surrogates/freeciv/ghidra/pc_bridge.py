@@ -11,8 +11,8 @@ import bisect
 import ctypes
 import json
 import os
-import signal
 import platform
+import signal
 import socket
 import subprocess
 import sys

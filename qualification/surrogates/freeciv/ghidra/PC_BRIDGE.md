@@ -63,3 +63,18 @@ covers live attach and single-step/detach on a self-built test ELF.
 
 This is not a timing-faithful observational baseline; compare passive and
 stepped experiments and treat instrumentation perturbations as material.
+
+### Repeatability and limitations
+
+The same exact public Ghidra/Freeciv R055 commit passed **two** separate
+Actions job attempts: each saw 1 unambiguous function match among 180 actual
+RIP samples, with no ambiguous hits. Both public evidence artifacts remain in
+GitHub; those runs did **not** invoke the single-step fallback. A separate
+source-known *local idle stdin-read* test attempted up to 2400 debugger steps
+but did not reach the application text segment; this is a useful warning that
+single-stepping a blocking runtime call does not ensure bounded progress into
+application code. Do not claim targeted stepping is a native Freeciv success.
+The deterministic bounded-abstention test therefore verifies that no function
+hit is manufactured when the step budget expires. Use stronger explicit
+application-event breakpoints/triggered sampling, independently qualified,
+if a future scenario demands guaranteed code-path observation.

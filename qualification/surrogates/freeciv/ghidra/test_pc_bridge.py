@@ -100,6 +100,29 @@ class PcBridgeContracts(unittest.TestCase):
             with self.assertRaisesRegex(bridge.PCError, "FILE_INVALID"):
                 bridge.load_intervals(Path(d, "not-there"), "a" * 64)
 
+    def test_single_step_budget_abstains_without_function_match(self):
+        if shutil.which("gcc") is None:
+            self.skipTest("gcc unavailable in this local test environment")
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d, "spin.c")
+            program = Path(d, "spin")
+            source.write_text('#include <unistd.h>\nint main(void){volatile unsigned long i=0; '
+                              'while(i<6000000000UL){i++;} return 0;}\n')
+            subprocess.run(["gcc", "-O0", "-fPIE", "-pie", str(source), "-o", str(program)],
+                           check=True, stdout=subprocess.DEVNULL)
+            proc = subprocess.Popen([str(program)], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            try:
+                result = bridge.step_until_function(
+                    proc.pid, lambda _pc: "OUTSIDE_IMAGE", max_steps=4)
+                self.assertEqual(result["steps_executed"], 4)
+                self.assertEqual(result["classifications"]["FUNCTION_MATCH"], 0)
+                self.assertEqual(result["classifications"]["OUTSIDE_IMAGE"], 5)
+                self.assertIsNone(proc.poll())
+            finally:
+                proc.kill()
+                proc.wait(timeout=3)
+
     def test_actual_process_single_step_and_restore(self):
         if shutil.which("gcc") is None:
             self.skipTest("gcc unavailable in this local test environment")
