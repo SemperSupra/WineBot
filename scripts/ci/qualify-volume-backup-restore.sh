@@ -3,17 +3,8 @@
 # NOT a production backup system. No user data, logs, image pushes or uploads.
 set -euo pipefail
 fail() { printf 'LAYER_BACKUP_RDTE stage=%s\n' "$1" >&2; exit 1; }
-[ "${GITHUB_ACTIONS:-}" = true ] || fail unqualified_venue
-case "${GITHUB_EVENT_NAME:-}" in
-  pull_request) ;;
-  push)
-    # Exact temporary public RDTE child branch only; never generalize to
-    # default-branch pushes or deployment hosts.
-    [ "${GITHUB_REF:-}" = refs/heads/rdte/volume-restore-guard-fix-20261116 ] ||
-      fail unqualified_venue
-    ;;
-  *) fail unqualified_venue ;;
-esac
+[ "${GITHUB_ACTIONS:-}" = true ] &&
+  [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || fail unqualified_venue
 [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] &&
   [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || fail invalid_run
 command -v docker >/dev/null 2>&1 || fail docker_unavailable

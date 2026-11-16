@@ -4,11 +4,6 @@ on:
     paths:
       - '.github/workflows/disposable-backup-restore-rdte.yml'
       - 'scripts/ci/qualify-volume-backup-restore.sh'
-  push:
-    branches: ['rdte/volume-restore-guard-fix-20261116']
-    paths:
-      - '.github/workflows/disposable-backup-restore-rdte.yml'
-      - 'scripts/ci/qualify-volume-backup-restore.sh'
 permissions:
   contents: read
 concurrency:
@@ -24,7 +19,7 @@ jobs:
       - name: Checkout exact public PR code without credentials
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Source syntax and destructive-operation scope
         run: |
