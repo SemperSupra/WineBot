@@ -53,7 +53,8 @@ class LoadMapTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.CorrelationError, "ELF64"):
             import tempfile
             with tempfile.NamedTemporaryFile() as f:
-                f.write(b"not an elf"); f.flush()
+                f.write(b"not an elf")
+                f.flush()
                 probe.elf_segments(f.name)
 
     def test_bad_page_size_refuses(self):
