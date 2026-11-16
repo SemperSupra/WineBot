@@ -92,7 +92,10 @@ def test_duplicate_shutdown_does_not_schedule_second_worker():
         with ExitStack() as stack:
             atomic, signal, _ = _mock_shutdown_side_effects(stack)
             first = await lifecycle.lifecycle_shutdown(delay=0.08)
-            duplicate = await lifecycle.lifecycle_shutdown(delay=0.08)
+            original_due_at = lifecycle._shutdown_due_at
+            # A second request must not extend the original grace period.
+            duplicate = await lifecycle.lifecycle_shutdown(delay=0.5)
+            assert lifecycle._shutdown_due_at == original_due_at
             assert first["status"] == "shutting_down"
             assert duplicate["status"] == "shutting_down"
             assert duplicate["reused_pending"] is True
