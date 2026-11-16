@@ -667,8 +667,8 @@ async def lifecycle_shutdown(
 async def lifecycle_cancel():
     """Cancel only a pending graceful transition, never committed teardown."""
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
-    global _shutdown_due_at, _shutdown_generation, _pending_shutdown_task
-    global _pending_shutdown_operation
+    global _shutdown_due_at, _shutdown_requested_delay, _shutdown_generation
+    global _pending_shutdown_task, _pending_shutdown_operation
     async with shutdown_transition_lock:
         if not _shutdown_in_progress or _shutdown_mode != "graceful":
             return {"status": "no_pending"}
