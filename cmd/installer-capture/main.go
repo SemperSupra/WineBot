@@ -274,6 +274,26 @@ func run(argv []string) error {
   m, err := snapshot(*root)
   if err != nil { return err }
   return writeJSON(*out, m)
+ case "regdiff":
+  // Compare Wine-native registry v2 files after a quiesced installer replay.
+  // Value bytes never enter the emitted record; this remains private evidence.
+  flags := flag.NewFlagSet("regdiff", flag.ContinueOnError)
+  flags.SetOutput(io.Discard)
+  before := flags.String("before", "", "private before-install Wine .reg")
+  after := flags.String("after", "", "private after-install Wine .reg")
+  out := flags.String("out", "", "private registry semantic delta")
+  if err := flags.Parse(argv[1:]); err != nil || flags.NArg() != 0 ||
+     *before == "" || *after == "" || *out == "" {
+   return errors.New("invalid regdiff arguments")
+  }
+  if *out == *before || *out == *after { return errors.New("refuse overwrite of registry input") }
+  a,err := readPrivateRegistry(*before)
+  if err != nil { return err }
+  b,err := readPrivateRegistry(*after)
+  if err != nil { return err }
+  d,err := diffRegistry(a,b)
+  if err != nil { return err }
+  return writeJSON(*out,d)
  case "verify":
   // Verify a reconstructed installation's current prefix against a known
   // after-install snapshot. Never print the changed paths or content.
