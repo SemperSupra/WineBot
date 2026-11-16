@@ -126,6 +126,10 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertNotIn("push: true", wf)
         self.assertIn("fail health_recreate", script)
         self.assertIn("fail state_replay", script)
+        self.assertIn("kill -s SIGKILL winebot-interactive", script)
+        self.assertIn("fault_exit_not_sigkill", script)
+        self.assertIn("fail fault_health", script)
+        self.assertIn("fail fault_state_replay", script)
         self.assertIn("DURATION_SECONDS=90", script)
         self.assertIn("--read-only", (ROOT / "compose/layered.yml").read_text(
             encoding="utf-8"
