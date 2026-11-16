@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Source-neutral offline tests, independent of Freeciv and private source."""
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("freeciv_probe", Path(__file__).with_name("probe.py"))
 probe = importlib.util.module_from_spec(spec)
