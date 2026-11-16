@@ -121,7 +121,7 @@ jobs:
           assert data["schema"] == 1
           assert any(
               "WineBotInstallerFixture" in c["key"]
-              and c["name"] == "InstallState"
+              and c.get("name", "") == "InstallState"
               and c["operation"] in ("added", "changed")
               for c in data["changes"]
           ), "WIN_INSTALL_FIXTURE stage=registry_change_not_observed"
