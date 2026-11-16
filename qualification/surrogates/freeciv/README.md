@@ -17,3 +17,5 @@
 **Next independent experiment:** add a real client to generate packet payloads and UI observations; qualify Ghidra headless mapping of source-matched ELF; migrate from native Linux to Wine/PE as a separate differential workcell. Do not execute licensed SMAC/SMAX or Windows 98 binaries until `reverse-smac#37` authorizes that phase.
 
 **Independent batches:** the public workflow qualifies seeds 42 and 43 as two separate jobs in parallel, with independent disposable process state and evidence. Their outputs are not byte-for-byte parity claims.
+
+**Qualification status at admission:** seven offline source-neutral contract tests passed in a disposable session; GitHub native game execution is **NOT_RUN until the public PR jobs report terminal evidence**. Neither runner selection nor a dispatched workflow alone establishes gameplay or observatory integration.
