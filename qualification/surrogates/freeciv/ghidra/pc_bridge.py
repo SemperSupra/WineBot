@@ -9,12 +9,10 @@ from __future__ import annotations
 import argparse
 import bisect
 import ctypes
-import hashlib
 import json
 import os
+import signal
 import platform
-import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -32,6 +30,7 @@ ELF_SHA256 = "33a15db1dc9a250c7ecf215c3fe6d50c34409301f4bb783914a6b16f3b3e8472"
 PTRACE_ATTACH = 16
 PTRACE_DETACH = 17
 PTRACE_GETREGS = 12
+PTRACE_SINGLESTEP = 9
 
 
 class PCError(ValueError):
@@ -125,7 +124,7 @@ def derive_verified_load_bias(pid, binary, sha256):
 
 # Linux x86-64 kernel user_regs_struct, used only by a direct parent of this
 # disposable workcell's own unprivileged child process.
-_REGS_FIELDS = "r15 r14 r13 r12 rbp rbx r11 r10 r9 r8 rax rcx rdx rsi rdi orig_rax rip cs eflags rsp ss fs_base gs_base ds es fs gs".split()
+_REGS_FIELDS = ["r15", "r14", "r13", "r12", "rbp", "rbx", "r11", "r10", "r9", "r8", "rax", "rcx", "rdx", "rsi", "rdi", "orig_rax", "rip", "cs", "eflags", "rsp", "ss", "fs_base", "gs_base", "ds", "es", "fs", "gs"]
 
 
 class UserRegs(ctypes.Structure):
@@ -156,6 +155,76 @@ def sample_pc_once(pid):
         # always attempts to resume the child even if register inspection fails.
         if ptrace(PTRACE_DETACH, pid, None, None) != 0 and stopped:
             raise PCError("PTRACE_DETACH_FAILED")
+
+
+
+def wait_stopped(pid, seconds=3):
+    """Bounded wait for a trace stop, protecting the runner from blocked syscalls."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        got, status = os.waitpid(pid, os.WNOHANG)
+        if got == pid:
+            if not os.WIFSTOPPED(status):
+                raise PCError("TRACE_CHILD_EXIT_OR_SIGNAL")
+            return status
+        time.sleep(.003)
+    # Stop the child before releasing debugger ownership; never leave a hung
+    # native workcell accidentally under ptrace control.
+    try:
+        os.kill(pid, signal.SIGSTOP)
+        os.waitpid(pid, 0)
+    except (ProcessLookupError, ChildProcessError):
+        pass
+    raise PCError("PTRACE_STEP_TIMEOUT")
+
+
+def step_until_function(pid, classifier, wake=None, max_steps=2000):
+    """Read-only bounded instruction stepping, then detach and resume target.
+
+    The debugger controls the child's execution timing (not target memory) and
+    samples real, executed RIP values. A mapping is only valid if the classifier
+    independently checked ELF identity and a unique Ghidra function interval.
+    """
+    if not (1 <= max_steps <= 5000):
+        raise PCError("PTRACE_STEP_BUDGET_INVALID")
+    libc = ctypes.CDLL(None, use_errno=True)
+    ptrace = libc.ptrace
+    ptrace.restype = ctypes.c_long
+    if ptrace(PTRACE_ATTACH, pid, None, None) != 0:
+        raise PCError("PTRACE_ATTACH_NOT_ADMITTED")
+    stopped = False
+    counts = {k: 0 for k in ("FUNCTION_MATCH", "AMBIGUOUS_FUNCTION",
+                             "EXECUTABLE_NOT_IN_FUNCTION", "OUTSIDE_IMAGE")}
+    steps = 0
+    try:
+        wait_stopped(pid)
+        stopped = True
+        if wake is not None:
+            wake()
+        while True:
+            regs = UserRegs()
+            if ptrace(PTRACE_GETREGS, pid, None, ctypes.byref(regs)) != 0:
+                raise PCError("PTRACE_GETREGS_FAILED")
+            if not regs.rip:
+                raise PCError("PTRACE_NO_INSTRUCTION_POINTER")
+            label = classifier(regs.rip)
+            if label not in counts:
+                raise PCError("INTERNAL_CLASSIFIER_INVALID")
+            counts[label] += 1
+            if label in ("FUNCTION_MATCH", "AMBIGUOUS_FUNCTION") or steps >= max_steps:
+                break
+            if ptrace(PTRACE_SINGLESTEP, pid, None, None) != 0:
+                raise PCError("PTRACE_SINGLESTEP_FAILED")
+            stopped = False
+            status = wait_stopped(pid)
+            stopped = True
+            if os.WSTOPSIG(status) != signal.SIGTRAP:
+                raise PCError("PTRACE_UNEXPECTED_SIGNAL")
+            steps += 1
+    finally:
+        if stopped and ptrace(PTRACE_DETACH, pid, None, None) != 0:
+            raise PCError("PTRACE_DETACH_FAILED")
+    return {"steps_executed": steps, "classifications": counts}
 
 
 def free_port():
@@ -222,8 +291,23 @@ def native_probe(interval_path, binary= "/usr/games/freeciv-server", rounds=140)
                     counts[classify_elf_pc(pc, bias, ranges, segments)] += 1
                     sampled += 1
                     time.sleep(.025)
+                # The server may be idle in libc poll(): passive samples then
+                # provide a truthful OUTSIDE_IMAGE negative. Bounded single-step
+                # follows *actual executed instructions* back into executable
+                # code, while one input command wakes the server's event loop.
+                targeted = None
+                if counts["FUNCTION_MATCH"] == 0:
+                    def wake_server():
+                        proc.stdin.write("save pc-wakeup\n")
+                        proc.stdin.flush()
+                    targeted = step_until_function(
+                        proc.pid, lambda pc: classify_elf_pc(pc, bias, ranges, segments),
+                        wake=wake_server, max_steps=2400)
                 # Verify exact process file/map identity again after sampling.
                 derive_verified_load_bias(proc.pid, binary, ELF_SHA256)
+                targeted_counts = targeted["classifications"] if targeted is not None else {}
+                real_function_hits = counts["FUNCTION_MATCH"] + targeted_counts.get("FUNCTION_MATCH", 0)
+                ambiguous_hits = counts["AMBIGUOUS_FUNCTION"] + targeted_counts.get("AMBIGUOUS_FUNCTION", 0)
                 result = {
                     "schema": SCHEMA,
                     "evidence_class": "REAL_FREECIV_PTRACE_GHIDRA_FUNCTION_IF_MATCHED",
@@ -233,7 +317,8 @@ def native_probe(interval_path, binary= "/usr/games/freeciv-server", rounds=140)
                     "ghidra_interval_count": len(ranges),
                     "sample_count": sampled,
                     "classification_counts": counts,
-                    "function_pc_correlated": counts["FUNCTION_MATCH"] > 0 and counts["AMBIGUOUS_FUNCTION"] == 0,
+                    "targeted_single_step": targeted,
+                    "function_pc_correlated": real_function_hits > 0 and ambiguous_hits == 0,
                     "no_raw_addresses_uploaded": True,
                 }
                 result["status"] = "PASS" if result["function_pc_correlated"] else "UNQUALIFIED"

@@ -47,3 +47,19 @@ Authority: `mark-e-deyoung/ghidra-tools#4` generic evidence semantics,
 `SemperSupra/WineBot#157` runtime/surrogate receipt,
 `mark-e-deyoung/reverse-smac#37` owner-held SMAC R3/R4. This is a source-known
 public experimental probe and does not authorize original SMAC execution.
+
+## R054 follow-on: idle-loop counterexample and targeted correction
+
+The first real Freeciv head produced **180 read-only RIP register samples**,
+all classified `OUTSIDE_IMAGE`, despite verified SHA/inode/mapping and a real
+Ghidra interval index. Do not promote this negative to a function match.
+The source-known, test-only corrective experiment may attach to its **own**
+unprivileged Freeciv child and perform at most 2400 single-step instructions,
+while posting one bounded command to wake the event loop. This modifies
+execution **timing** but never writes code, memory, registers or files outside
+scratch. The runner records passive and targeted classes separately and refuses
+any ambiguous or absent match. A ten-test synthetic/native ptrace qualification
+covers live attach and single-step/detach on a self-built test ELF.
+
+This is not a timing-faithful observational baseline; compare passive and
+stepped experiments and treat instrumentation perturbations as material.

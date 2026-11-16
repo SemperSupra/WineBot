@@ -2,11 +2,11 @@
 """Adversarial source-neutral pointer mapping tests; no original game required."""
 import importlib.util
 import json
-import sys
-import types
 import shutil
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -99,6 +99,34 @@ class PcBridgeContracts(unittest.TestCase):
                 bridge.load_intervals(link, "a" * 64)
             with self.assertRaisesRegex(bridge.PCError, "FILE_INVALID"):
                 bridge.load_intervals(Path(d, "not-there"), "a" * 64)
+
+    def test_actual_process_single_step_and_restore(self):
+        if shutil.which("gcc") is None:
+            self.skipTest("gcc unavailable in this local test environment")
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d, "spin.c")
+            program = Path(d, "spin")
+            source.write_text('#include <unistd.h>\nint main(void){volatile unsigned long i=0; '
+                              'while(i<6000000000UL){i++;} return 0;}\n')
+            subprocess.run(["gcc", "-O0", "-fPIE", "-pie", str(source), "-o", str(program)],
+                           check=True, stdout=subprocess.DEVNULL)
+            proc = subprocess.Popen([str(program)], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            try:
+                observed = []
+
+                def classify(pc):
+                    observed.append(pc)
+                    return "FUNCTION_MATCH" if len(observed) == 5 else "OUTSIDE_IMAGE"
+
+                result = bridge.step_until_function(proc.pid, classify, max_steps=15)
+                self.assertEqual(result["steps_executed"], 4)
+                self.assertEqual(result["classifications"]["FUNCTION_MATCH"], 1)
+                self.assertEqual(len(observed), 5)
+                self.assertIsNone(proc.poll())  # debugger detached; process resumed
+            finally:
+                proc.kill()
+                proc.wait(timeout=3)
 
     def test_actual_process_ptrace_read_only(self):
         # A real Linux x86_64 controlled C child; fail closed when unavailable,
