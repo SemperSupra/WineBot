@@ -10,15 +10,26 @@ fail() { printf 'LAYER_BACKUP_RDTE stage=%s\n' "$1" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || fail docker_unavailable
 image='debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a'
 prefix="winebot-recovery-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-backup_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/winebot-recovery.XXXXXXXX")"
-volumes=()
+backup_volume="$prefix-snapshots"
+if docker volume inspect "$backup_volume" >/dev/null 2>&1; then
+  fail volume_already_exists
+fi
+docker volume create "$backup_volume" >/dev/null 2>&1 || fail volume_create
+volumes=("$backup_volume")
 cleanup() {
   for name in "${volumes[@]}"; do
     docker volume rm "$name" >/dev/null 2>&1 || true
   done
-  [ -n "$backup_dir" ] && rm -rf -- "$backup_dir"
 }
 trap cleanup EXIT
+# An isolated synthetic archive volume is initialized once; no host paths,
+# temporary directories, or real user state cross this container boundary.
+docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN \
+  --security-opt no-new-privileges --memory 128m --pids-limit 32 \
+  --entrypoint /bin/sh -v "$backup_volume:/snapshots" "$image" -ec '
+    test -z "$(find /snapshots -mindepth 1 -maxdepth 1 -print -quit)"
+    chown 1000:1000 /snapshots
+  ' >/dev/null 2>&1 || fail backup_volume_init
 # App packs are separately immutable/versioned; six volumes contain user state.
 roles=(prefix home config userdata artifacts shared)
 for role in "${roles[@]}"; do
@@ -48,28 +59,34 @@ for role in "${roles[@]}"; do
       printf "synthetic-metadata\n" > /state/config.ini
     ' >/dev/null 2>&1 || fail source_write
   # Archive output never leaves this disposable runner.
-  docker run --rm --network none --read-only --user "$(id -u):$(id -g)" \
+  docker run --rm --network none --read-only --user 1000:1000 \
     --cap-drop ALL --security-opt no-new-privileges --memory 128m \
     --pids-limit 32 --entrypoint /bin/sh \
-    -v "$source_volume:/state:ro" -v "$backup_dir:/snapshots" \
+    -v "$source_volume:/state:ro" -v "$backup_volume:/snapshots" \
     "$image" -ec 'tar -C /state -cf "/snapshots/$1.tar" .' sh "$role" \
     >/dev/null 2>&1 || fail snapshot
-  (cd "$backup_dir" && sha256sum "$role.tar" > "$role.sha256") || fail digest_write
-  (cd "$backup_dir" && sha256sum -c "$role.sha256" >/dev/null) ||
-    fail digest_mismatch
-  # Negative integrity control on a separate copy.
-  cp "$backup_dir/$role.tar" "$backup_dir/tampered.tar"
-  printf 'tamper' >> "$backup_dir/tampered.tar"
-  if printf '%s  %s\n' "$(cut -d ' ' -f1 "$backup_dir/$role.sha256")" \
-      "$backup_dir/tampered.tar" | sha256sum -c - >/dev/null 2>&1; then
-    fail tampered_archive_accepted
-  fi
-  rm -f -- "$backup_dir/tampered.tar"
+  # Archive integrity and tamper-negative tests run only in a fresh, nonroot
+  # short-lived container against the disposable backup volume.
+  docker run --rm --network none --read-only --user 1000:1000 \
+    --cap-drop ALL --security-opt no-new-privileges --memory 128m \
+    --pids-limit 32 --entrypoint /bin/sh \
+    -v "$backup_volume:/snapshots" "$image" -ec '
+      cd /snapshots
+      sha256sum "$1.tar" > "$1.sha256"
+      sha256sum -c "$1.sha256" >/dev/null
+      cp "$1.tar" tampered.tar
+      printf tamper >> tampered.tar
+      expected="$(cut -d " " -f1 "$1.sha256")"
+      if printf "%s  tampered.tar\n" "$expected" | sha256sum -c - >/dev/null 2>&1; then
+        exit 41
+      fi
+      rm -f tampered.tar
+    ' sh "$role" >/dev/null 2>&1 || fail archive_integrity_negative
   # Restore to a different EMPTY state volume with unprivileged user.
   docker run --rm --network none --read-only --user 1000:1000 \
     --cap-drop ALL --security-opt no-new-privileges --memory 128m \
     --pids-limit 32 --entrypoint /bin/sh \
-    -v "$dest_volume:/state" -v "$backup_dir:/snapshots:ro" \
+    -v "$dest_volume:/state" -v "$backup_volume:/snapshots:ro" \
     "$image" -ec '
       test -z "$(find /state -mindepth 1 -maxdepth 1 -print -quit)"
       tar --no-same-owner --no-same-permissions -C /state -xf "/snapshots/$1.tar"
