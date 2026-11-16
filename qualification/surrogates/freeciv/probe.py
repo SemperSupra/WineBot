@@ -9,7 +9,6 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import socket
@@ -17,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 SCHEMA = "freeciv-surrogate-native/v0.1"
 REQUIRED_SIGNALS = ("server_started", "loopback_tcp", "memory_maps", "file_syscalls", "save_created", "clean_stop", "no_external_ipv4_connect")
