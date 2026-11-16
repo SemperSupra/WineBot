@@ -211,4 +211,27 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   grep -qx durable-evidence /artifacts/hil-proof
   test -s /apps/.winebot-app-content-sha256
 ' >/dev/null 2>&1 || fail state_replay
+
+# Fail-stop only the disposable runtime process. External app/state volumes
+# must survive a forced SIGKILL, with no Docker volume deletion or promotion.
+docker compose -f compose/layered.yml kill -s SIGKILL winebot-interactive \
+  >/dev/null 2>&1 || fail fault_signal
+fault_cid="$(docker compose -f compose/layered.yml ps -a -q winebot-interactive 2>/dev/null || true)"
+[ -n "$fault_cid" ] || fail fault_container_missing
+fault_exit="$(docker inspect --format '{{.State.ExitCode}}' "$fault_cid" 2>/dev/null || true)"
+[ "$fault_exit" = 137 ] || fail fault_exit_not_sigkill
+docker compose -f compose/layered.yml up --no-build --force-recreate -d winebot-interactive \
+  >/dev/null 2>&1 || fail fault_recreate
+if ! wait_health; then
+  classify_health_failure
+  fail fault_health
+fi
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
+  grep -qx durable-user /userdata/hil-proof
+  grep -qx durable-config /config/hil-proof
+  grep -qx durable-home /home/winebot/hil-proof
+  grep -qx durable-wineprefix /wineprefix/hil-proof
+  grep -qx durable-evidence /artifacts/hil-proof
+  test -s /apps/.winebot-app-content-sha256
+' >/dev/null 2>&1 || fail fault_state_replay
 echo 'WINE11_LAYER_HIL stage=pass'
