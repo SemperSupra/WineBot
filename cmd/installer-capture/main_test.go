@@ -113,6 +113,55 @@ func TestVerifyDoesNotFollowExpectedManifestOutsideDirectory(t *testing.T) {
  if err := run([]string{"verify", "-root", root, "-manifest", expected}); err != nil { t.Fatal(err) }
 }
 
+func TestFootprintSummaryPathFreeDeterministic(t *testing.T) {
+ h := strings.Repeat("a",64)
+ before := Manifest{Schema:1,Entries:[]Entry{
+  {Path:"user.reg",Kind:"file",Size:1,SHA256:h},
+  {Path:"drive_c/users/guest/SENSITIVE_PRIVATE.txt",Kind:"file",Size:1,SHA256:h},
+ }}
+ after := Manifest{Schema:1,Entries:[]Entry{
+  {Path:"user.reg",Kind:"file",Size:2,SHA256:h},
+  {Path:"drive_c/program files/TEST_APP/program.exe",Kind:"file",Size:1,SHA256:h},
+  {Path:"drive_c/windows/system32/TEST_DLL.dll",Kind:"file",Size:1,SHA256:h},
+ }}
+ d, err := delta(before,after)
+ if err != nil { t.Fatal(err) }
+ summary, err := footprint(d)
+ if err != nil { t.Fatal(err) }
+ counts := map[string]FootprintRow{}
+ for _, row := range summary.Groups { counts[row.Class] = row }
+ if summary.Schema != 1 || len(summary.Groups) != 5 ||
+   counts["registry"].Changed != 1 ||
+   counts["application"].Added != 1 ||
+   counts["system"].Added != 1 ||
+   counts["user_profile"].Removed != 1 { t.Fatalf("invalid fixed summary groups: %+v",summary.Groups) }
+ raw,err := json.Marshal(summary)
+ if err != nil { t.Fatal(err) }
+ if strings.Contains(string(raw),"SENSITIVE_PRIVATE") ||
+    strings.Contains(string(raw),"TEST_APP") ||
+    strings.Contains(string(raw),"TEST_DLL") { t.Fatal("path leaked to footprint") }
+}
+
+func TestPrivateFootprintCLI(t *testing.T) {
+ dir := t.TempDir()
+ root := filepath.Join(dir,"prefix")
+ if err := os.Mkdir(root,0700); err != nil { t.Fatal(err) }
+ before := filepath.Join(dir,"before.json")
+ after := filepath.Join(dir,"after.json")
+ summary := filepath.Join(dir,"footprint.json")
+ if err := run([]string{"snapshot","-root",root,"-out",before}); err != nil { t.Fatal(err) }
+ if err := os.WriteFile(filepath.Join(root,"user.reg"),[]byte("SENSITIVE_PRIVATE_CANARY"),0600); err != nil { t.Fatal(err) }
+ if err := run([]string{"snapshot","-root",root,"-out",after}); err != nil { t.Fatal(err) }
+ if err := run([]string{"summary","-before",before,"-after",after,"-out",summary}); err != nil { t.Fatal(err) }
+ content,err := os.ReadFile(summary)
+ if err != nil { t.Fatal(err) }
+ if strings.Contains(string(content),"user.reg") || strings.Contains(string(content),"SENSITIVE_PRIVATE_CANARY") { t.Fatal("sensitive inventory escaped") }
+ var got Footprint
+ if err := json.Unmarshal(content,&got); err != nil { t.Fatal(err) }
+ if got.Groups[0].Class != "registry" || got.Groups[0].Added != 1 { t.Fatal("missing registry footprint") }
+ if err := run([]string{"summary","-before",before,"-after",after,"-out",summary}); err == nil { t.Fatal("overwrote existing summary") }
+}
+
 func TestRejectMaliciousManifest(t *testing.T) {
  h := strings.Repeat("a", 64)
  cases := []Manifest{

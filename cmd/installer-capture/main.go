@@ -176,6 +176,63 @@ func delta(before, after Manifest) (Delta, error) {
  }
  return result, nil
 }
+// Footprint is a bounded, path-free inventory summary for agents and humans.
+// It does not imply Win32 registry semantic equivalence or installer success.
+type FootprintRow struct {
+ Class string `json:"class"`
+ Added int `json:"added"`
+ Removed int `json:"removed"`
+ Changed int `json:"changed"`
+}
+type Footprint struct {
+ Schema int `json:"schema"`
+ Groups []FootprintRow `json:"groups"`
+}
+
+var footprintClasses = []string{"registry", "application", "system", "user_profile", "other"}
+
+func classifyFootprint(name string) string {
+ p := strings.ToLower(name)
+ switch {
+ case p == "system.reg" || p == "user.reg" || p == "userdef.reg" || strings.HasSuffix(p, ".reg"):
+  return "registry"
+ case strings.HasPrefix(p, "drive_c/program files/") ||
+  strings.HasPrefix(p, "drive_c/program files (x86)/") ||
+  strings.HasPrefix(p, "drive_c/games/"):
+  return "application"
+ case strings.HasPrefix(p, "drive_c/windows/") || p == "dosdevices" ||
+  strings.HasPrefix(p, "dosdevices/"):
+  return "system"
+ case strings.HasPrefix(p, "drive_c/users/"):
+  return "user_profile"
+ default:
+  return "other"
+ }
+}
+
+func footprint(delta Delta) (Footprint, error) {
+ result := Footprint{Schema: schemaVersion, Groups: []FootprintRow{}}
+ if delta.Schema != schemaVersion || len(delta.Changes) > maxEntries*2 {
+  return result, errors.New("invalid delta")
+ }
+ for _, category := range footprintClasses {
+  row := FootprintRow{Class: category}
+  for _, change := range delta.Changes {
+   if !validPath(change.Path) || classifyFootprint(change.Path) != category {
+    continue
+   }
+   switch change.Operation {
+   case "added": row.Added++
+   case "removed": row.Removed++
+   case "changed": row.Changed++
+   default: return result, errors.New("invalid operation")
+   }
+  }
+  result.Groups = append(result.Groups, row)
+ }
+ return result, nil
+}
+
 func writeJSON(out string, v any) error {
  // No output file inside a watched prefix is allowed at the CLI boundary.
  dir := filepath.Dir(out)
@@ -237,6 +294,28 @@ func run(argv []string) error {
   sort.Slice(expected.Entries, func(i,j int) bool { return expected.Entries[i].Path < expected.Entries[j].Path })
   if !reflect.DeepEqual(expected, actual) { return errors.New("postcondition mismatch") }
   return nil
+ case "summary":
+  // Count only fixed footprint classes, never export raw filenames from real
+  // manifests to public stdout or CI artifacts.
+  flags := flag.NewFlagSet("summary", flag.ContinueOnError)
+  flags.SetOutput(io.Discard)
+  before := flags.String("before", "", "private before inventory")
+  after := flags.String("after", "", "private after inventory")
+  out := flags.String("out", "", "private path-free footprint summary")
+  if err := flags.Parse(argv[1:]); err != nil || flags.NArg() != 0 ||
+   *before == "" || *after == "" || *out == "" {
+   return errors.New("invalid summary arguments")
+  }
+  if *out == *before || *out == *after { return errors.New("refuse overwrite of input") }
+  a, err := readManifest(*before)
+  if err != nil { return err }
+  b, err := readManifest(*after)
+  if err != nil { return err }
+  d, err := delta(a, b)
+  if err != nil { return err }
+  aggregate, err := footprint(d)
+  if err != nil { return err }
+  return writeJSON(*out, aggregate)
  case "diff":
   flags := flag.NewFlagSet("diff", flag.ContinueOnError)
   flags.SetOutput(io.Discard)

@@ -58,6 +58,15 @@ jobs:
           fi
           printf 'two' > "$work/prefix/sample.reg"
           "$RUNNER_TEMP/winebot-capture" diff -before "$work/before.json" -after "$work/after.json" -out "$work/delta.json"
+          "$RUNNER_TEMP/winebot-capture" summary -before "$work/before.json" -after "$work/after.json" -out "$work/footprint.json"
+          python3 - "$work/footprint.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert data["schema"] == 1
+          assert data["groups"][0] == {"class":"registry","added":1,"removed":0,"changed":0} or data["groups"][0] == {"class":"registry","added":0,"removed":0,"changed":1}
+          assert len(data["groups"]) == 5
+          assert "sample.reg" not in json.dumps(data)
+          PY
           python3 - "$work/delta.json" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1], encoding="utf-8"))
