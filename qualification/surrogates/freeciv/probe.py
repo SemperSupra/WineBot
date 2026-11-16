@@ -119,6 +119,16 @@ def inspect_saves(folder):
     return manifests
 
 
+def capture_version(executable):
+    """Freeciv 3.x writes --version to stderr on some builds."""
+    result = subprocess.run([executable, "--version"], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, timeout=6, check=True)
+    lines = result.stdout.strip().splitlines()
+    if not lines:
+        raise RuntimeError("FREECIV_VERSION_UNOBSERVED")
+    return lines[:3]
+
+
 def run_native(scratch, seed, port=5557):
     server = shutil.which("freeciv-server") or ("/usr/games/freeciv-server" if Path("/usr/games/freeciv-server").is_file() else None)
     trace = shutil.which("strace")
@@ -132,7 +142,7 @@ def run_native(scratch, seed, port=5557):
             "--port", str(port), "--saves", str(saves)]
     # The package-installed executable must be real and nonempty.
     binary = Path(server).resolve()
-    version = subprocess.check_output([server, "--version"], timeout=6, text=True).strip().splitlines()[:3]
+    version = capture_version(server)
     trace_cmd = [trace, "-ff", "-qq", "-s", "96", "-o", str(root / "syscalls"),
                  "-e", "trace=%file,%network,%process"] + args
     log_path = root / "server.log"
