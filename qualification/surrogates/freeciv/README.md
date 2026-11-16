@@ -21,3 +21,22 @@
 **Independent batches:** the public workflow qualifies seeds 42 and 43 as two separate jobs in parallel, with independent disposable process state and evidence. Their outputs are not byte-for-byte parity claims.
 
 **Qualification status at admission:** seven offline source-neutral contract tests passed in a disposable session; GitHub native game execution is **NOT_RUN until the public PR jobs report terminal evidence**. Neither runner selection nor a dispatched workflow alone establishes gameplay or observatory integration.
+
+## R050 state-reload semantic qualification — candidate
+
+Alongside source-known Linux syscall tests, a separate process-level test drives
+Freeciv's documented `--file` save reload path. It parses only bounded, source-defined
+`[game]` fields `turn`, `year`, `phase`, `server_state`, `save_players` and
+counts `[playerN]` sections; the reloaded server is required to serialize the same
+semantic fingerprint. The control deliberately does not publish raw game saves,
+full in-memory state, player identities, logs or filenames. Input bounds, compressed
+save expansion limits and duplicate-section/key refusal are tested separately.
+
+This proves only save/reload equality for these fields if **both real runner jobs
+PASS**; it does not establish a completed new turn, map/AI identity, full binary
+behavior or Windows/SMAC parity. A failed native step is `UNQUALIFIED`, not a
+synthetic fixture success. Do not relax the test to match a surprising output;
+classify the first concrete failure and adapt only with source-grounded evidence.
+
+`python3 qualification/surrogates/freeciv/test_save_oracle.py -v` is safe offline
+and is no substitute for the native Freeciv server workcell.
