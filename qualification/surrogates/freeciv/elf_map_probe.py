@@ -15,7 +15,7 @@ from pathlib import Path
 
 MAX_PROGRAM_HEADERS = 256
 MAX_MAP_BYTES = 1 << 20
-MAP_PATTERN = re.compile(r"^([0-9a-f]+)-([0-9a-f]+)\\s+(\\S{4})\\s+([0-9a-f]+)\\s+([0-9a-f]+):([0-9a-f]+)\\s+(\\d+)(?:\\s|$)")
+MAP_PATTERN = re.compile(r"^([0-9a-f]+)-([0-9a-f]+)\s+(\S{4})\s+([0-9a-f]+)\s+([0-9a-f]+):([0-9a-f]+)\s+(\d+)(?:\s|$)")
 
 
 class CorrelationError(ValueError):
@@ -34,7 +34,7 @@ def elf_segments(path):
     """Extract bounded little-endian ELF64 PT_LOAD file-backed segments."""
     with open(path, "rb") as fh:
         hdr = fh.read(64)
-        if len(hdr) < 64 or hdr[:4] != b"\\x7fELF" or hdr[4] != 2 or hdr[5] != 1:
+        if len(hdr) < 64 or hdr[:4] != b"\x7fELF" or hdr[4] != 2 or hdr[5] != 1:
             raise CorrelationError("ELF64_LITTLE_ENDIAN_REQUIRED")
         fields = struct.unpack_from("<HHIQQQIHHHHHH", hdr, 16)
         kind, phoff, phsize, phcount = fields[0], fields[4], fields[8], fields[9]
