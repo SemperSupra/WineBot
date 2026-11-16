@@ -108,6 +108,11 @@ jobs:
             test -s "$WINEPREFIX/user.reg" || exit 32
             cp "$WINEPREFIX/user.reg" "$WORK/after.reg"
             "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-after.json" >/dev/null || exit 34
+            timeout 120 wine "$WIN_FIXTURE" uninstall >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            test -s "$WINEPREFIX/user.reg" || exit 35
+            cp "$WINEPREFIX/user.reg" "$WORK/uninstalled.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-uninstalled.json" >/dev/null || exit 36
           ' || { echo 'WIN_INSTALL_FIXTURE stage=wine_execution_failed'; exit 1; }
           "$work/capture" diff -before "$work/fs-before.json" -after "$work/fs-after.json" -out "$work/fs-delta.json" ||
             { echo 'WIN_INSTALL_FIXTURE stage=filesystem_diff_failed'; exit 1; }
@@ -144,4 +149,27 @@ jobs:
               for c in data["changes"]
           ), "WIN_INSTALL_FIXTURE stage=registry_change_not_observed"
           PY
-          echo 'WIN_INSTALL_FIXTURE stage=wine_registry_observation_pass'
+          "$work/capture" diff -before "$work/fs-after.json" -after "$work/fs-uninstalled.json" -out "$work/fs-uninstall-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=filesystem_uninstall_diff_failed'; exit 1; }
+          "$work/capture" regdiff -before "$work/after.reg" -after "$work/uninstalled.reg" -out "$work/registry-uninstall-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=registry_uninstall_diff_failed'; exit 1; }
+          python3 - "$work/fs-uninstall-delta.json" "$work/registry-uninstall-delta.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              files = json.load(f)["changes"]
+          with open(sys.argv[2], encoding="utf-8") as f:
+              registry = json.load(f)["changes"]
+          assert any(
+              c.get("path", "").endswith("WineBotInstallerFixture/installed.txt")
+              and c.get("operation") == "removed"
+              for c in files
+          ), "WIN_INSTALL_FIXTURE stage=uninstalled_file_not_observed"
+          assert any(
+              "WineBotInstallerFixture" in c["key"]
+              and c.get("name", "") == "InstallState"
+              and c.get("operation") == "removed"
+              for c in registry
+          ), "WIN_INSTALL_FIXTURE stage=uninstalled_registry_not_observed"
+          PY
+          echo 'WIN_INSTALL_FIXTURE stage=wine_install_uninstall_roundtrip_pass'
