@@ -274,6 +274,25 @@ func run(argv []string) error {
   m, err := snapshot(*root)
   if err != nil { return err }
   return writeJSON(*out, m)
+ case "regverify":
+  // An exact semantic postcondition oracle for native Wine v2 snapshots.
+  // Timestamp and declaration-order differences do not cause failure.
+  flags := flag.NewFlagSet("regverify", flag.ContinueOnError)
+  flags.SetOutput(io.Discard)
+  actual := flags.String("actual", "", "private reconstructed Wine .reg")
+  expected := flags.String("expected", "", "private expected after-install Wine .reg")
+  if err := flags.Parse(argv[1:]); err != nil || flags.NArg() != 0 ||
+     *actual == "" || *expected == "" {
+   return errors.New("invalid regverify arguments")
+  }
+  a, err := readPrivateRegistry(*actual)
+  if err != nil { return err }
+  b, err := readPrivateRegistry(*expected)
+  if err != nil { return err }
+  d, err := diffRegistry(b,a)
+  if err != nil { return err }
+  if len(d.Changes) != 0 { return errors.New("registry postcondition mismatch") }
+  return nil
  case "regdiff":
   // Compare Wine-native registry v2 files after a quiesced installer replay.
   // Value bytes never enter the emitted record; this remains private evidence.
