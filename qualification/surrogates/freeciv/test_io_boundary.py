@@ -42,9 +42,8 @@ class IOTests(unittest.TestCase):
             self.assertEqual(r["counters"]["failed_calls"], 1)
 
     def test_missing_trace_refused(self):
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaisesRegex(ValueError, "ABSENT"):
-                mod.parse_trace(d)
+        with tempfile.TemporaryDirectory() as d, self.assertRaisesRegex(ValueError, "ABSENT"):
+            mod.parse_trace(d)
 
     def test_symlink_trace_refused(self):
         with tempfile.TemporaryDirectory() as d:

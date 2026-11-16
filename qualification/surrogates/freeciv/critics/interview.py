@@ -175,8 +175,9 @@ def audio():
                 data = data.mean(axis=1)
             # espeak normally outputs 22050 Hz; use scipy for exact conversion.
             if sr != 16000:
-                from scipy.signal import resample_poly
                 import math as stdmath
+
+                from scipy.signal import resample_poly
                 g = stdmath.gcd(sr, 16000)
                 data = resample_poly(data, 16000 // g, sr // g)
             inp = proc(data.astype(np.float32), sampling_rate=16000, return_tensors="pt")
