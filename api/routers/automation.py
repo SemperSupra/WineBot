@@ -505,8 +505,11 @@ async def inspect_window(data: InspectWindowModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
-    if not data.title and not data.handle:
-        raise HTTPException(status_code=400, detail="Must provide title or handle")
+    if not data.title and not data.handle and not data.list_only:
+        # Preserve the frozen v1 read response envelope, but never claim
+        # inspection occurred without a target. Broker authorization is
+        # checked above and no WinInspect process is started for this case.
+        return {"status": "invalid_target", "detail": "Must provide title or handle"}
 
     _wininspect_or_503()
     try:
