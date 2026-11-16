@@ -26,7 +26,9 @@ jobs:
           set -euo pipefail
           bash -n scripts/ci/qualify-volume-backup-restore.sh
           grep -q '^prefix="winebot-recovery-' scripts/ci/qualify-volume-backup-restore.sh
-          grep -q 'tampered_archive_accepted' scripts/ci/qualify-volume-backup-restore.sh
+          grep -q 'archive_integrity_negative' scripts/ci/qualify-volume-backup-restore.sh
+          grep -q 'backup_volume="$prefix-snapshots"' scripts/ci/qualify-volume-backup-restore.sh
+          ! grep -q 'rm -rf' scripts/ci/qualify-volume-backup-restore.sh
       - name: Fully disposable checksum archive and nonroot recovery
         run: bash scripts/ci/qualify-volume-backup-restore.sh
       - name: Report only synthetic result
