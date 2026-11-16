@@ -104,6 +104,20 @@ docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL \
     if touch /opt/winebot/should-not-write >/dev/null 2>&1; then exit 10; fi
   ' >/dev/null 2>&1 || fail first_runtime
 
+# Replay the exact privileged bootstrap against *already user-owned* volumes
+# with preserved files. CAP_CHOWN-only root must not try chmod on UID1000.
+docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN \
+  --security-opt no-new-privileges --memory 256m --pids-limit 64 \
+  --entrypoint /bin/sh \
+  -v "$WINEBOT_PREFIX_VOLUME:/state/prefix" \
+  -v "$WINEBOT_HOME_VOLUME:/state/home" \
+  -v "$WINEBOT_CONFIG_VOLUME:/state/config" \
+  -v "$WINEBOT_USERDATA_VOLUME:/state/userdata" \
+  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  -v "$WINEBOT_SHARED_VOLUME:/state/shared" \
+  "$app_image" /usr/local/bin/winebot-prepare-state >/dev/null 2>&1 ||
+  fail state_preparation_idempotency
+
 docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL \
   --security-opt no-new-privileges --memory 256m --pids-limit 64 \
   --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
