@@ -66,8 +66,12 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn('if [ "${ENABLE_API:-0}" = "1" ]; then', start)
         self.assertIn('      ENABLE_API: "1"', compose)
         self.assertIn("API_TOKEN: ${WINEBOT_API_TOKEN:", compose)
-        self.assertIn("TOKENS=\"$$(cat /tmp/winebot_api_token", compose)
-        self.assertIn('X-API-Key: $TOKEN', compose)
+        self.assertIn('TOKENS="$$(cat /tmp/winebot_api_token', compose)
+        self.assertIn('X-API-Key: $$TOKEN', compose)
+        self.assertIn(
+            'curl -fsS -H "X-API-Key: $$TOKEN" http://127.0.0.1:8000/health',
+            compose,
+        )
         self.assertNotIn('curl -fsS http://127.0.0.1:8000/health', compose)
         self.assertNotIn('curl -fsS http://localhost:8000/health', compose)
 

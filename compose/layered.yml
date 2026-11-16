@@ -123,17 +123,12 @@ services:
         target: /winebot-shared
         volume:
           nocopy: true
+    # Require the credential; the one-line command avoids a YAML-preserved
+    # newline between curl and URL. No unauthenticated fallback is allowed.
     healthcheck:
       test:
         - CMD-SHELL
-        - >-
-          TOKENS="$$(cat /tmp/winebot_api_token 2>/dev/null || true)";
-          for TOKEN in $$TOKENS; do
-            [ -z "$$TOKEN" ] && continue;
-            curl -fsS -H "X-API-Key: $$TOKEN"
-            http://127.0.0.1:8000/health >/dev/null && exit 0;
-          done;
-          exit 1
+        - 'TOKENS="$$(cat /tmp/winebot_api_token 2>/dev/null || true)"; for TOKEN in $$TOKENS; do [ -z "$$TOKEN" ] && continue; curl -fsS -H "X-API-Key: $$TOKEN" http://127.0.0.1:8000/health >/dev/null && exit 0; done; exit 1'
       interval: 10s
       timeout: 10s
       retries: 30
