@@ -80,6 +80,8 @@ func TestWineRegistryPrivateIOAndCLI(t *testing.T) {
  if err:=os.WriteFile(before,[]byte(raw),0600);err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(after,[]byte(strings.Replace(raw,"\"old\"","\"new\"",1)),0600);err!=nil{t.Fatal(err)}
  if err:=run([]string{"regdiff","-before",before,"-after",after,"-out",out});err!=nil{t.Fatal(err)}
+ if err:=run([]string{"regverify","-actual",before,"-expected",after});err==nil{t.Fatal("changed registry accepted as equivalent")}
+ if err:=run([]string{"regverify","-actual",after,"-expected",after});err!=nil{t.Fatalf("matching registry failed: %v",err)}
  data,err:=os.ReadFile(out)
  if err!=nil{t.Fatal(err)}
  var d RegistryDelta
