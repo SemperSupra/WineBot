@@ -65,7 +65,7 @@ def digest(path):
 
 def symbols(binary):
     out = subprocess.run(["nm", "-n", "--defined-only", str(binary)], check=True,
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=4).stdout
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20).stdout
     matched = {}
     for line in out.splitlines():
         m = re.fullmatch(r"([0-9a-fA-F]+)\s+([A-Za-z])\s+(\S+)", line)
