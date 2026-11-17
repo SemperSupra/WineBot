@@ -1,0 +1,53 @@
+name: Freeciv native read-write-map boundary qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/surrogate-freeciv-boundary-io.yml'
+      - 'qualification/surrogates/freeciv/io_boundary.py'
+      - 'qualification/surrogates/freeciv/test_io_boundary.py'
+      - 'qualification/surrogates/freeciv/run_io_native.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: freeciv-io-boundary-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-io:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        seed: [42, 43]
+    steps:
+      - name: Checkout public-only workcell without credential persistence
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Offline adversarial trace tests
+        run: |
+          python3 qualification/surrogates/freeciv/test_io_boundary.py -v
+          python3 -m py_compile qualification/surrogates/freeciv/run_io_native.py
+      - name: Install open-source Freeciv and syscall observer
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends freeciv-server=3.1.0+ds-1build5 strace
+      - name: Actual source-known Freeciv file reads, writes and mmaps
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/freeciv-io-public"
+          timeout 100s python3 qualification/surrogates/freeciv/run_io_native.py \
+            --seed '${{ matrix.seed }}' --output "$RUNNER_TEMP/freeciv-io-public/receipt-${{ matrix.seed }}.json"
+      - name: Upload only bounded aggregate JSON
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freeciv-io-boundary-public-${{ matrix.seed }}
+          path: ${{ runner.temp }}/freeciv-io-public/*.json
+          if-no-files-found: ignore
+          retention-days: 3

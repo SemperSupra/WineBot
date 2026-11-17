@@ -1,0 +1,73 @@
+name: Freeciv native-surrogate observatory qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/surrogate-freeciv-observatory.yml'
+      - 'qualification/surrogates/freeciv/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surrogate-freeciv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-source-known:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        seed: [42, 43]
+    steps:
+      - name: Checkout isolated public source without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Offline synthetic contract and actual ELF mapping negatives
+        run: |
+          python3 qualification/surrogates/freeciv/test_contract.py -v
+          python3 qualification/surrogates/freeciv/test_elf_map_probe.py -v
+          python3 qualification/surrogates/freeciv/test_save_oracle.py -v
+          python3 qualification/surrogates/freeciv/test_turn_oracle.py -v
+
+      - name: Install game and sensors on disposable runner
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends freeciv-server=3.1.0+ds-1build5 strace
+          /usr/games/freeciv-server --version
+
+      - name: Real Freeciv process, memory, socket, file and save transaction
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/surrogate-public"
+          python3 qualification/surrogates/freeciv/probe.py \
+            --seed "${{ matrix.seed }}" --output "$RUNNER_TEMP/surrogate-public/freeciv-native-${{ matrix.seed }}.json"
+
+      - name: Real Freeciv save reload and source-defined state-field oracle
+        run: |
+          set -euo pipefail
+          python3 qualification/surrogates/freeciv/save_oracle.py \
+            --seed "${{ matrix.seed }}" --output "$RUNNER_TEMP/surrogate-public/freeciv-save-reload-${{ matrix.seed }}.json"
+
+      - name: Real Freeciv AI-only turn advancement and save reload oracle
+        run: |
+          set -euo pipefail
+          python3 qualification/surrogates/freeciv/turn_oracle.py \
+            --seed "${{ matrix.seed }}" --output "$RUNNER_TEMP/surrogate-public/freeciv-ai-turn-${{ matrix.seed }}.json"
+
+      - name: Emit sanitized source-known evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freeciv-native-surrogate-public-v1-seed-${{ matrix.seed }}
+          path: ${{ runner.temp }}/surrogate-public/*.json
+          if-no-files-found: ignore
+          retention-days: 3

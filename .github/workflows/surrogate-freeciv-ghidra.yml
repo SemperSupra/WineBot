@@ -1,0 +1,66 @@
+name: Freeciv real Ghidra static analysis source-known qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/surrogate-freeciv-ghidra.yml'
+      - 'qualification/surrogates/freeciv/ghidra/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ghidra-native-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Validate independent source-neutral Ghidra witness negatives
+        run: python3 qualification/surrogates/freeciv/ghidra/test_validate.py -v
+      - name: Obtain open-source game and pinned official Ghidra release
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends freeciv-server=3.1.0+ds-1build5 unzip curl
+          echo '33a15db1dc9a250c7ecf215c3fe6d50c34409301f4bb783914a6b16f3b3e8472  /usr/games/freeciv-server' | sha256sum -c -
+          curl -fLSs --retry 2 --connect-timeout 15 --max-time 230 \
+            'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip' \
+            -o "$RUNNER_TEMP/ghidra.zip"
+          printf '%s  %s\n' '2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67' "$RUNNER_TEMP/ghidra.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ghidra"
+          unzip -q "$RUNNER_TEMP/ghidra.zip" -d "$RUNNER_TEMP/ghidra"
+      - name: Native Ghidra headless program analysis and typed verification
+        run: |
+          set -euo pipefail
+          analyzer=$(find "$RUNNER_TEMP/ghidra" -type f -path '*/support/analyzeHeadless' -print -quit)
+          test -n "$analyzer"
+          mkdir -p "$RUNNER_TEMP/ghidra-projects" "$RUNNER_TEMP/private-observe" "$RUNNER_TEMP/public-safe"
+          # Raw Ghidra logs stay in disposable runner scratch, never artifacts.
+          "$analyzer" "$RUNNER_TEMP/ghidra-projects" FreecivSurrogate \
+            -import /usr/games/freeciv-server \
+            -scriptPath "$GITHUB_WORKSPACE/qualification/surrogates/freeciv/ghidra" \
+            -postScript PublicFreecivWitness.java \
+              33a15db1dc9a250c7ecf215c3fe6d50c34409301f4bb783914a6b16f3b3e8472 \
+              "$RUNNER_TEMP/private-observe/ghidra.json" \
+            -analysisTimeoutPerFile 180 -max-cpu 2 -deleteProject \
+            > "$RUNNER_TEMP/private-observe/ghidra.log" 2>&1
+          test -s "$RUNNER_TEMP/private-observe/ghidra.json" || { echo 'GHIDRA_WITNESS_ABSENT'; exit 1; }
+          python3 qualification/surrogates/freeciv/ghidra/validate.py \
+            --input "$RUNNER_TEMP/private-observe/ghidra.json" \
+            --binary /usr/games/freeciv-server \
+            --output "$RUNNER_TEMP/public-safe/ghidra-static.json"
+      - name: Upload only allowlisted static witness
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freeciv-ghidra-static-public
+          path: ${{ runner.temp }}/public-safe/ghidra-static.json
+          if-no-files-found: error
+          retention-days: 3
