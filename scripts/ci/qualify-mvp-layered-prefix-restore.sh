@@ -126,7 +126,10 @@ docker compose -f compose/layered.yml stop winebot-interactive \
 
 for role in "${roles[@]}"; do
   src="$prefix-original-$role"
-  docker run --rm --network none --read-only --user 1000:1000 \
+  # Preserve worker stderr privately on this disposable runner. The public
+  # output can reveal ONLY a known role and a fixed enum failure cause.
+  archive_log="$RUNNER_TEMP/ic1-archive-$role.log"
+  if ! docker run --rm --network none --read-only --user 1000:1000 \
     --cap-drop ALL --security-opt no-new-privileges --memory 128m \
     --pids-limit 32 --entrypoint /bin/sh \
     -v "$src:/source:ro" -v "$archive:/archive" "$image" -ec '
@@ -134,7 +137,21 @@ for role in "${roles[@]}"; do
       cd /archive
       sha256sum "$1.tar" > "$1.sha256"
       sha256sum -c "$1.sha256" >/dev/null
-    ' sh "$role" >/dev/null 2>&1 || fail source_archive
+    ' sh "$role" >"$archive_log" 2>&1; then
+    reason=unknown
+    if grep -qi 'permission denied' "$archive_log"; then
+      reason=permission
+    elif grep -qi 'file changed as we read' "$archive_log"; then
+      reason=concurrent_write
+    elif grep -qi 'no space left on device' "$archive_log"; then
+      reason=disk_full
+    elif grep -qi 'not found' "$archive_log"; then
+      reason=tool_unavailable
+    fi
+    printf 'MVP_LAYERED_RESTORE role=%s cause=%s\n' "$role" "$reason"
+    fail source_archive
+  fi
+  printf 'MVP_LAYERED_RESTORE role=%s archive=pass\n' "$role"
 done
 echo 'MVP_LAYERED_RESTORE stage=quiesced_six_volume_archive'
 
