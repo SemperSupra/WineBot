@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Rights-cleared actual Windows app/game, not a synthetic program.
+# NOTE: the game gate is a seeded-world GUI smoke, NOT gameplay/save acceptance.
+set -euo pipefail
+fail() { printf 'MVP_WORKLOAD stage=%s\n' "$1" >&2; exit 1; }
+[ "${GITHUB_ACTIONS:-}" = true ] &&
+  [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || fail unqualified_venue
+[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] &&
+  [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || fail invalid_runner
+test -f ../wine11-candidate/docker/base.Dockerfile || fail wine11_missing
+test -f apps/mvp-ic1/npp/notepad++.exe || fail editor_missing
+test -n "$(find apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)" ||
+  fail game_missing
+test -z "$(find apps/mvp-ic1 -type l -print -quit)" || fail unexpected_symlink
+
+prefix="mvp-ic1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+export WINEBOT_APP_VOLUME="$prefix-apps"
+export WINEBOT_PREFIX_VOLUME="$prefix-prefix"
+export WINEBOT_HOME_VOLUME="$prefix-home"
+export WINEBOT_CONFIG_VOLUME="$prefix-config"
+export WINEBOT_USERDATA_VOLUME="$prefix-userdata"
+export WINEBOT_ARTIFACT_VOLUME="$prefix-artifacts"
+export WINEBOT_SHARED_VOLUME="$prefix-shared"
+export WINEBOT_API_TOKEN=ic1-public-runner-synthetic-token-only
+export WINEBOT_VNC_PASSWORD=ic1-public-runner-synthetic-password
+volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
+  "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
+  "$WINEBOT_SHARED_VOLUME")
+cleanup() {
+  docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
+  for volume in "${volumes[@]}"; do
+    docker volume rm "$volume" >/dev/null 2>&1 || true
+  done
+  docker image rm winebot:ic1 winebot-base:ic1 winebot-apps:ic1 >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+for volume in "${volumes[@]}"; do
+  if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
+  docker volume create "$volume" >/dev/null 2>&1 || fail volume_create
+done
+docker build -f ../wine11-candidate/docker/base.Dockerfile --target final \
+  -t winebot-base:ic1 ../wine11-candidate >"$RUNNER_TEMP/ic1-base-build.log" 2>&1 ||
+  fail base_build
+cp ../wine11-candidate/scripts/init/20-setup-wine.sh scripts/init/20-setup-wine.sh
+docker build -f docker/Dockerfile --target intent-rel \
+  --build-arg BASE_IMAGE=winebot-base:ic1 --build-arg BUILD_INTENT=rel \
+  -t winebot:ic1 . >"$RUNNER_TEMP/ic1-runtime-build.log" 2>&1 ||
+  fail runtime_build
+docker build -f docker/app-bundle.Dockerfile -t winebot-apps:ic1 . \
+  >"$RUNNER_TEMP/ic1-app-build.log" 2>&1 || fail app_build
+export WINEBOT_RUNTIME_IMAGE="$(docker image inspect -f '{{.Id}}' winebot:ic1)"
+export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect -f '{{.Id}}' winebot-apps:ic1)"
+[[ "$WINEBOT_RUNTIME_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] &&
+  [[ "$WINEBOT_APP_BUNDLE_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+  fail image_identity
+docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
+  fail compose_invalid
+docker compose -f compose/layered.yml up -d --no-build winebot-interactive \
+  >"$RUNNER_TEMP/ic1-compose-start.log" 2>&1 || fail startup
+wait_health() {
+  local cid state
+  for _ in $(seq 1 100); do
+    cid="$(docker compose -f compose/layered.yml ps -q winebot-interactive 2>/dev/null || true)"
+    if [ -n "$cid" ]; then
+      state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid" 2>/dev/null || true)"
+      [ "$state" = healthy ] && return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+wait_health || fail health_initial
+docker compose -f compose/layered.yml exec -T winebot-interactive wine --version \
+  2>/dev/null | grep -Eq '^wine-11([.]|$)' || fail wrong_wine_version
+echo 'MVP_WORKLOAD stage=wine11_layered_ready'
+
+# Actual editor executable shipped in immutable app store; saved document
+# belongs to separately persistent UID1000 user data.
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
+  editor="$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)"
+  [ -n "$editor" ] && [ "$(id -u)" -eq 1000 ]
+  printf "ic1-before\n" > /userdata/ic1-editor.txt
+  doc="$(winepath -w /userdata/ic1-editor.txt)"
+  nohup wine "$editor" "$doc" >/tmp/ic1-editor-local.log 2>&1 </dev/null &
+  found=""
+  for i in $(seq 1 90); do
+    found="$(xdotool search --onlyvisible --name "Notepad++" 2>/dev/null | head -1 || true)"
+    [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
+    sleep 1
+  done
+  [[ "$found" =~ ^[0-9]{1,16}$ ]] || exit 11
+  xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 12
+  xdotool key --clearmodifiers ctrl+End
+  xdotool type --clearmodifiers --delay 20 "IC1-APP-INPUT-PROOF"
+  xdotool key --clearmodifiers ctrl+s
+  for i in $(seq 1 25); do
+    grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt && exit 0
+    sleep 1
+  done
+  exit 13
+' >/dev/null 2>&1 || fail editor_gui_save
+echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
+
+# OpenTTD 15.3 documented -g new game and -G deterministic seed. This
+# exercise proves game launch and window input only, not savegame semantics.
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
+  exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
+  [ -n "$exe" ] && [ "$(id -u)" -eq 1000 ] || exit 20
+  cd "$(dirname "$exe")"
+  nohup wine "$exe" -v win32 -m null -s null -g -G 61731 \
+    >/tmp/ic1-game-local.log 2>&1 </dev/null &
+  pid=$!
+  found=""
+  for i in $(seq 1 100); do
+    found="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+    [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
+    kill -0 "$pid" 2>/dev/null || exit 21
+    sleep 1
+  done
+  [[ "$found" =~ ^[0-9]{1,16}$ ]] || exit 22
+  xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 23
+  xdotool key --clearmodifiers Escape
+  kill -0 "$pid" 2>/dev/null || exit 24
+' >/dev/null 2>&1 || fail game_seeded_world_window
+echo 'MVP_WORKLOAD stage=windows_game_seeded_world_smoke'
+
+# Preserve immutable app and external user data across disposable process
+# recreation; do not delete or mount a real user prefix.
+docker compose -f compose/layered.yml up -d --force-recreate --no-build \
+  winebot-interactive >/dev/null 2>&1 || fail recreate
+wait_health || fail recreate_health
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
+  grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt
+  test -s /apps/.winebot-app-content-sha256
+  test -n "$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
+  test -n "$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)"
+  test "$(id -u)" -eq 1000
+' >/dev/null 2>&1 || fail workload_state_replay
+echo 'MVP_WORKLOAD stage=editor_saved_state_replayed'
+echo 'MVP_WORKLOAD stage=bounded_qualification_pass'
