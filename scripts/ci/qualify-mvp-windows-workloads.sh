@@ -171,14 +171,25 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   [[ "$digest" =~ ^[0-9a-f]{64}$ ]] ||
     { echo "MVP_WORKLOAD_GAME_CAUSE=save_digest_invalid"; exit 27; }
   printf "%s\n" "$digest" > /userdata/ic1-game-save-digest
-  if ! timeout 45 wine "$exe" -q "$(winepath -w "$game_save")" \
+  # OpenTTD 15.3 Win32 ShowInfoI() uses a *modal MessageBox* for the
+  # successful -q savegame-information result, unless -d initializes the
+  # console first. Ordering matters: -d must precede -q (which exits early).
+  # Prove an impossible save is rejected before accepting a real decoded one.
+  if timeout 20 wine "$exe" -d 0 -c "$config" \
+    -q "$(winepath -w /userdata/ic1-openttd/does-not-exist.sav)" \
+    >/tmp/ic1-game-negative-local.log 2>&1; then
+    echo "MVP_WORKLOAD_GAME_CAUSE=invalid_save_accepted"
+    exit 28
+  fi
+  if ! timeout 35 wine "$exe" -d 0 -c "$config" \
+    -q "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-verify-local.log 2>&1; then
     echo "MVP_WORKLOAD_GAME_CAUSE=save_unreadable"
-    exit 28
+    exit 29
   fi
 ' >"$RUNNER_TEMP/ic1-game-gate.log" 2>&1 || {
   # Publish only the fixed failure stage, never the game or Wine logs.
-  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(config_not_written|save_missing|save_too_small|save_digest_invalid|save_unreadable)' \
+  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(config_not_written|save_missing|save_too_small|save_digest_invalid|invalid_save_accepted|save_unreadable)' \
     "$RUNNER_TEMP/ic1-game-gate.log" | tail -1 || true)"
   case "$cause" in
     MVP_WORKLOAD_GAME_CAUSE=*) printf '%s\n' "$cause" ;;
@@ -207,7 +218,9 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
   [ -n "$exe" ]
   cd "$(dirname "$exe")"
-  timeout 45 wine "$exe" -q "$(winepath -w "$game_save")" \
+  # Use the same console-enabled decoder after disposable recreation.
+  timeout 35 wine "$exe" -d 0 -c "$config" \
+    -q "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-reopen-local.log 2>&1
   config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
   nohup wine "$exe" -c "$config" -v win32 -m null -s null -x \
