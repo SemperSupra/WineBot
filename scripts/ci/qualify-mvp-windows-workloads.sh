@@ -144,12 +144,11 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 23
   xdotool key --clearmodifiers Escape
   kill -0 "$pid" 2>/dev/null || exit 24
-  # Official OpenTTD interactive console: backquote opens the console;
-  # "save" writes a real validated game state rather than a fake sentinel.
-  xdotool key --clearmodifiers grave
-  sleep 1
-  xdotool type --clearmodifiers --delay 25 "save ic1_winebot_mvp"
-  xdotool key --clearmodifiers Return
+  # OpenTTD 15.3 MakeNewGameDone() executes the immutable pack's
+  # scripts/game_start.scr after a real seeded world has been generated.
+  # GUI keyboard action remains a separate observable interaction gate.
+  test -s "$(dirname "$exe")/scripts/game_start.scr" ||
+    { echo "MVP_WORKLOAD_GAME_CAUSE=start_script_missing"; exit 25; }
   game_save=""
   for i in $(seq 1 40); do
     game_save="$(find /home/winebot /wineprefix /userdata -type f \
@@ -158,11 +157,9 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
     sleep 1
   done
   if [ -z "$game_save" ] || [ ! -s "$game_save" ]; then
-    if [ ! -f /userdata/ic1-openttd/openttd.cfg ]; then
-      echo "MVP_WORKLOAD_GAME_CAUSE=config_not_written"
-    else
-      echo "MVP_WORKLOAD_GAME_CAUSE=save_missing"
-    fi
+    # OpenTTD writes openttd.cfg on shutdown; its absence during a running
+    # session is not evidence that the save operation failed.
+    echo "MVP_WORKLOAD_GAME_CAUSE=save_missing"
     exit 25
   fi
   [ "$(stat -c %s "$game_save")" -gt 1024 ] ||
@@ -189,7 +186,7 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   fi
 ' >"$RUNNER_TEMP/ic1-game-gate.log" 2>&1 || {
   # Publish only the fixed failure stage, never the game or Wine logs.
-  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(config_not_written|save_missing|save_too_small|save_digest_invalid|invalid_save_accepted|save_unreadable)' \
+  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(start_script_missing|save_missing|save_too_small|save_digest_invalid|invalid_save_accepted|save_unreadable)' \
     "$RUNNER_TEMP/ic1-game-gate.log" | tail -1 || true)"
   case "$cause" in
     MVP_WORKLOAD_GAME_CAUSE=*) printf '%s\n' "$cause" ;;

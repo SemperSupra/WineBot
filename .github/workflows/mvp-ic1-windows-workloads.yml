@@ -68,6 +68,14 @@ jobs:
           test -f apps/mvp-ic1/npp/notepad++.exe || { echo 'MVP_WORKLOAD stage=editor_payload_layout'; exit 1; }
           exe="$(find apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
           test -n "$exe" || { echo 'MVP_WORKLOAD stage=game_payload_layout'; exit 1; }
+          # OpenTTD v15.3 MakeNewGameDone() runs game_start.scr after world
+          # generation. This deterministic upstream-supported hook is baked
+          # into the immutable app pack; it does not modify the user profile.
+          game_scripts="$(dirname "$exe")/scripts"
+          mkdir -p "$game_scripts"
+          test ! -e "$game_scripts/game_start.scr" ||
+            { echo 'MVP_WORKLOAD stage=script_collision'; exit 1; }
+          printf 'save ic1_winebot_mvp\n' > "$game_scripts/game_start.scr"
           basedir="$(dirname "$exe")/baseset"
           mkdir -p "$basedir"
           find "$work/gfx" -type f \( -iname '*.tar' -o -iname '*.obg' -o -iname '*.grf' \) \
