@@ -41,7 +41,8 @@ jobs:
           test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
           grep -q 'stage=wine11_six_volume_replay_pass' \
             scripts/ci/qualify-mvp-layered-prefix-restore.sh
-          ! grep -q 'down -v' scripts/ci/qualify-mvp-layered-prefix-restore.sh
+          ! grep -Eq '^[[:space:]]*docker compose.*down.*(--volumes|[[:space:]]-v([[:space:]]|$))' \
+            scripts/ci/qualify-mvp-layered-prefix-restore.sh
           echo 'MVP_LAYERED_RESTORE stage=source_guard_pass'
       - name: Quiesce, restore and replay real Wine-generated external state
         working-directory: layered
