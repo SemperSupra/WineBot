@@ -144,7 +144,7 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 23
   xdotool key --clearmodifiers Escape
   kill -0 "$pid" 2>/dev/null || exit 24
-  # OpenTTD 15.3 MakeNewGameDone() executes the immutable pack's
+  # OpenTTD 15.3 MakeNewGameDone() executes the immutable app bundle
   # scripts/game_start.scr after a real seeded world has been generated.
   # GUI keyboard action remains a separate observable interaction gate.
   test -s "$(dirname "$exe")/scripts/game_start.scr" ||
