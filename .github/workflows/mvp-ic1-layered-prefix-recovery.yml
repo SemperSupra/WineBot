@@ -1,0 +1,52 @@
+name: MVP IC1 Layered Wine11 Six-Volume Prefix Recovery
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mvp-ic1-layered-prefix-recovery.yml'
+      - 'scripts/ci/qualify-mvp-layered-prefix-restore.sh'
+permissions:
+  contents: read
+concurrency:
+  group: ic1-layered-prefix-recovery-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+jobs:
+  layered-wine11-state-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout exact recovery child PR without credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: layered
+      - name: Checkout pinned independently qualified Wine11 source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          repository: SemperSupra/WineBot
+          ref: 8c5ed8019a3518cf534b158662755172bfce7c59
+          path: wine11-candidate
+      - name: Reclaim only hosted runner scratch disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+      - name: Syntax, exact-source and external-state guards
+        working-directory: layered
+        run: |
+          set -euo pipefail
+          bash -n scripts/ci/qualify-mvp-layered-prefix-restore.sh
+          test -f ../wine11-candidate/docker/base.Dockerfile
+          test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+          grep -q 'stage=wine11_six_volume_replay_pass' \
+            scripts/ci/qualify-mvp-layered-prefix-restore.sh
+          ! grep -q 'down -v' scripts/ci/qualify-mvp-layered-prefix-restore.sh
+          echo 'MVP_LAYERED_RESTORE stage=source_guard_pass'
+      - name: Quiesce, restore and replay real Wine-generated external state
+        working-directory: layered
+        timeout-minutes: 58
+        run: bash scripts/ci/qualify-mvp-layered-prefix-restore.sh
+      - name: Fixed result only
+        if: success()
+        run: echo 'MVP_LAYERED_RESTORE stage=qualified_six_volume_wine11'
