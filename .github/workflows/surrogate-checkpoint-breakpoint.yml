@@ -1,0 +1,53 @@
+name: Public source-known breakpoint and checkpoint qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/surrogate-checkpoint-breakpoint.yml'
+      - 'qualification/surrogates/freeciv/checkpoint/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-known-breakpoint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  external-child-breakpoint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout public fixture without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native direct-child breakpoint and deterministic negative controls
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          cd qualification/surrogates/freeciv/checkpoint
+          python3 -W error test_bridge.py -v
+          gcc -std=c11 -O0 -fno-pie -no-pie -fno-omit-frame-pointer \
+            -Wall -Wextra -Werror fixture.c -o "$RUNNER_TEMP/checkpoint-fixture"
+          sha=$(sha256sum "$RUNNER_TEMP/checkpoint-fixture" | cut -d ' ' -f1)
+          mkdir -p "$RUNNER_TEMP/checkpoint-public"
+          timeout 30s python3 bridge.py \
+            --binary "$RUNNER_TEMP/checkpoint-fixture" --expected-sha "$sha" \
+            --output "$RUNNER_TEMP/checkpoint-public/result.json"
+          python3 - "$RUNNER_TEMP/checkpoint-public/result.json" <<'PY'
+          import json,sys
+          x=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert x['status']=='PASS' and x['breakpoint_hits']==2
+          assert x['breakpoint_original_bytes_restored'] and x['child_clean_exit']
+          assert x['state_transition_observed'] and len(x['checkpoint_digests'])==2
+          assert not any(key in x for key in ('rip','address','memory','pid','maps'))
+          print('PUBLIC_SOURCE_KNOWN_BREAKPOINT_CHECKPOINT_PASS')
+          PY
+      - name: Upload only allowlisted fixture checkpoint receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-known-external-breakpoint-checkpoints
+          path: ${{ runner.temp }}/checkpoint-public/result.json
+          if-no-files-found: ignore
+          retention-days: 3
