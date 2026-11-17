@@ -117,8 +117,10 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
 }
 echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
 
-# OpenTTD 15.3 documented -g new game and -G deterministic seed. This
-# exercise proves game launch and window input only, not savegame semantics.
+# OpenTTD 15.3 source documents -g new game and -G deterministic
+# seed. Its in-game tilde/backquote console offers "save <filename>", and
+# -q <game> independently validates that OpenTTD can decode a saved game.
+# Keep all files in genuine persistent Wine prefix/home/userdata mounts.
 docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
   exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
   [ -n "$exe" ] && [ "$(id -u)" -eq 1000 ] || exit 20
@@ -137,8 +139,43 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 23
   xdotool key --clearmodifiers Escape
   kill -0 "$pid" 2>/dev/null || exit 24
-' >/dev/null 2>&1 || fail game_seeded_world_window
-echo 'MVP_WORKLOAD stage=windows_game_seeded_world_smoke'
+  # Official OpenTTD interactive console: backquote opens the console;
+  # "save" writes a real validated game state rather than a fake sentinel.
+  xdotool key --clearmodifiers grave
+  sleep 1
+  xdotool type --clearmodifiers --delay 25 "save ic1_winebot_mvp"
+  xdotool key --clearmodifiers Return
+  game_save=""
+  for i in $(seq 1 40); do
+    game_save="$(find /home/winebot /wineprefix /userdata -type f \
+      -iname "ic1_winebot_mvp.sav" -print -quit 2>/dev/null)"
+    [ -n "$game_save" ] && break
+    sleep 1
+  done
+  [ -n "$game_save" ] && [ -s "$game_save" ] ||
+    { echo "MVP_WORKLOAD_GAME_CAUSE=save_missing"; exit 25; }
+  [ "$(stat -c %s "$game_save")" -gt 1024 ] ||
+    { echo "MVP_WORKLOAD_GAME_CAUSE=save_too_small"; exit 26; }
+  digest="$(sha256sum "$game_save" | cut -d " " -f1)"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] ||
+    { echo "MVP_WORKLOAD_GAME_CAUSE=save_digest_invalid"; exit 27; }
+  printf "%s\n" "$digest" > /userdata/ic1-game-save-digest
+  if ! timeout 45 wine "$exe" -q "$(winepath -w "$game_save")" \
+    >/tmp/ic1-game-verify-local.log 2>&1; then
+    echo "MVP_WORKLOAD_GAME_CAUSE=save_unreadable"
+    exit 28
+  fi
+' >"$RUNNER_TEMP/ic1-game-gate.log" 2>&1 || {
+  # Publish only the fixed failure stage, never the game or Wine logs.
+  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(save_missing|save_too_small|save_digest_invalid|save_unreadable)' \
+    "$RUNNER_TEMP/ic1-game-gate.log" | tail -1 || true)"
+  case "$cause" in
+    MVP_WORKLOAD_GAME_CAUSE=*) printf '%s\n' "$cause" ;;
+    *) echo 'MVP_WORKLOAD_GAME_CAUSE=launch_or_input_unknown' ;;
+  esac
+  fail game_save_validation
+}
+echo 'MVP_WORKLOAD stage=windows_game_save_validated'
 
 # Preserve immutable app and external user data across disposable process
 # recreation; do not delete or mount a real user prefix.
@@ -151,6 +188,31 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   test -n "$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
   test -n "$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)"
   test "$(id -u)" -eq 1000
+  game_save="$(find /home/winebot /wineprefix /userdata -type f \
+    -iname ic1_winebot_mvp.sav -print -quit 2>/dev/null)"
+  [ -n "$game_save" ] && [ -s "$game_save" ]
+  digest="$(sha256sum "$game_save" | cut -d " " -f1)"
+  [ "$digest" = "$(cat /userdata/ic1-game-save-digest)" ]
+  exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
+  [ -n "$exe" ]
+  cd "$(dirname "$exe")"
+  timeout 45 wine "$exe" -q "$(winepath -w "$game_save")" \
+    >/tmp/ic1-game-reopen-local.log 2>&1
+  nohup wine "$exe" -v win32 -m null -s null -x \
+    -g "$(winepath -w "$game_save")" \
+    >/tmp/ic1-game-loaded-local.log 2>&1 </dev/null &
+  pid=$!
+  found=""
+  for i in $(seq 1 80); do
+    found="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
+    [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
+    kill -0 "$pid" 2>/dev/null || exit 31
+    sleep 1
+  done
+  [[ "$found" =~ ^[0-9]{1,16}$ ]] || exit 32
+  sleep 2
+  kill -0 "$pid" 2>/dev/null || exit 33
 ' >/dev/null 2>&1 || fail workload_state_replay
 echo 'MVP_WORKLOAD stage=editor_saved_state_replayed'
+echo 'MVP_WORKLOAD stage=game_save_reloaded'
 echo 'MVP_WORKLOAD stage=bounded_qualification_pass'
