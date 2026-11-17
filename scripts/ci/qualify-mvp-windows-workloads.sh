@@ -125,7 +125,12 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
   [ -n "$exe" ] && [ "$(id -u)" -eq 1000 ] || exit 20
   cd "$(dirname "$exe")"
-  nohup wine "$exe" -v win32 -m null -s null -g -G 61731 \
+  # The OpenTTD -c option selects an explicit persistent configuration file
+  # and keeps savegames out of the immutable application payload. This is a
+  # deliberate three-layer data-placement acceptance requirement.
+  mkdir -p /userdata/ic1-openttd/save
+  config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
+  nohup wine "$exe" -c "$config" -v win32 -m null -s null -g -G 61731 \
     >/tmp/ic1-game-local.log 2>&1 </dev/null &
   pid=$!
   found=""
@@ -152,8 +157,14 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
     [ -n "$game_save" ] && break
     sleep 1
   done
-  [ -n "$game_save" ] && [ -s "$game_save" ] ||
-    { echo "MVP_WORKLOAD_GAME_CAUSE=save_missing"; exit 25; }
+  if [ -z "$game_save" ] || [ ! -s "$game_save" ]; then
+    if [ ! -f /userdata/ic1-openttd/openttd.cfg ]; then
+      echo "MVP_WORKLOAD_GAME_CAUSE=config_not_written"
+    else
+      echo "MVP_WORKLOAD_GAME_CAUSE=save_missing"
+    fi
+    exit 25
+  fi
   [ "$(stat -c %s "$game_save")" -gt 1024 ] ||
     { echo "MVP_WORKLOAD_GAME_CAUSE=save_too_small"; exit 26; }
   digest="$(sha256sum "$game_save" | cut -d " " -f1)"
@@ -167,7 +178,7 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   fi
 ' >"$RUNNER_TEMP/ic1-game-gate.log" 2>&1 || {
   # Publish only the fixed failure stage, never the game or Wine logs.
-  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(save_missing|save_too_small|save_digest_invalid|save_unreadable)' \
+  cause="$(grep -Eo 'MVP_WORKLOAD_GAME_CAUSE=(config_not_written|save_missing|save_too_small|save_digest_invalid|save_unreadable)' \
     "$RUNNER_TEMP/ic1-game-gate.log" | tail -1 || true)"
   case "$cause" in
     MVP_WORKLOAD_GAME_CAUSE=*) printf '%s\n' "$cause" ;;
@@ -198,7 +209,8 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   cd "$(dirname "$exe")"
   timeout 45 wine "$exe" -q "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-reopen-local.log 2>&1
-  nohup wine "$exe" -v win32 -m null -s null -x \
+  config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
+  nohup wine "$exe" -c "$config" -v win32 -m null -s null -x \
     -g "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-loaded-local.log 2>&1 </dev/null &
   pid=$!
