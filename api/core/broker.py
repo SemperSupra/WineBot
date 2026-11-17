@@ -86,6 +86,15 @@ class InputBroker:
         session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
     ):
         with self._lock:
+            if self.state.session_id != session_id:
+                # Grant challenges are scoped to a session. A token issued
+                # before handover must not authorize control in the next one.
+                self._grant_challenge_token = None
+                self._grant_challenge_expiry = 0.0
+                if self.state.control_mode == ControlMode.AGENT:
+                    self.revoke_agent("session_changed")
+                else:
+                    self.state.lease_expiry = None
             self.state.session_id = session_id
             self.state.interactive = interactive
             self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())

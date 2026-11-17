@@ -85,3 +85,28 @@ def test_active_lease_can_be_renewed_and_human_override_revokes():
     asyncio.run(b.report_user_activity())
     assert b.get_state().control_mode == ControlMode.USER
     assert asyncio.run(b.check_access()) is False
+
+
+def test_stale_human_challenge_cannot_grant_after_session_handover():
+    b = _broker()
+    previous_token = asyncio.run(b.issue_grant_challenge())["token"]
+    asyncio.run(b.update_session("ic1-replacement-session", interactive=True))
+    with pytest.raises(HTTPException) as stale:
+        asyncio.run(b.grant_agent(60, user_ack=True, challenge_token=previous_token))
+    assert stale.value.status_code == 403
+    assert b.get_state().control_mode == ControlMode.USER
+    new_token = asyncio.run(b.issue_grant_challenge())["token"]
+    asyncio.run(b.grant_agent(60, user_ack=True, challenge_token=new_token))
+    assert b.get_state().control_mode == ControlMode.AGENT
+
+
+def test_active_agent_lease_is_revoked_across_session_handover():
+    b = _broker()
+    _grant(b)
+    assert b.get_state().lease_expiry is not None
+    asyncio.run(b.update_session("ic1-next-session", interactive=True))
+    state = b.get_state()
+    assert state.session_id == "ic1-next-session"
+    assert state.control_mode == ControlMode.USER
+    assert state.lease_expiry is None
+    assert asyncio.run(b.check_access()) is False
