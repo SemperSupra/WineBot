@@ -78,18 +78,25 @@ echo 'MVP_WORKLOAD stage=wine11_layered_ready'
 # belongs to separately persistent UID1000 user data.
 docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
   editor="$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)"
-  [ -n "$editor" ] && [ "$(id -u)" -eq 1000 ]
+  [ -n "$editor" ] && [ "$(id -u)" -eq 1000 ] ||
+    { echo "MVP_WORKLOAD_EDITOR_CAUSE=identity_failure"; exit 10; }
+  mkdir -p /userdata/ic1-npp-settings
   printf "ic1-before\n" > /userdata/ic1-editor.txt
   doc="$(winepath -w /userdata/ic1-editor.txt)"
-  nohup wine "$editor" "$doc" >/tmp/ic1-editor-local.log 2>&1 </dev/null &
+  settings="$(winepath -w /userdata/ic1-npp-settings)"
+  # Official Notepad++ -settingsDir isolates configuration from read-only
+  # application payload, which is intentionally never made writable.
+  nohup wine "$editor" "-settingsDir=$settings" "$doc"     >/tmp/ic1-editor-local.log 2>&1 </dev/null &
   found=""
   for i in $(seq 1 90); do
     found="$(xdotool search --onlyvisible --name "Notepad++" 2>/dev/null | head -1 || true)"
     [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
     sleep 1
   done
-  [[ "$found" =~ ^[0-9]{1,16}$ ]] || exit 11
-  xdotool windowactivate --sync "$found" >/dev/null 2>&1 || exit 12
+  [[ "$found" =~ ^[0-9]{1,16}$ ]] ||
+    { echo "MVP_WORKLOAD_EDITOR_CAUSE=window_absent"; exit 11; }
+  xdotool windowactivate --sync "$found" >/dev/null 2>&1 ||
+    { echo "MVP_WORKLOAD_EDITOR_CAUSE=activation_failed"; exit 12; }
   xdotool key --clearmodifiers ctrl+End
   xdotool type --clearmodifiers --delay 20 "IC1-APP-INPUT-PROOF"
   xdotool key --clearmodifiers ctrl+s
@@ -97,8 +104,17 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
     grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt && exit 0
     sleep 1
   done
+  echo "MVP_WORKLOAD_EDITOR_CAUSE=save_timeout"
   exit 13
-' >/dev/null 2>&1 || fail editor_gui_save
+' >"$RUNNER_TEMP/ic1-editor-gate.log" 2>&1 || {
+  # Never publish the captured program stdout/stderr. Only fixed categories.
+  cause="$(grep -Eo 'MVP_WORKLOAD_EDITOR_CAUSE=(identity_failure|window_absent|activation_failed|save_timeout)'     "$RUNNER_TEMP/ic1-editor-gate.log" | tail -1 || true)"
+  case "$cause" in
+    MVP_WORKLOAD_EDITOR_CAUSE=*) printf '%s\n' "$cause" ;;
+    *) echo 'MVP_WORKLOAD_EDITOR_CAUSE=unknown' ;;
+  esac
+  fail editor_gui_save
+}
 echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
 
 # OpenTTD 15.3 documented -g new game and -G deterministic seed. This
