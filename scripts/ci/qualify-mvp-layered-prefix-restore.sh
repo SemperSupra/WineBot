@@ -155,18 +155,24 @@ for role in "${roles[@]}"; do
 done
 echo 'MVP_LAYERED_RESTORE stage=quiesced_six_volume_archive'
 
-# Hash verification must reject the corrupted copy while keeping the original
-# archive and restored data intact, all inside a container-private volume.
+# Stream a one-byte-corrupted view of the REAL prefix archive instead of
+# copying the entire large Wine prefix into the already bounded archive
+# volume. The real restore path still verifies the ORIGINAL archive's hash
+# independently for each role before extraction. Do not relax any mismatch.
 docker run --rm --network none --read-only --user 1000:1000 \
   --cap-drop ALL --security-opt no-new-privileges --memory 128m \
-  --pids-limit 32 --entrypoint /bin/sh -v "$archive:/archive" "$image" -ec '
+  --pids-limit 32 --entrypoint /bin/sh -v "$archive:/archive:ro" "$image" -ec '
     cd /archive
-    cp prefix.tar tamper.tar
-    printf tamper >> tamper.tar
+    test -s prefix.tar
     original="$(cut -d " " -f1 prefix.sha256)"
-    if printf "%s  tamper.tar\n" "$original" | sha256sum -c - >/dev/null 2>&1; then exit 1; fi
-    rm -f tamper.tar
-  ' >/dev/null 2>&1 || fail corrupt_archive_accepted
+    test "${#original}" -eq 64
+    sha256sum -c prefix.sha256 >/dev/null
+    # tar starts with an ASCII filename, so this changes the first byte.
+    # Stream through sha256sum: constant scratch disk and bounded memory.
+    modified="$( { printf X; tail -c +2 prefix.tar; } | sha256sum | cut -d " " -f1)"
+    test "${#modified}" -eq 64
+    test "$modified" != "$original"
+  ' >/dev/null 2>&1 || fail corrupt_archive_negative_failed
 echo 'MVP_LAYERED_RESTORE stage=archive_tamper_rejected'
 
 for role in "${roles[@]}"; do
