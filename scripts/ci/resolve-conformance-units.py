@@ -4,10 +4,10 @@
 Do not generalize to production merges. Only a simultaneous append to the
 explicit unit-test manifest is resolvable here; all other conflicts fail closed.
 """
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 PATH = "scripts/ci/test.sh"
 TEST_LINE = re.compile(r"^  (tests/test_[a-z0-9_]+\.py)(?: \\)?$")
