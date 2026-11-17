@@ -35,4 +35,5 @@ pytest \
   tests/test_ci_vnext_evidence.py \
   tests/test_lifecycle_cancel_window.py \
   tests/test_health_system_memory.py \
-  tests/test_disposable_layer_contract.py
+  tests/test_disposable_layer_contract.py \
+  tests/test_mvp_control_safety.py

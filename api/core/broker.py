@@ -130,6 +130,19 @@ class InputBroker:
                     status_code=403,
                     detail="A valid one-time challenge token is required to grant control",
                 )
+            if self.state.user_intent == UserIntent.STOP_NOW:
+                raise HTTPException(
+                    status_code=403,
+                    detail="User emergency stop prohibits agent control",
+                )
+            if self.state.interactive and self.state.control_mode == ControlMode.AGENT:
+                expiry = self.state.lease_expiry
+                if expiry is None or now <= expiry:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Agent input lease is already held",
+                    )
+                self.revoke_agent("lease_expired")
             # One-time token semantics.
             self._grant_challenge_token = None
             self._grant_challenge_expiry = 0.0
@@ -152,7 +165,11 @@ class InputBroker:
                 )
             if self.state.user_intent == UserIntent.STOP_NOW:
                 raise HTTPException(status_code=403, detail="User requested STOP_NOW")
-            self.state.lease_expiry = time.time() + lease_seconds
+            now = time.time()
+            if self.state.lease_expiry is not None and now > self.state.lease_expiry:
+                self.revoke_agent("lease_expired")
+                raise HTTPException(status_code=403, detail="Agent lease expired")
+            self.state.lease_expiry = now + lease_seconds
 
     def revoke_agent(self, reason: str):
         # Sync version for internal calls
