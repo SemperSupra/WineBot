@@ -215,11 +215,13 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
   [ -n "$exe" ]
   cd "$(dirname "$exe")"
+  # Reconstruct the persistent config path inside this fresh shell before
+  # invoking the decoder; the pre-recreation shell variable is not inherited.
+  config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
   # Use the same console-enabled decoder after disposable recreation.
   timeout 35 wine "$exe" -d 0 -c "$config" \
     -q "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-reopen-local.log 2>&1
-  config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
   nohup wine "$exe" -c "$config" -v win32 -m null -s null -x \
     -g "$(winepath -w "$game_save")" \
     >/tmp/ic1-game-loaded-local.log 2>&1 </dev/null &
