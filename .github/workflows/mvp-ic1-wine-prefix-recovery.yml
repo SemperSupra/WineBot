@@ -1,0 +1,43 @@
+name: MVP IC1 Real Wine Prefix Restore RDTE
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mvp-ic1-wine-prefix-recovery.yml'
+      - 'scripts/ci/qualify-mvp-wine-prefix-recovery.sh'
+permissions:
+  contents: read
+concurrency:
+  group: ic1-real-prefix-recovery-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  real-wine-generated-prefix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate source, no credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Provision distribution Wine under disposable public runner
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 xvfb xauth
+          command -v wineboot
+          command -v wineserver
+      - name: Preflight script syntax and refusal bounds
+        run: |
+          bash -n scripts/ci/qualify-mvp-wine-prefix-recovery.sh
+          grep -q 'stage=real_wine_prefix_restored_and_queried' \
+            scripts/ci/qualify-mvp-wine-prefix-recovery.sh
+          grep -q 'sha256sum -c --status' \
+            scripts/ci/qualify-mvp-wine-prefix-recovery.sh
+          echo 'MVP_PREFIX_RECOVERY stage=source_guard_pass'
+      - name: Archive and restore actual quiesced synthetic Wine prefix
+        timeout-minutes: 14
+        run: bash scripts/ci/qualify-mvp-wine-prefix-recovery.sh
+      - name: Record only bounded result
+        if: success()
+        run: echo 'MVP_PREFIX_RECOVERY stage=qualified_distro_wine'
