@@ -196,47 +196,76 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
 }
 echo 'MVP_WORKLOAD stage=windows_game_save_validated'
 
+# Quiesce the real Wine server after checking the save. Unclean runtime
+# termination must not corrupt durable state or leave stale Wine processes.
+docker compose -f compose/layered.yml exec -T winebot-interactive wineserver -k \
+  >/dev/null 2>&1 || fail wine_quiesce
+echo 'MVP_WORKLOAD stage=quiesced_before_recreate'
 # Preserve immutable app and external user data across disposable process
 # recreation; do not delete or mount a real user prefix.
 docker compose -f compose/layered.yml up -d --force-recreate --no-build \
   winebot-interactive >/dev/null 2>&1 || fail recreate
 wait_health || fail recreate_health
-docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
-  grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt
-  test -s /apps/.winebot-app-content-sha256
-  test -n "$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
-  test -n "$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)"
-  test "$(id -u)" -eq 1000
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
+  grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=editor_data_missing"; exit 40; }
+  test -s /apps/.winebot-app-content-sha256 ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=app_integrity_missing"; exit 41; }
+  test -n "$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)" ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_executable_missing"; exit 42; }
+  test -n "$(find /apps/mvp-ic1/npp -type f -iname notepad++.exe -print -quit)" ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=editor_executable_missing"; exit 43; }
+  test "$(id -u)" -eq 1000 ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=wrong_uid"; exit 44; }
   game_save="$(find /home/winebot /wineprefix /userdata -type f \
     -iname ic1_winebot_mvp.sav -print -quit 2>/dev/null)"
-  [ -n "$game_save" ] && [ -s "$game_save" ]
+  [ -n "$game_save" ] && [ -s "$game_save" ] ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_save_missing"; exit 45; }
   digest="$(sha256sum "$game_save" | cut -d " " -f1)"
-  [ "$digest" = "$(cat /userdata/ic1-game-save-digest)" ]
+  [ "$digest" = "$(cat /userdata/ic1-game-save-digest)" ] ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_save_digest_changed"; exit 46; }
   exe="$(find /apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
-  [ -n "$exe" ]
   cd "$(dirname "$exe")"
-  # Reconstruct the persistent config path inside this fresh shell before
-  # invoking the decoder; the pre-recreation shell variable is not inherited.
   config="$(winepath -w /userdata/ic1-openttd/openttd.cfg)"
-  # Use the same console-enabled decoder after disposable recreation.
-  timeout 35 wine "$exe" -d 0 -c "$config" \
-    -q "$(winepath -w "$game_save")" \
-    >/tmp/ic1-game-reopen-local.log 2>&1
+  save_path="$(winepath -w "$game_save")"
+  # Actual OpenTTD Windows decoder acceptance, not a file-only false positive.
+  if ! timeout 35 wine "$exe" -d 0 -c "$config" -q "$save_path" \
+    >/tmp/ic1-game-reopen-local.log 2>&1; then
+    echo "MVP_WORKLOAD_REPLAY_CAUSE=decoder_failed"
+    exit 47
+  fi
+  echo "MVP_WORKLOAD_REPLAY_PASS=decoder"
   nohup wine "$exe" -c "$config" -v win32 -m null -s null -x \
-    -g "$(winepath -w "$game_save")" \
-    >/tmp/ic1-game-loaded-local.log 2>&1 </dev/null &
+    -g "$save_path" >/tmp/ic1-game-loaded-local.log 2>&1 </dev/null &
   pid=$!
   found=""
   for i in $(seq 1 80); do
     found="$(xdotool search --onlyvisible --name OpenTTD 2>/dev/null | head -1 || true)"
     [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
-    kill -0 "$pid" 2>/dev/null || exit 31
+    kill -0 "$pid" 2>/dev/null ||
+      { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_exited"; exit 48; }
     sleep 1
   done
-  [[ "$found" =~ ^[0-9]{1,16}$ ]] || exit 32
+  [[ "$found" =~ ^[0-9]{1,16}$ ]] ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_window_missing"; exit 49; }
   sleep 2
-  kill -0 "$pid" 2>/dev/null || exit 33
-' >/dev/null 2>&1 || fail workload_state_replay
+  kill -0 "$pid" 2>/dev/null ||
+    { echo "MVP_WORKLOAD_REPLAY_CAUSE=game_exited_after_window"; exit 50; }
+  echo "MVP_WORKLOAD_REPLAY_PASS=window"
+' >"$RUNNER_TEMP/ic1-replay-local.log" 2>&1 || {
+  # Never print subprocess stdout, saved files, display data or raw Wine logs.
+  cause="$(grep -Eo 'MVP_WORKLOAD_REPLAY_CAUSE=(editor_data_missing|app_integrity_missing|game_executable_missing|editor_executable_missing|wrong_uid|game_save_missing|game_save_digest_changed|decoder_failed|game_exited|game_window_missing|game_exited_after_window)' \
+    "$RUNNER_TEMP/ic1-replay-local.log" | tail -1 || true)"
+  case "$cause" in
+    MVP_WORKLOAD_REPLAY_CAUSE=*) printf '%s\n' "$cause" ;;
+    *) echo 'MVP_WORKLOAD_REPLAY_CAUSE=unknown' ;;
+  esac
+  fail workload_state_replay
+}
+grep -q 'MVP_WORKLOAD_REPLAY_PASS=decoder' "$RUNNER_TEMP/ic1-replay-local.log" ||
+  fail replay_decoder_receipt
+grep -q 'MVP_WORKLOAD_REPLAY_PASS=window' "$RUNNER_TEMP/ic1-replay-local.log" ||
+  fail replay_window_receipt
 echo 'MVP_WORKLOAD stage=editor_saved_state_replayed'
 echo 'MVP_WORKLOAD stage=game_save_reloaded'
 echo 'MVP_WORKLOAD stage=bounded_qualification_pass'
