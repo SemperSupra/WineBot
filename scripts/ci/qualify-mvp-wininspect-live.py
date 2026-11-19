@@ -14,6 +14,32 @@ def fail(stage: str) -> None:
     raise RuntimeError("IC1_OBSERVER_CAUSE=" + stage)
 
 
+def classify_daemon_startup() -> str:
+    """Reduce a local daemon log to a fixed, non-identifying public cause."""
+    try:
+        # Never include log content or paths in a public CI result.
+        raw = wininspect._log_path()
+        with open(raw, "rb") as handle:
+            data = handle.read(131072).decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        return "daemon_log_unavailable"
+    if "TCP Server: Winsock not initialized" in data:
+        return "tcp_winsock_unavailable"
+    if "TCP Server: No sockets could be bound" in data:
+        return "tcp_no_sockets"
+    if "TCP Server: bind failed" in data or "TCP Server: listen failed" in data:
+        return "tcp_bind_or_listen_failed"
+    if "TCP Server listening on [" in data:
+        return "tcp_listener_reported_unreachable"
+    if "Starting TCP Server" in data:
+        return "tcp_start_requested_no_listener"
+    if "WinInspect Daemon " in data:
+        return "daemon_initialized_no_tcp"
+    if not data:
+        return "daemon_no_output"
+    return "daemon_log_preinit_only"
+
+
 def main() -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_EVENT_NAME") != "pull_request" or os.environ.get("WINEBOT_STATE_MODEL") != "layered":
         fail("unqualified_venue")
@@ -31,7 +57,7 @@ def main() -> None:
         if "exit_code" in state:
             fail("daemon_exited")
         if state.get("started"):
-            fail("daemon_tcp_timeout")
+            fail(classify_daemon_startup())
         fail("daemon_unavailable")
     try:
         capabilities = wininspect.capabilities()
