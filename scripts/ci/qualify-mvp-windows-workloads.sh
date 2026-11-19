@@ -123,7 +123,9 @@ docker compose -f compose/layered.yml exec -T \
   -e GITHUB_ACTIONS=true -e GITHUB_EVENT_NAME=pull_request \
   winebot-interactive python3 /scripts/ci/qualify-mvp-broker-real-keyboard.py \
   >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || fail broker_real_keyboard
-grep -q '^IC1_BROKER=real_wine_keyboard_and_stop_pass
+grep -Fq 'IC1_BROKER=real_wine_keyboard_and_stop_pass' "$RUNNER_TEMP/ic1-broker-local.log" || fail broker_receipt_missing
+echo 'MVP_WORKLOAD stage=broker_real_keyboard_and_stop'
+
 # OpenTTD 15.3 source documents -g new game and -G deterministic
 # seed. Its in-game tilde/backquote console offers "save <filename>", and
 # -q <game> independently validates that OpenTTD can decode a saved game.
