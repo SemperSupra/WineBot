@@ -172,7 +172,11 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
         log_file = open(_log_path(), "ab")
         try:
             proc = subprocess.Popen(
-                ["wine", str(daemon_exe())],
+                # WinInspect tray mode can exit under headless Wine before
+                # its background TCP listener becomes available. The WineBot
+                # adapter is a service endpoint, so require the daemon's
+                # upstream-supported blocking/headless TCP mode explicitly.
+                ["wine", str(daemon_exe()), "--headless"],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
