@@ -90,6 +90,11 @@ jobs:
         working-directory: layered
         run: |
           bash -n scripts/ci/qualify-mvp-windows-workloads.sh
+          # Reject accidentally appended/duplicated workload segments before
+          # spending minutes rebuilding the pinned Wine and Windows fixtures.
+          test "$(grep -Fc "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'" scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
+          test "$(grep -Fc '# OpenTTD 15.3 source documents' scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
+          test "$(tail -n 1 scripts/ci/qualify-mvp-windows-workloads.sh)" = "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'"
           python3 -m py_compile scripts/ci/qualify-mvp-broker-real-keyboard.py
           test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
           echo 'MVP_WORKLOAD stage=harness_syntax_pass'
