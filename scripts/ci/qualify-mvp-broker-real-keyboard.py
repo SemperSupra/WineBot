@@ -78,48 +78,50 @@ def main() -> None:
         asyncio.run(broker.set_user_intent(UserIntent.WAIT))
         asyncio.run(broker.update_session("ic1-broker-live", interactive=True))
 
-        with TestClient(app) as client:
-            def key(keys: str):
-                return client.post(
-                    "/input/key",
-                    json={"keys": keys, "window_id": window, "backend": "xdotool"},
-                    headers=HEADER,
-                )
-
-            if key("z").status_code != 423:
-                fail("unguarded_input")
-            challenge = client.post(
-                "/sessions/ic1-broker-live/control/challenge", headers=HEADER
-            )
-            if challenge.status_code != 200:
-                fail("challenge_denied")
-            grant = client.post(
-                "/sessions/ic1-broker-live/control/grant",
+        # Use the same in-process route harness as the proven HTTP unit tests.
+        # Entering TestClient lifespan would mutate unrelated real service state.
+        client = TestClient(app)
+        def key(keys: str):
+            return client.post(
+                "/input/key",
+                json={"keys": keys, "window_id": window, "backend": "xdotool"},
                 headers=HEADER,
-                json={
-                    "lease_seconds": 90,
-                    "user_ack": True,
-                    "challenge_token": challenge.json()["token"],
-                },
             )
-            if grant.status_code != 200:
-                fail("grant_denied")
-            for chord in ("ctrl+End", "z", "ctrl+s"):
-                if key(chord).status_code != 200:
-                    fail("real_key_dispatch")
-            deadline = time.monotonic() + 15
-            while time.monotonic() < deadline:
-                if "IC1-APP-INPUT-PROOFz" in PROOF.read_text():
-                    break
-                time.sleep(0.25)
-            else:
-                fail("real_wine_save_postcondition")
-            stopped = client.post(
-                "/sessions/ic1-broker-live/user_intent",
-                headers=HEADER, json={"intent": "STOP_NOW"},
-            )
-            if stopped.status_code != 200 or key("z").status_code != 423:
-                fail("emergency_stop_not_enforced")
+
+        if key("z").status_code != 423:
+            fail("unguarded_input")
+        challenge = client.post(
+            "/sessions/ic1-broker-live/control/challenge", headers=HEADER
+        )
+        if challenge.status_code != 200:
+            fail("challenge_denied")
+        grant = client.post(
+            "/sessions/ic1-broker-live/control/grant",
+            headers=HEADER,
+            json={
+                "lease_seconds": 90,
+                "user_ack": True,
+                "challenge_token": challenge.json()["token"],
+            },
+        )
+        if grant.status_code != 200:
+            fail("grant_denied")
+        for chord in ("ctrl+End", "z", "ctrl+s"):
+            if key(chord).status_code != 200:
+                fail("real_key_dispatch")
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if "IC1-APP-INPUT-PROOFz" in PROOF.read_text():
+                break
+            time.sleep(0.25)
+        else:
+            fail("real_wine_save_postcondition")
+        stopped = client.post(
+            "/sessions/ic1-broker-live/user_intent",
+            headers=HEADER, json={"intent": "STOP_NOW"},
+        )
+        if stopped.status_code != 200 or key("z").status_code != 423:
+            fail("emergency_stop_not_enforced")
     print("IC1_BROKER=real_wine_keyboard_and_stop_pass")
 
 
