@@ -390,10 +390,10 @@ async def click_at(data: ClickModel):
     win_title = data.window_title or "unknown"
 
     if not target_win_id:
-        try:
-            # Discovery itself moves the pointer; refuse after a revoked lease.
+        # Discovery itself moves the pointer; do not swallow a policy denial.
         if not await broker.check_access():
             raise HTTPException(status_code=423, detail="Agent control denied by policy")
+        try:
             await run_async_command(["xdotool", "mousemove", str(data.x), str(data.y)])
             win_res = await run_async_command(["xdotool", "getmousereturnwindow"])
             if win_res["ok"]:
