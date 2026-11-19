@@ -8,6 +8,9 @@ on:
       - '.github/workflows/mvp-ic1-windows-workloads.yml'
       - 'scripts/ci/qualify-mvp-windows-workloads.sh'
       - 'scripts/ci/qualify-mvp-broker-real-keyboard.py'
+      - 'tests/test_wininspect_daemon_launch.py'
+      - 'api/core/wininspect.py'
+      - 'scripts/ci/qualify-mvp-wininspect-live.py'
 permissions:
   contents: read
 concurrency:
@@ -90,6 +93,7 @@ jobs:
         working-directory: layered
         run: |
           bash -n scripts/ci/qualify-mvp-windows-workloads.sh
+          python3 -m py_compile scripts/ci/qualify-mvp-wininspect-live.py
           # Reject accidentally appended/duplicated workload segments before
           # spending minutes rebuilding the pinned Wine and Windows fixtures.
           test "$(grep -Fc "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'" scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
