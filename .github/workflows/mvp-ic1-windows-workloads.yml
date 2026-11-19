@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/mvp-ic1-windows-workloads.yml'
       - 'scripts/ci/qualify-mvp-windows-workloads.sh'
+      - 'scripts/ci/qualify-mvp-broker-real-keyboard.py'
 permissions:
   contents: read
 concurrency:
