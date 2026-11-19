@@ -123,7 +123,7 @@ docker compose -f compose/layered.yml exec -T \
   -e PYTHONPATH=/ \
   winebot-interactive python3 /scripts/ci/qualify-mvp-wininspect-live.py \
   >"$RUNNER_TEMP/ic1-observer-local.log" 2>&1 || {
-    cause="$(grep -Eo 'IC1_OBSERVER_CAUSE=(unqualified_venue|binary_missing|daemon_unavailable|capabilities_missing|capabilities_unavailable|observer_rpc_error|window_info_rpc_error|real_window_not_observed|daemon_exception|daemon_exited|daemon_tcp_timeout|unexpected_harness_exception)' "$RUNNER_TEMP/ic1-observer-local.log" | tail -1 || true)"
+    cause="$(grep -Eo 'IC1_OBSERVER_CAUSE=(unqualified_venue|binary_missing|daemon_unavailable|capabilities_missing|capabilities_unavailable|observer_rpc_error|window_info_rpc_error|real_window_not_observed|daemon_exception|daemon_exited|daemon_tcp_timeout|daemon_log_unavailable|tcp_winsock_unavailable|tcp_no_sockets|tcp_bind_or_listen_failed|tcp_listener_reported_unreachable|tcp_start_requested_no_listener|daemon_initialized_no_tcp|daemon_no_output|daemon_log_preinit_only|unexpected_harness_exception)' "$RUNNER_TEMP/ic1-observer-local.log" | tail -1 || true)"
     case "$cause" in
       IC1_OBSERVER_CAUSE=*) printf '%s\n' "$cause" ;;
       *) echo 'IC1_OBSERVER_CAUSE=unclassified' ;;
