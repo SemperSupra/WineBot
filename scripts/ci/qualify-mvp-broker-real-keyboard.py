@@ -63,6 +63,10 @@ def main() -> None:
         }))
         # Only session metadata and trace persistence are test-isolated.
         # Input execution remains the actual API implementation and xdotool.
+        # Middleware and lifespan must see the same synthetic session ID as
+        # the control router; otherwise they can silently rebind the broker
+        # to an unrelated active recorder session on every API request.
+        stack.enter_context(patch("api.server.read_session_dir", return_value=SESSION))
         stack.enter_context(patch("api.routers.control.read_session_dir", return_value=SESSION))
         stack.enter_context(patch("api.routers.input._require_active_session", return_value=SESSION))
         stack.enter_context(patch("api.routers.input.append_input_event"))
