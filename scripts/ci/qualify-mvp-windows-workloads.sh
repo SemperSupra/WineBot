@@ -116,6 +116,24 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   fail editor_gui_save
 }
 echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
+# Exercise real FastAPI broker policy and real X11→Wine keyboard dispatch.
+# The Python harness isolates ONLY session metadata/evidence writers, never
+# _send_keys or the X11 command. Do not publish private Wine/desktop traces.
+docker compose -f compose/layered.yml exec -T \
+  -e GITHUB_ACTIONS=true -e GITHUB_EVENT_NAME=pull_request \
+  -e PYTHONPATH=/ \
+  winebot-interactive python3 /scripts/ci/qualify-mvp-broker-real-keyboard.py \
+  >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || {
+    # Only fixed allowlisted stages leave this disposable runner.
+    cause="$(grep -Eo 'IC1_BROKER_CAUSE=(unqualified_venue|missing_real_editor_baseline|real_window_missing|real_window_focus|unguarded_input|challenge_denied|grant_denied|real_key_dispatch|real_wine_save_postcondition|emergency_stop_not_enforced|unexpected_harness_exception)' "$RUNNER_TEMP/ic1-broker-local.log" | tail -1 || true)"
+    case "$cause" in
+      IC1_BROKER_CAUSE=*) printf '%s\n' "$cause" ;;
+      *) echo 'IC1_BROKER_CAUSE=unclassified' ;;
+    esac
+    fail broker_real_keyboard
+  }
+grep -Fq 'IC1_BROKER=real_wine_keyboard_and_stop_pass' "$RUNNER_TEMP/ic1-broker-local.log" || fail broker_receipt_missing
+echo 'MVP_WORKLOAD stage=broker_real_keyboard_and_stop'
 
 # OpenTTD 15.3 source documents -g new game and -G deterministic
 # seed. Its in-game tilde/backquote console offers "save <filename>", and
