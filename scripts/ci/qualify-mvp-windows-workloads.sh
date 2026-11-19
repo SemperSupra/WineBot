@@ -122,7 +122,15 @@ echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
 docker compose -f compose/layered.yml exec -T \
   -e GITHUB_ACTIONS=true -e GITHUB_EVENT_NAME=pull_request \
   winebot-interactive python3 /scripts/ci/qualify-mvp-broker-real-keyboard.py \
-  >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || fail broker_real_keyboard
+  >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || {
+    # Only fixed allowlisted stages leave this disposable runner.
+    cause="$(grep -Eo 'IC1_BROKER_CAUSE=(unqualified_venue|missing_real_editor_baseline|real_window_missing|real_window_focus|unguarded_input|challenge_denied|grant_denied|real_key_dispatch|real_wine_save_postcondition|emergency_stop_not_enforced)' "$RUNNER_TEMP/ic1-broker-local.log" | tail -1 || true)"
+    case "$cause" in
+      IC1_BROKER_CAUSE=*) printf '%s\n' "$cause" ;;
+      *) echo 'IC1_BROKER_CAUSE=unclassified' ;;
+    esac
+    fail broker_real_keyboard
+  }
 grep -Fq 'IC1_BROKER=real_wine_keyboard_and_stop_pass' "$RUNNER_TEMP/ic1-broker-local.log" || fail broker_receipt_missing
 echo 'MVP_WORKLOAD stage=broker_real_keyboard_and_stop'
 
