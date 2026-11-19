@@ -38,4 +38,5 @@ pytest \
   tests/test_disposable_layer_contract.py \
   tests/test_mvp_control_safety.py \
   tests/test_mvp_control_api.py \
-  tests/test_mvp_mouse_lease.py
+  tests/test_mvp_mouse_lease.py \
+  tests/test_mvp_inflight_cancel.py

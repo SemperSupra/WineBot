@@ -1,6 +1,8 @@
+import asyncio
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 
 from fastapi import HTTPException
 
@@ -17,6 +19,9 @@ from api.utils.files import get_instance_control_mode
 class InputBroker:
     def __init__(self):
         self._lock = threading.RLock()
+        # A revocation can preempt waiting asynchronous input commands.
+        # This registry never owns or cancels unrelated lifecycle tasks.
+        self._active_async_input = set()
         self.state = ControlState(
             session_id="unknown",
             interactive=False,
@@ -180,11 +185,43 @@ class InputBroker:
                 raise HTTPException(status_code=403, detail="Agent lease expired")
             self.state.lease_expiry = now + lease_seconds
 
+    @contextmanager
+    def track_async_input(self):
+        """Scope one cancellable asynchronous input dispatch to broker ownership.
+
+        Register before the final lease check; a concurrent STOP_NOW must not
+        miss a command being prepared or awaiting a subprocess.
+        """
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("async input tracking requires a running task")
+        loop = asyncio.get_running_loop()
+        entry = (loop, task)
+        with self._lock:
+            self._active_async_input.add(entry)
+            revoked = (
+                self.state.user_intent == UserIntent.STOP_NOW
+                or (self.state.interactive and self.state.control_mode != ControlMode.AGENT)
+            )
+        if revoked:
+            loop.call_soon(task.cancel)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active_async_input.discard(entry)
+
     def revoke_agent(self, reason: str):
-        # Sync version for internal calls
-        self.state.control_mode = ControlMode.USER
-        self.state.lease_expiry = None
-        self.state.agent_status = AgentStatus.STOPPING
+        # A revoked lease gates subsequent dispatch and interrupts registered
+        # cancellable subprocess waits. Already-delivered input cannot be undone.
+        with self._lock:
+            self.state.control_mode = ControlMode.USER
+            self.state.lease_expiry = None
+            self.state.agent_status = AgentStatus.STOPPING
+            active = tuple(self._active_async_input)
+        for loop, task in active:
+            if not task.done() and not loop.is_closed():
+                loop.call_soon_threadsafe(task.cancel)
         print(f"Broker: Agent revoked ({reason})")
 
     async def report_user_activity(self):

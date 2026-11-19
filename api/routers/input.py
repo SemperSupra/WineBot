@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import os
@@ -7,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
@@ -443,7 +445,13 @@ async def click_at(data: ClickModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
-    result = await run_async_command(cmd)
+    try:
+        with broker.track_async_input():
+            if not await broker.check_access():
+                raise HTTPException(status_code=423, detail="Agent control denied by policy")
+            result = await run_async_command(cmd)
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=423, detail="Agent input interrupted by policy") from None
     if not result.get("ok"):
         emit_operation_timing(
             session_dir,
@@ -563,14 +571,23 @@ async def key_press(data: KeyModel):
     if not await broker.check_access():
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
-    result = await _send_keys(
-        keys=data.keys,
-        window_id=target_win_id,
-        window_title=target_win_title,
-        backend_preference=backend,
-        session_dir=session_dir,
-        timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,
-    )
+    # Only the explicit asynchronous xdotool backend is preemptible here.
+    # Synchronous AHK and auto-backend selection remain separate acceptance
+    # work; never claim complete in-flight command cancellation from this gate.
+    try:
+        with broker.track_async_input() if backend == "xdotool" else nullcontext():
+            if not await broker.check_access():
+                raise HTTPException(status_code=423, detail="Agent control denied by policy")
+            result = await _send_keys(
+                keys=data.keys,
+                window_id=target_win_id,
+                window_title=target_win_title,
+                backend_preference=backend,
+                session_dir=session_dir,
+                timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,
+            )
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=423, detail="Agent input interrupted by policy") from None
 
     if not result.get("ok"):
         emit_operation_timing(
