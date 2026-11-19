@@ -121,6 +121,7 @@ echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
 # _send_keys or the X11 command. Do not publish private Wine/desktop traces.
 docker compose -f compose/layered.yml exec -T \
   -e GITHUB_ACTIONS=true -e GITHUB_EVENT_NAME=pull_request \
+  -e PYTHONPATH=/ \
   winebot-interactive python3 /scripts/ci/qualify-mvp-broker-real-keyboard.py \
   >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || {
     # Only fixed allowlisted stages leave this disposable runner.
