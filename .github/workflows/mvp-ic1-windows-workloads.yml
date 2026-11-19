@@ -90,6 +90,7 @@ jobs:
         working-directory: layered
         run: |
           bash -n scripts/ci/qualify-mvp-windows-workloads.sh
+          python3 -m py_compile scripts/ci/qualify-mvp-broker-real-keyboard.py
           test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
           echo 'MVP_WORKLOAD stage=harness_syntax_pass'
       - name: Run disposable app and game within exact layered Wine11
