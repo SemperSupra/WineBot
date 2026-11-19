@@ -124,7 +124,7 @@ docker compose -f compose/layered.yml exec -T \
   winebot-interactive python3 /scripts/ci/qualify-mvp-broker-real-keyboard.py \
   >"$RUNNER_TEMP/ic1-broker-local.log" 2>&1 || {
     # Only fixed allowlisted stages leave this disposable runner.
-    cause="$(grep -Eo 'IC1_BROKER_CAUSE=(unqualified_venue|missing_real_editor_baseline|real_window_missing|real_window_focus|unguarded_input|challenge_denied|grant_denied|real_key_dispatch|real_wine_save_postcondition|emergency_stop_not_enforced)' "$RUNNER_TEMP/ic1-broker-local.log" | tail -1 || true)"
+    cause="$(grep -Eo 'IC1_BROKER_CAUSE=(unqualified_venue|missing_real_editor_baseline|real_window_missing|real_window_focus|unguarded_input|challenge_denied|grant_denied|real_key_dispatch|real_wine_save_postcondition|emergency_stop_not_enforced|unexpected_harness_exception)' "$RUNNER_TEMP/ic1-broker-local.log" | tail -1 || true)"
     case "$cause" in
       IC1_BROKER_CAUSE=*) printf '%s\n' "$cause" ;;
       *) echo 'IC1_BROKER_CAUSE=unclassified' ;;
