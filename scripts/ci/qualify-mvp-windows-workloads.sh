@@ -116,6 +116,25 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo
   fail editor_gui_save
 }
 echo 'MVP_WORKLOAD stage=real_windows_editor_gui_save'
+# Require Windows-native read-only observation of this actual Wine GUI.
+# Only allowlisted stage categories leave the disposable runner.
+docker compose -f compose/layered.yml exec -T \
+  -e GITHUB_ACTIONS=true -e GITHUB_EVENT_NAME=pull_request \
+  -e PYTHONPATH=/ \
+  winebot-interactive python3 /scripts/ci/qualify-mvp-wininspect-live.py \
+  >"$RUNNER_TEMP/ic1-observer-local.log" 2>&1 || {
+    cause="$(grep -Eo 'IC1_OBSERVER_CAUSE=(unqualified_venue|binary_missing|daemon_unavailable|capabilities_missing|capabilities_unavailable|observer_rpc_error|window_info_rpc_error|real_window_not_observed|daemon_exception|daemon_exited|daemon_tcp_timeout|unexpected_harness_exception)' "$RUNNER_TEMP/ic1-observer-local.log" | tail -1 || true)"
+    case "$cause" in
+      IC1_OBSERVER_CAUSE=*) printf '%s\n' "$cause" ;;
+      *) echo 'IC1_OBSERVER_CAUSE=unclassified' ;;
+    esac
+    fail wininspect_live_observation
+  }
+grep -Fq 'IC1_OBSERVER=real_notepad_hwnd_readonly_pass' \
+  "$RUNNER_TEMP/ic1-observer-local.log" || fail observer_receipt_missing
+echo 'MVP_WORKLOAD stage=wininspect_real_notepad_observed'
+
+
 # Exercise real FastAPI broker policy and real X11→Wine keyboard dispatch.
 # The Python harness isolates ONLY session metadata/evidence writers, never
 # _send_keys or the X11 command. Do not publish private Wine/desktop traces.
