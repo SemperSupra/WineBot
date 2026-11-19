@@ -32,6 +32,32 @@ if [ "$WINEBOT_SESSION_MODE" != "persistent" ] && [ "$WINEBOT_SESSION_MODE" != "
     exit 2
 fi
 
+# Opt-in layered deployments must never depend on a mutable container root.
+# The one-shot state preparer has already made external volumes writable by
+# uid 1000; application assets are mounted read-only.
+if [ "${WINEBOT_STATE_MODEL:-legacy}" = "layered" ]; then
+    if [ "$(id -u)" != "1000" ] || [ "${WINEBOT_CONFIG_ROOT:-}" != "/config" ]; then
+        echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=identity_or_config_invalid' >&2
+        exit 2
+    fi
+    if [ -n "${WINEBOT_LOADOUT:-}" ] || [ -n "${WINE_WINETRICKS:-}" ] ||
+       [ "${WINE_INSTALL_MS_FONTS:-0}" != "0" ]; then
+        echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=runtime_install_forbidden' >&2
+        exit 2
+    fi
+    for persistent in /wineprefix /home/winebot /config /userdata /artifacts /winebot-shared; do
+        if [ ! -d "$persistent" ] || [ -L "$persistent" ] || [ ! -w "$persistent" ]; then
+            echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=persistent_mount_unavailable' >&2
+            exit 2
+        fi
+    done
+    if [ ! -d /apps ] || [ -w /apps ] ||
+       [ ! -s /apps/.winebot-app-content-sha256 ]; then
+        echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=app_mount_invalid' >&2
+        exit 2
+    fi
+fi
+
 # 1. Root Level Setup (User creation, permissions)
 source /scripts/init/00-setup-user.sh
 
@@ -84,8 +110,13 @@ fi
 echo $$ > /tmp/entrypoint.user.pid
 
 # Load runtime configuration overrides
-WINEBOT_CONFIG_FILE="/wineprefix/winebot.env"
-WINEBOT_INSTANCE_CONFIG="/wineprefix/winebot.${HOSTNAME}.env"
+if [ "${WINEBOT_STATE_MODEL:-legacy}" = "layered" ]; then
+    WINEBOT_CONFIG_FILE="/config/winebot.env"
+    WINEBOT_INSTANCE_CONFIG="/config/winebot.instance.env"
+else
+    WINEBOT_CONFIG_FILE="/wineprefix/winebot.env"
+    WINEBOT_INSTANCE_CONFIG="/wineprefix/winebot.${HOSTNAME}.env"
+fi
 
 if [ -f "$WINEBOT_CONFIG_FILE" ]; then
     chmod 600 "$WINEBOT_CONFIG_FILE"

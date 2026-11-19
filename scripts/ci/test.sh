@@ -29,4 +29,5 @@ pytest \
   tests/test_ci_unit_isolation.py \
   tests/test_winepath_startup_retry.py \
   tests/test_wininspect_error_redaction.py \
-  tests/test_health_system_memory.py
+  tests/test_health_system_memory.py \
+  tests/test_disposable_layer_contract.py

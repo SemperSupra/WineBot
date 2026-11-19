@@ -1,0 +1,48 @@
+name: Disposable Layer Contract Qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/disposable-layer-qualification.yml'
+      - 'compose/layered.yml'
+      - 'docker/app-bundle.Dockerfile'
+      - 'docker/Dockerfile'
+      - 'docker/entrypoint.sh'
+      - 'scripts/layers/**'
+      - 'scripts/ci/qualify-disposable-layers.sh'
+      - 'scripts/ci/test.sh'
+      - 'tests/test_disposable_layer_contract.py'
+      - 'docs/disposable-layer-architecture.md'
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+concurrency:
+  group: disposable-layer-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact untrusted public PR source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify offline source and shell contracts
+        run: |
+          python3 -m unittest discover -s tests -p 'test_disposable_layer_contract.py' -v
+          bash -n scripts/layers/preflight.sh
+          bash -n scripts/ci/qualify-disposable-layers.sh
+          sh -n scripts/layers/prepare-state.sh
+          sh -n scripts/layers/seed-apps.sh
+          bash -n docker/entrypoint.sh
+      - name: Qualify disposable images, replay and external state
+        run: bash scripts/ci/qualify-disposable-layers.sh
+      - name: Report only bounded overall result
+        if: success()
+        run: echo 'LAYER_CONTRACT_DIAGNOSTIC stage=source_and_replay_passed'

@@ -1,0 +1,89 @@
+"""Zero-secret regression tests for public composite startup classification."""
+import importlib.util
+import io
+import unittest
+from pathlib import Path
+
+MODULE = Path(__file__).resolve().parents[1] / "scripts/ci/classify-layer-init-logs.py"
+spec = importlib.util.spec_from_file_location("layer_init", MODULE)
+layer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(layer)
+
+
+class LayerDiagnosticsTest(unittest.TestCase):
+    def test_specific_allowlisted_initialization_failures(self):
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("APP_LAYER_DIAGNOSTIC stage=copy_failed\n")),
+            "WINE11_LAYER_HIL service=app-seed cause=copy_failed",
+        )
+        self.assertEqual(
+            layer.classify("state-init", io.StringIO("STATE_LAYER_DIAGNOSTIC stage=ownership_failed\n")),
+            "WINE11_LAYER_HIL service=state-init cause=ownership_failed",
+        )
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("APP_LAYER_DIAGNOSTIC stage=permissions_failed\n")),
+            "WINE11_LAYER_HIL service=app-seed cause=permissions_failed",
+        )
+
+    def test_does_not_reflect_raw_or_malformed_sensitive_output(self):
+        secret = "private-token-should-not-appear"
+        text = (
+            f"STATE_LAYER_DIAGNOSTIC stage=ownership_failed credential={secret}\n"
+            f"{secret} /home/private/mount\n"
+            "APP_LAYER_DIAGNOSTIC stage=copy_failed\n"
+            "STATE_LAYER_DIAGNOSTIC stage=invalid_identity extra\n"
+        )
+        output = layer.classify("state-init", io.StringIO(text))
+        self.assertEqual(output, "WINE11_LAYER_HIL service=state-init cause=unclassified_nonempty")
+        self.assertNotIn(secret, output)
+        self.assertNotIn("/home", output)
+
+    def test_foreign_service_marker_is_ignored(self):
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("STATE_LAYER_DIAGNOSTIC stage=ownership_failed\n")),
+            "WINE11_LAYER_HIL service=app-seed cause=unclassified_nonempty",
+        )
+
+    def test_hil_classifies_stderr_without_publishing_raw_logs(self):
+        source = (MODULE.parents[2] / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('docker logs --tail 80 "$cid" 2>&1 |', source)
+        self.assertNotIn('docker logs --tail 80 "$cid" 2>/dev/null |', source)
+        self.assertIn('classify-layer-init-logs.py "$service"', source)
+
+    def test_empty_logs_classified_without_raw_output(self):
+        self.assertEqual(
+            layer.classify("app-seed", io.StringIO("")),
+            "WINE11_LAYER_HIL service=app-seed cause=unclassified_empty",
+        )
+
+    def test_composite_health_failure_remains_fail_closed_and_private(self):
+        source = (MODULE.parents[2] / "scripts/ci/qualify-wine11-layered.sh").read_text(
+            encoding="utf-8"
+        )
+        for expected in (
+            "classify_health_failure()",
+            "if ! wait_health; then",
+            "fail health_initial",
+            "WINE11_LAYER_HEALTH state=%s health=%s",
+            "WINE11_LAYER_HEALTH token_file=present",
+            "WINE11_LAYER_HEALTH token_file=missing",
+            "WINE11_LAYER_HEALTH registry=present",
+            "WINE11_LAYER_HEALTH authorized_api=pass",
+            "WINE11_LAYER_HEALTH authorized_api=fail",
+            "python3 scripts/ci/classify-startup-logs.py",
+        ):
+            self.assertIn(expected, source)
+        self.assertIn('docker logs --tail 200 "$cid" 2>&1 |', source)
+        self.assertIn('http://127.0.0.1:8000/health >/dev/null 2>&1', source)
+        self.assertNotIn("docker logs --tail 200 \"$cid\" >&2", source)
+        self.assertNotIn("set -x", source)
+
+    def test_invalid_service_refused(self):
+        with self.assertRaises(ValueError):
+            layer.classify("winebot-interactive", io.StringIO("APP_LAYER_DIAGNOSTIC stage=copy_failed\n"))
+
+
+if __name__ == "__main__":
+    unittest.main()

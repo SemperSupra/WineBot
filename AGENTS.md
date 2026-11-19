@@ -2,6 +2,17 @@
 
 This document is a navigation aid for autonomous agents working on the WineBot codebase.
 
+## Disposable three-layer deployment (opt-in)
+
+The authoritative architecture target separates a replaceable Wine runtime
+image, immutable/versioned application pack seeded by a short-lived container,
+and external persistent per-user state volumes. Start with
+[docs/disposable-layer-architecture.md](docs/disposable-layer-architecture.md)
+and `compose/layered.yml`. Do not run legacy per-boot loadouts or delete
+volumes during housekeeping. Public GHA qualification owns synthetic
+disposable-layer replay; the actual Wine 11 layered runtime is not yet
+release qualified. Existing main legacy behavior is maintained.
+
 ## 1. System Architecture
 
 WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 display stack, controlled via a Python FastAPI.

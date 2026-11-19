@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+# Disposable composite HIL for pinned Wine11 R018 source and layer branch.
+# This intentionally does not claim that either PR head alone is release-ready.
+set -euo pipefail
+fail() {
+  printf 'WINE11_LAYER_HIL stage=%s\n' "$1" >&2
+  exit 1
+}
+[ "${GITHUB_ACTIONS:-}" = true ] && [ "${GITHUB_EVENT_NAME:-}" = pull_request ] ||
+  fail unqualified_venue
+[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] &&
+  [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || fail invalid_runner
+[ -f ../wine11-candidate/docker/base.Dockerfile ] &&
+  [ -f ../wine11-candidate/scripts/init/20-setup-wine.sh ] ||
+  fail source_unavailable
+
+prefix="winebot-hil-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+export WINEBOT_APP_VOLUME="$prefix-apps"
+export WINEBOT_PREFIX_VOLUME="$prefix-prefix"
+export WINEBOT_HOME_VOLUME="$prefix-home"
+export WINEBOT_CONFIG_VOLUME="$prefix-config"
+export WINEBOT_USERDATA_VOLUME="$prefix-userdata"
+export WINEBOT_ARTIFACT_VOLUME="$prefix-artifacts"
+export WINEBOT_SHARED_VOLUME="$prefix-shared"
+export WINEBOT_API_TOKEN=synthetic-hil-local-only-token
+export WINEBOT_VNC_PASSWORD=synthetic-hil-local-only-password
+volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
+  "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
+  "$WINEBOT_SHARED_VOLUME")
+cleanup() {
+  docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
+  for volume in "${volumes[@]}"; do
+    docker volume rm "$volume" >/dev/null 2>&1 || true
+  done
+  docker image rm winebot:layered-hil winebot-base:layered-hil winebot-apps:layered-hil >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+for volume in "${volumes[@]}"; do
+  docker volume create "$volume" >/dev/null 2>&1 || fail create_synthetic_volume
+done
+
+# The base and Wine init come exclusively from qualified Wine11 exact SHA.
+# This is a declared composite experiment, never source-exact promotion.
+docker build --file ../wine11-candidate/docker/base.Dockerfile --target final \
+  --tag winebot-base:layered-hil ../wine11-candidate >/dev/null 2>&1 ||
+  fail wine11_base_build
+cp ../wine11-candidate/scripts/init/20-setup-wine.sh scripts/init/20-setup-wine.sh
+docker build --file docker/Dockerfile --target intent-rel \
+  --build-arg BASE_IMAGE=winebot-base:layered-hil \
+  --build-arg BUILD_INTENT=rel \
+  --tag winebot:layered-hil . >/dev/null 2>&1 || fail layered_runtime_build
+docker build --file docker/app-bundle.Dockerfile \
+  --tag winebot-apps:layered-hil . >/dev/null 2>&1 || fail app_pack_build
+
+# Use immutable local OCI content IDs, not floating tags, in this HIL only.
+export WINEBOT_RUNTIME_IMAGE="$(docker image inspect --format '{{.Id}}' winebot:layered-hil)"
+export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect --format '{{.Id}}' winebot-apps:layered-hil)"
+[[ "$WINEBOT_RUNTIME_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] &&
+  [[ "$WINEBOT_APP_BUNDLE_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+  fail image_identity_invalid
+docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
+  fail compose_invalid
+# Qualify the OCI image's actual script contract without mutating external volumes.
+# A missing script or invalid local image reference must fail before Compose.
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --entrypoint /bin/sh \
+  "$WINEBOT_APP_BUNDLE_IMAGE" -ec '
+    test -r /usr/local/bin/winebot-seed-apps
+    test -r /usr/local/bin/winebot-prepare-state
+    test -s /opt/winebot/app-manifest.sha256
+  ' >/dev/null 2>&1 || fail app_bundle_script_contract
+# Project container state and fixed-domain diagnostics only. Never print raw
+# Compose logs, environment variables, container IDs, mounts or user paths.
+classify_startup() {
+  local service cid state exit_code health expected_image actual_image image_match entrypoint actual_entrypoint expected_entrypoint
+  for service in app-seed state-init winebot-interactive; do
+    cid="$(docker compose -f compose/layered.yml ps -a -q "$service" 2>/dev/null || true)"
+    if [ -z "$cid" ]; then
+      printf 'WINE11_LAYER_HIL service=%s state=absent\n' "$service" >&2
+      continue
+    fi
+    state="$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+    exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$cid" 2>/dev/null || true)"
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
+    case "$state" in created|running|restarting|exited|dead|paused) ;; *) state=unknown ;; esac
+    case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
+    [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || exit_code=unknown
+    printf 'WINE11_LAYER_HIL service=%s state=%s exit=%s health=%s\n' "$service" "$state" "$exit_code" "$health" >&2
+    # Print only source-exact equality verdicts. Raw inspect image IDs,
+    # entrypoint paths, container IDs, and Docker error strings stay private.
+    expected_image="$WINEBOT_APP_BUNDLE_IMAGE"
+    [ "$service" = winebot-interactive ] && expected_image="$WINEBOT_RUNTIME_IMAGE"
+    actual_image="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
+    image_match=no
+    [ "$actual_image" = "$expected_image" ] && image_match=yes
+    entrypoint=not_applicable
+    case "$service" in
+      app-seed|state-init)
+        expected_entrypoint='["/bin/sh","/usr/local/bin/winebot-seed-apps"]'
+        [ "$service" = state-init ] &&
+          expected_entrypoint='["/bin/sh","/usr/local/bin/winebot-prepare-state"]'
+        actual_entrypoint="$(docker inspect --format '{{json .Config.Entrypoint}}' "$cid" 2>/dev/null || true)"
+        entrypoint=unexpected
+        [ "$actual_entrypoint" = "$expected_entrypoint" ] && entrypoint=expected
+        ;;
+    esac
+    printf 'WINE11_LAYER_HIL service=%s image_match=%s entrypoint=%s\n' "$service" "$image_match" "$entrypoint" >&2
+    # The scripts emit fixed-domain markers on failure. Process container logs
+    # privately; the classifier emits ONLY one enumerated category, not raw text.
+    case "$service" in
+      app-seed|state-init)
+        docker logs --tail 80 "$cid" 2>&1 |
+          python3 scripts/ci/classify-layer-init-logs.py "$service" >&2 || true
+        ;;
+    esac
+  done
+}
+if ! docker compose -f compose/layered.yml up --no-build -d winebot-interactive >/dev/null 2>&1; then
+  classify_startup
+  fail startup
+fi
+
+wait_health() {
+  local attempt cid status
+  for attempt in $(seq 1 90); do
+    cid="$(docker compose -f compose/layered.yml ps -q winebot-interactive 2>/dev/null || true)"
+    if [ -n "$cid" ]; then
+      status="$(docker inspect --format '{{.State.Health.Status}}' "$cid" 2>/dev/null || true)"
+      if [ "$status" = healthy ]; then return 0; fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+# A failed real health gate must remain a failure. Classify only immutable
+# state/enumerated probes, without leaking runtime logs, tokens, host paths or
+# Docker inspection payloads into the public runner stream.
+classify_health_failure() {
+  local cid state health
+  cid="$(docker compose -f compose/layered.yml ps -a -q winebot-interactive 2>/dev/null || true)"
+  if [ -z "$cid" ]; then
+    echo 'WINE11_LAYER_HEALTH state=absent'
+    return
+  fi
+  state="$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
+  case "$state" in created|running|restarting|exited|dead|paused) ;; *) state=unknown ;; esac
+  case "$health" in healthy|unhealthy|starting|none) ;; *) health=unknown ;; esac
+  printf 'WINE11_LAYER_HEALTH state=%s health=%s\n' "$state" "$health"
+  # Existing allowlist-only classifier consumes stdout/stderr privately.
+  docker logs --tail 200 "$cid" 2>&1 |
+    python3 scripts/ci/classify-startup-logs.py || true
+  [ "$state" = running ] || return
+  if docker exec --user 1000 "$cid" test -s /tmp/winebot_api_token >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH token_file=present'
+  else
+    echo 'WINE11_LAYER_HEALTH token_file=missing'
+  fi
+  if docker exec --user 1000 "$cid" test -s /wineprefix/system.reg >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH registry=present'
+  else
+    echo 'WINE11_LAYER_HEALTH registry=missing'
+  fi
+  if docker exec --user 1000 "$cid" /bin/sh -c '
+    token="$(cat /tmp/winebot_api_token 2>/dev/null || true)"
+    [ -n "$token" ] || exit 1
+    curl --max-time 6 -fsS -H "X-API-Key: $token" http://127.0.0.1:8000/health >/dev/null 2>&1
+  ' >/dev/null 2>&1; then
+    echo 'WINE11_LAYER_HEALTH authorized_api=pass'
+  else
+    echo 'WINE11_LAYER_HEALTH authorized_api=fail'
+  fi
+}
+if ! wait_health; then
+  classify_health_failure
+  fail health_initial
+fi
+docker compose -f compose/layered.yml exec -T winebot-interactive wine --version \
+  2>/dev/null | grep -Eq '^wine-11([.]|$)' || fail wine11_version
+
+# Verify ownership, persistent user state and immutable application mount.
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
+  [ "$(id -u)" -eq 1000 ] || exit 12
+  printf "durable-user\n" > /userdata/hil-proof
+  printf "durable-config\n" > /config/hil-proof
+  printf "durable-home\n" > /home/winebot/hil-proof
+  printf "durable-wineprefix\n" > /wineprefix/hil-proof
+  printf "durable-evidence\n" > /artifacts/hil-proof
+  test -s /apps/.winebot-app-content-sha256
+  if touch /apps/unauthorized-executable.exe >/dev/null 2>&1; then exit 13; fi
+  if touch /opt/winebot/unauthorized-root-write >/dev/null 2>&1; then exit 14; fi
+' >/dev/null 2>&1 || fail state_write_or_readonly
+
+# Use the actual WineBot bounded trace/resource checker (90-second tier).
+docker compose -f compose/layered.yml exec -T --user 1000 \
+  -e DURATION_SECONDS=90 -e INTERVAL_SECONDS=15 \
+  -e MAX_LOG_MB=1024 -e MAX_SESSION_MB=8192 \
+  -e MAX_PID1_RSS_MB=2048 \
+  winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly \
+  >/dev/null 2>&1 || fail resource_sample
+
+# Qualify the same exact layered service and persistent mounts through the
+# full 55-minute sustained resource gate, not merely the independent #150
+# mutable-runtime qualifier. Raw output stays on this disposable public runner.
+long_soak_log="$(mktemp)"
+if ! docker compose -f compose/layered.yml exec -T --user 1000 \
+  -e DURATION_SECONDS=3300 -e INTERVAL_SECONDS=30 \
+  -e MAX_LOG_MB=1024 -e MAX_SESSION_MB=8192 \
+  -e MAX_PID1_RSS_MB=2048 \
+  winebot-interactive /scripts/diagnostics/soak-resource-bounds.sh nightly \
+  >"$long_soak_log" 2>&1; then
+  python3 ../wine11-candidate/scripts/ci/classify-wine11-soak.py "$long_soak_log" ||
+    echo 'WINE11_SOAK_DIAGNOSTIC stage=unknown'
+  rm -f "$long_soak_log"
+  fail layered_long_soak
+fi
+rm -f "$long_soak_log"
+if ! wait_health; then
+  classify_health_failure
+  fail layered_post_soak_health
+fi
+echo 'WINE11_LAYER_HIL stage=long_soak_passed'
+
+# Use the running layered service for bounded supervisor recovery, not a
+# production host process. Do not reveal PID values or any application logs.
+read_openbox_pid() {
+  docker compose -f compose/layered.yml exec -T --user 1000 \
+    winebot-interactive pgrep -o -x openbox 2>/dev/null || true
+}
+openbox_before="$(read_openbox_pid)"
+[[ "$openbox_before" =~ ^[0-9]+$ ]] || fail layered_openbox_missing
+if ! docker compose -f compose/layered.yml exec -T --user 1000 \
+  winebot-interactive pkill -x openbox >/dev/null 2>&1; then
+  fail layered_openbox_injection
+fi
+openbox_deadline=$((SECONDS + 75))
+openbox_recovered=0
+while ((SECONDS < openbox_deadline)); do
+  openbox_after="$(read_openbox_pid)"
+  if [[ "$openbox_after" =~ ^[0-9]+$ ]] && [ "$openbox_after" != "$openbox_before" ]; then
+    openbox_recovered=1
+    break
+  fi
+  sleep 2
+done
+[ "$openbox_recovered" = 1 ] || fail layered_openbox_recovery_timeout
+if ! wait_health; then
+  classify_health_failure
+  fail layered_openbox_health
+fi
+echo 'WINE11_LAYER_HIL stage=openbox_recovery_passed'
+
+# Destroy/recreate only disposable runtime containers; never remove state.
+docker compose -f compose/layered.yml up --no-build --force-recreate -d winebot-interactive \
+  >/dev/null 2>&1 || fail runtime_recreate
+wait_health || fail health_recreate
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
+  grep -qx durable-user /userdata/hil-proof
+  grep -qx durable-config /config/hil-proof
+  grep -qx durable-home /home/winebot/hil-proof
+  grep -qx durable-wineprefix /wineprefix/hil-proof
+  grep -qx durable-evidence /artifacts/hil-proof
+  test -s /apps/.winebot-app-content-sha256
+' >/dev/null 2>&1 || fail state_replay
+
+# Fail-stop only the disposable runtime process. External app/state volumes
+# must survive a forced SIGKILL, with no Docker volume deletion or promotion.
+docker compose -f compose/layered.yml kill -s SIGKILL winebot-interactive \
+  >/dev/null 2>&1 || fail fault_signal
+fault_cid="$(docker compose -f compose/layered.yml ps -a -q winebot-interactive 2>/dev/null || true)"
+[ -n "$fault_cid" ] || fail fault_container_missing
+fault_exit="$(docker inspect --format '{{.State.ExitCode}}' "$fault_cid" 2>/dev/null || true)"
+[ "$fault_exit" = 137 ] || fail fault_exit_not_sigkill
+docker compose -f compose/layered.yml up --no-build --force-recreate -d winebot-interactive \
+  >/dev/null 2>&1 || fail fault_recreate
+if ! wait_health; then
+  classify_health_failure
+  fail fault_health
+fi
+docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
+  grep -qx durable-user /userdata/hil-proof
+  grep -qx durable-config /config/hil-proof
+  grep -qx durable-home /home/winebot/hil-proof
+  grep -qx durable-wineprefix /wineprefix/hil-proof
+  grep -qx durable-evidence /artifacts/hil-proof
+  test -s /apps/.winebot-app-content-sha256
+' >/dev/null 2>&1 || fail fault_state_replay
+echo 'WINE11_LAYER_HIL stage=pass'
