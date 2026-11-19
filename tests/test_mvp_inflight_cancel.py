@@ -11,8 +11,8 @@ import pytest
 from fastapi import HTTPException
 
 from api.core.broker import InputBroker, broker
-from api.core.models import ControlMode, ControlPolicyMode, KeyModel, ClickModel, UserIntent
-from api.routers.input import key_press, click_at
+from api.core.models import ClickModel, ControlMode, ControlPolicyMode, KeyModel, UserIntent
+from api.routers.input import click_at, key_press
 
 
 def test_broker_revocation_cancels_registered_async_input():
