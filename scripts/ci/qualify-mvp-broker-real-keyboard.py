@@ -126,4 +126,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # Do not leak paths, tokens, desktop text or Wine output in CI logs.
+        if not isinstance(exc, RuntimeError) or not str(exc).startswith("IC1_BROKER_CAUSE="):
+            print("IC1_BROKER_CAUSE=unexpected_harness_exception")
+        raise
