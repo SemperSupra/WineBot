@@ -390,6 +390,9 @@ async def click_at(data: ClickModel):
     win_title = data.window_title or "unknown"
 
     if not target_win_id:
+        # Discovery itself moves the pointer; do not swallow a policy denial.
+        if not await broker.check_access():
+            raise HTTPException(status_code=423, detail="Agent control denied by policy")
         try:
             await run_async_command(["xdotool", "mousemove", str(data.x), str(data.y)])
             win_res = await run_async_command(["xdotool", "getmousereturnwindow"])
@@ -434,6 +437,11 @@ async def click_at(data: ClickModel):
         cmd.extend(["mousemove", "--sync", str(data.x), str(data.y)])
 
     cmd.extend(["click", str(data.button)])
+
+    # Target discovery and trace emission can await or outlive a lease.
+    # Gate immediately before the actual pointer motion / click.
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     result = await run_async_command(cmd)
     if not result.get("ok"):
@@ -548,6 +556,12 @@ async def key_press(data: KeyModel):
             "target_window_title": target_win_title or "unknown",
         },
     )
+
+    # Revalidate after asynchronous target lookup and request tracing.
+    # This narrows preparation-stage revocation races; in-flight commands
+    # still require a separate cancellation/serialization design.
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     result = await _send_keys(
         keys=data.keys,

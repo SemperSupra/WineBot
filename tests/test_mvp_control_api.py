@@ -120,3 +120,23 @@ def test_api_emergency_stop_refuses_fresh_grant_and_real_input(ic1_api):
     )
     assert blocked.status_code == 423
     send.assert_not_called()
+
+def test_lease_revoked_during_key_preparation_blocks_dispatch(ic1_api):
+    """A revoked lease after initial admission cannot reach the keyboard backend."""
+    client, headers, send = ic1_api
+    token = _challenge(client, headers)
+    assert _grant(client, headers, token).status_code == 200
+
+    # The two checks bracket input preparation; model a STOP/expiry
+    # between them without touching a real X11 display or sending keys.
+    with patch.object(broker, "check_access", new_callable=AsyncMock) as access:
+        access.side_effect = [True, False]
+        response = client.post(
+            "/input/key",
+            json={"keys": "a", "backend": "xdotool"},
+            headers=headers,
+        )
+
+    assert response.status_code == 423
+    assert access.await_count == 2
+    send.assert_not_called()
