@@ -557,6 +557,12 @@ async def key_press(data: KeyModel):
         },
     )
 
+    # Revalidate after asynchronous target lookup and request tracing.
+    # This narrows preparation-stage revocation races; in-flight commands
+    # still require a separate cancellation/serialization design.
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
     result = await _send_keys(
         keys=data.keys,
         window_id=target_win_id,
