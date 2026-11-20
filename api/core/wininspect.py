@@ -415,7 +415,7 @@ def observer_poll(stream: str, after_sequence: int,
                 or item.get("stream") != stream
                 or item.get("source") != "win32.setwineventhook"
                 or item.get("status") != "observed"
-                or kind not in OBSERVER_EVENT_KINDS
+                or not isinstance(kind, str) or kind not in OBSERVER_EVENT_KINDS
                 or not last < seq <= next_sequence):
             raise WinInspectError("WinInspect observer response contract mismatch")
         last = seq
