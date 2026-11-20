@@ -31,6 +31,7 @@ class InputBroker:
         self.last_agent_activity = 0.0
         self._grant_challenge_token = None
         self._grant_challenge_expiry = 0.0
+        self._authority_epoch = 1
 
     @property
     def last_activity(self) -> float:
@@ -53,6 +54,7 @@ class InputBroker:
 
     async def set_instance_control_mode(self, mode: ControlPolicyMode):
         with self._lock:
+            self._authority_epoch += 1
             self.state.instance_control_mode = mode
             self.state.effective_control_mode = self._compute_effective_mode()
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
@@ -71,6 +73,7 @@ class InputBroker:
 
     async def set_session_control_mode(self, mode: ControlPolicyMode):
         with self._lock:
+            self._authority_epoch += 1
             self.state.session_control_mode = mode
             self.state.effective_control_mode = self._compute_effective_mode()
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
@@ -86,6 +89,7 @@ class InputBroker:
         session_control_mode: ControlPolicyMode = ControlPolicyMode.HYBRID,
     ):
         with self._lock:
+            self._authority_epoch += 1
             self.state.session_id = session_id
             self.state.interactive = interactive
             self.state.instance_control_mode = ControlPolicyMode(get_instance_control_mode())
@@ -140,6 +144,7 @@ class InputBroker:
                 )
             if not self.state.interactive:
                 return  # Always implicit in non-interactive
+            self._authority_epoch += 1
             self.state.control_mode = ControlMode.AGENT
             self.state.lease_expiry = time.time() + lease_seconds
             self.state.user_intent = UserIntent.WAIT
@@ -152,14 +157,17 @@ class InputBroker:
                 )
             if self.state.user_intent == UserIntent.STOP_NOW:
                 raise HTTPException(status_code=403, detail="User requested STOP_NOW")
+            self._authority_epoch += 1
             self.state.lease_expiry = time.time() + lease_seconds
 
     def revoke_agent(self, reason: str):
-        # Sync version for internal calls
-        self.state.control_mode = ControlMode.USER
-        self.state.lease_expiry = None
-        self.state.agent_status = AgentStatus.STOPPING
-        print(f"Broker: Agent revoked ({reason})")
+        # RLock is reentrant for callers already holding the state lock.
+        with self._lock:
+            self._authority_epoch += 1
+            self.state.control_mode = ControlMode.USER
+            self.state.lease_expiry = None
+            self.state.agent_status = AgentStatus.STOPPING
+            print(f"Broker: Agent revoked ({reason})")
 
     async def report_user_activity(self):
         with self._lock:
@@ -195,6 +203,22 @@ class InputBroker:
                 self.revoke_agent("user_stop_now")
                 return False
             return True
+
+    async def issue_input_ticket(self) -> int | None:
+        """Capture current authority generation for one pending input action."""
+        with self._lock:
+            if not await self.check_access():
+                return None
+            return self._authority_epoch
+
+    async def validate_input_ticket(self, ticket: int) -> bool:
+        """Reject queued work after control/session changes or lease expiry.
+
+        Admission is immediately before backend invocation; it cannot stop an
+        external process already running. Consumer-side fencing remains needed.
+        """
+        with self._lock:
+            return ticket == self._authority_epoch and await self.check_access()
 
     def get_state(self) -> ControlState:
         # Return a detached snapshot so callers cannot mutate shared broker state.
