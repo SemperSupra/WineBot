@@ -97,7 +97,7 @@ def test_conflicting_peer_operation_fails_closed(tmp_path):
 
 def test_unsafe_external_peer_is_rejected(tmp_path):
     root = tmp_path / "sessions"
-    old = _session(root, "A")
+    _session(root, "A")
     target = _session(root, "B")
     profile = _profile_link(tmp_path, target)
     _write_marker(target, "resume_target_prepare", {"previous_session": str(tmp_path)})
