@@ -14,6 +14,9 @@ from api.utils.process import find_processes, manage_process
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1985
+# Upstream WinInspect product v0.4.0 still speaks TCP protocol v0.3.0.
+# Keep wire protocol version independent from the product release version.
+WININSPECT_PROTOCOL_VERSION = "0.3.0"
 DEFAULT_TIMEOUT_SECONDS = 3.0
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
@@ -284,7 +287,7 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.4.0",
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
             **(params or {}),
         },
     }
