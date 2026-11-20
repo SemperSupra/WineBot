@@ -353,7 +353,8 @@ def input_events(
 async def click_at(data: ClickModel):
     """Click at coordinates (x, y)."""
     op_started = time.perf_counter()
-    if not await broker.check_access():
+    authority_ticket = await broker.issue_input_ticket()
+    if authority_ticket is None:
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     await broker.report_agent_activity()
@@ -435,6 +436,10 @@ async def click_at(data: ClickModel):
 
     cmd.extend(["click", str(data.button)])
 
+    # Do not execute an action queued before STOP_NOW, lease expiry, or
+    # session handover. This is admission fencing, not an OS-level kill switch.
+    if not await broker.validate_input_ticket(authority_ticket):
+        raise HTTPException(status_code=423, detail="Agent control revoked before input dispatch")
     result = await run_async_command(cmd)
     if not result.get("ok"):
         emit_operation_timing(
@@ -507,7 +512,8 @@ async def key_press(data: KeyModel):
     when configured and the explorer.exe desktop barrier is absent.
     """
     op_started = time.perf_counter()
-    if not await broker.check_access():
+    authority_ticket = await broker.issue_input_ticket()
+    if authority_ticket is None:
         raise HTTPException(status_code=423, detail="Agent control denied by policy")
 
     await broker.report_agent_activity()
@@ -549,6 +555,8 @@ async def key_press(data: KeyModel):
         },
     )
 
+    if not await broker.validate_input_ticket(authority_ticket):
+        raise HTTPException(status_code=423, detail="Agent control revoked before input dispatch")
     result = await _send_keys(
         keys=data.keys,
         window_id=target_win_id,
