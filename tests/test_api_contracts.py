@@ -479,7 +479,7 @@ def test_resume_session_rolls_back_state_on_broker_failure(tmp_path):
         with patch("api.routers.lifecycle.read_session_dir", return_value=str(current_dir)):
             with patch("api.routers.lifecycle.resolve_session_dir", return_value=str(target_dir)):
                 with patch("api.routers.lifecycle.append_lifecycle_event"):
-                    with patch("api.routers.lifecycle.link_wine_user_dir"):
+                    with patch("api.routers.lifecycle._link_profile_checked"):
                         with patch("api.routers.lifecycle.ensure_user_profile"):
                             with patch(
                                 "api.routers.lifecycle.atomic_shutdown",
