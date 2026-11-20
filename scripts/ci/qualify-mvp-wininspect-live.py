@@ -61,10 +61,29 @@ def main() -> None:
         fail("daemon_unavailable")
     try:
         capabilities = wininspect.capabilities()
-        if not isinstance(capabilities, dict) or not capabilities:
-            fail("capabilities_missing")
-    except Exception:
-        fail("capabilities_unavailable")
+    except TimeoutError:
+        fail("rpc_timeout")
+    except ConnectionError:
+        fail("rpc_connection_error")
+    except wininspect.WinInspectError as exc:
+        # Only report fixed protocol/transport classes; never forward daemon
+        # strings, identity, application titles or arbitrary error details.
+        reason = str(exc)
+        if "E_PROTOCOL_VERSION" in reason or (
+            "expected " in reason and " got " in reason
+        ):
+            fail("rpc_version_rejected")
+        if "response correlation failed" in reason:
+            fail("rpc_correlation_rejected")
+        if "connection closed while reading frame" in reason:
+            fail("rpc_connection_closed")
+        if "compressed WinInspect frames" in reason:
+            fail("rpc_unsupported_compression")
+        fail("rpc_daemon_rejected")
+    except (OSError, ValueError, KeyError, TypeError):
+        fail("rpc_transport_or_decode_error")
+    if not isinstance(capabilities, dict) or not capabilities:
+        fail("capabilities_missing")
 
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
