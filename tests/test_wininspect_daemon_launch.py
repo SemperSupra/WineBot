@@ -28,4 +28,5 @@ def test_rpc_daemon_uses_upstream_headless_mode(tmp_path):
         "wine",
         "/synthetic/wininspectd.exe",
         "--headless",
+        "--bind", "127.0.0.1", "--port", str(wi.DEFAULT_PORT),
     ]
