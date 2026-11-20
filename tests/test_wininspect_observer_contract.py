@@ -54,6 +54,7 @@ def test_open_and_poll_use_versioned_cursor_without_hello_identity(monkeypatch):
         return _result({
             "contract": "wininspect.observer.read.v0", "state": "registered",
             "runtime": "wine", "event_delivery": "unverified",
+            "actuation_authority": False,
             "identity": "NEVER_RETURN_IDENTITY",
         })
 
@@ -69,6 +70,18 @@ def test_open_and_poll_use_versioned_cursor_without_hello_identity(monkeypatch):
         "stream": "stream-one", "after_sequence": 0, "max_events": 2,
     })
     assert "NEVER_RETURN_IDENTITY" not in str((opened, observed, wi.observer_capabilities()))
+
+
+@pytest.mark.parametrize("authority", [True, None, "false", 0])
+def test_observer_capabilities_fail_closed_on_authority(monkeypatch, authority):
+    payload = {
+        "contract": "wininspect.observer.read.v0",
+        "source": "win32.setwineventhook", "state": "registered",
+        "event_delivery": "unverified", "actuation_authority": authority,
+    }
+    monkeypatch.setattr(wi, "request", lambda *args, **kwargs: _result(payload))
+    with pytest.raises(wi.WinInspectError, match="contract mismatch"):
+        wi.observer_capabilities()
 
 
 @pytest.mark.parametrize("stream,after,limit", [
