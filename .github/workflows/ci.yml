@@ -81,6 +81,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: mark-e-deyoung/winebot-contracts
+          # Diagnostic exact-source admission: a floating external contract
+          # branch makes same WineBot commit non-reproducible over time.
+          ref: 205666f7f0235cb0fc51ca8a5af84f9f67831a74
+          persist-credentials: false
           path: contracts
 
       - uses: actions/setup-python@v5
