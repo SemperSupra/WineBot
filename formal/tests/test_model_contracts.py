@@ -27,7 +27,8 @@ def lease_next(s: Lease):
     if s.stopped and not s.queued:
         yield "ack", replace(s, stopped=False)
     if s.queued and s.granted and not s.stopped and s.queued == s.epoch:
-        yield "effect", replace(s, queued=0, effects=s.effects + 1)
+        # Boolean observed effect, not an unbounded count: finite state space.
+        yield "effect", replace(s, queued=0, effects=1)
     if s.queued and (not s.granted or s.stopped or s.queued != s.epoch):
         yield "discard", replace(s, queued=0)
 
