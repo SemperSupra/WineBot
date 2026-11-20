@@ -263,9 +263,13 @@ def _read_frame(sock: socket.socket) -> dict[str, Any]:
         raise WinInspectError(f"WinInspect frame too large: {length}")
     payload = _recv_exact(sock, length)
     try:
-        return json.loads(payload.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise WinInspectError(f"invalid WinInspect JSON frame: {exc}") from exc
+        decoded = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Never expose arbitrary malformed daemon content in API errors.
+        raise WinInspectError("invalid WinInspect JSON frame") from exc
+    if not isinstance(decoded, dict):
+        raise WinInspectError("invalid WinInspect JSON frame root")
+    return decoded
 
 
 def _write_frame(sock: socket.socket, payload: dict[str, Any]) -> None:
