@@ -1,18 +1,19 @@
-"""Deterministic red-team witness of the current input check-to-effect race.
+"""Deterministic safety regression for broker revocation before input dispatch.
 
-This records existing behavior without injecting a real mouse event. It is a
-known-unsafe witness, not a green assertion that production is fenced.
+No external xdotool, Wine, or real input processes are executed.
 """
 import asyncio
 import time
 from unittest.mock import patch
+
+from fastapi import HTTPException
 
 from api.core.broker import InputBroker
 from api.core.models import ClickModel, ControlMode, ControlPolicyMode, UserIntent
 from api.routers import input as input_router
 
 
-def test_stop_now_between_window_search_and_click_exposes_unfenced_effect():
+def test_stop_now_between_window_search_and_click_blocks_stale_effect():
     async def exercise():
         admitted = asyncio.Event()
         release_search = asyncio.Event()
@@ -50,14 +51,15 @@ def test_stop_now_between_window_search_and_click_exposes_unfenced_effect():
             await broker.set_user_intent(UserIntent.STOP_NOW)
             assert not await broker.check_access()
             release_search.set()
-            result = await asyncio.wait_for(task, timeout=3)
+            try:
+                await asyncio.wait_for(task, timeout=3)
+            except HTTPException as exc:
+                status = exc.status_code
+            else:
+                status = 200
 
-        return observed, result
+        return observed, status
 
-    observed, result = asyncio.run(exercise())
-    # RED witness: input effect occurred after STOP_NOW had revoked access.
-    # Replace this expected failure scenario with a rejection assertion once
-    # the real input dispatcher is epoch-fenced at its effect boundary.
-    assert len(observed) == 1
-    assert observed[0][1] == UserIntent.STOP_NOW
-    assert result["status"] == "clicked"
+    observed, status = asyncio.run(exercise())
+    assert status == 423
+    assert observed == []
