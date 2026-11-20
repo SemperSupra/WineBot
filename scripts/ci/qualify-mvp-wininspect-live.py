@@ -40,6 +40,35 @@ def classify_daemon_startup() -> str:
     return "daemon_log_preinit_only"
 
 
+
+def qualified_notepad_window(match: object, info: object) -> bool:
+    """Bind a read-only WinInspect lookup to the same visible Notepad++ HWND.
+
+    The exact source-defined getInfo response has hwnd/title/visible/pid.
+    Never accept an adapter fallback such as {"hwnd": ..., "raw": ...}.
+    """
+    if not isinstance(match, dict) or not isinstance(info, dict):
+        return False
+    hwnd = match.get("hwnd")
+    if not isinstance(hwnd, str) or not hwnd.startswith("0x"):
+        return False
+    try:
+        numeric_hwnd = int(hwnd[2:], 16)
+    except ValueError:
+        return False
+    if numeric_hwnd == 0 or info.get("hwnd") != hwnd:
+        return False
+    title = info.get("title")
+    pid = info.get("pid")
+    return (
+        isinstance(title, str)
+        and "Notepad++" in title
+        and info.get("visible") is True
+        and type(pid) in (int, float)
+        and 0 < pid < 2**32
+    )
+
+
 def main() -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_EVENT_NAME") != "pull_request" or os.environ.get("WINEBOT_STATE_MODEL") != "layered":
         fail("unqualified_venue")
@@ -92,14 +121,16 @@ def main() -> None:
         except Exception:
             fail("observer_rpc_error")
         for match in matches:
-            hwnd = str(match.get("hwnd") or "").strip()
-            if not hwnd:
+            if not isinstance(match, dict):
+                continue
+            hwnd = match.get("hwnd")
+            if not isinstance(hwnd, str) or not hwnd.startswith("0x"):
                 continue
             try:
                 info = wininspect.window_info(hwnd)
             except Exception:
                 fail("window_info_rpc_error")
-            if isinstance(info, dict) and info:
+            if qualified_notepad_window(match, info):
                 print("IC1_OBSERVER=real_notepad_hwnd_readonly_pass")
                 return
         time.sleep(1)
