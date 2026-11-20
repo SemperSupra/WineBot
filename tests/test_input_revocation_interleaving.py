@@ -142,3 +142,21 @@ def test_input_ticket_invalidates_on_session_handover_and_lease_expiry():
         assert not await broker.validate_input_ticket(new_ticket)
 
     asyncio.run(exercise())
+
+
+def test_stop_now_blocks_new_tickets_in_headless_and_agent_only():
+    async def exercise():
+        for mode in (ControlPolicyMode.HYBRID, ControlPolicyMode.AGENT_ONLY):
+            broker = InputBroker()
+            broker.state.interactive = False
+            broker.state.control_mode = ControlMode.AGENT
+            broker.state.effective_control_mode = mode
+            assert await broker.check_access()
+            initial = await broker.issue_input_ticket()
+            assert initial is not None
+            await broker.set_user_intent(UserIntent.STOP_NOW)
+            assert not await broker.check_access()
+            assert await broker.issue_input_ticket() is None
+            assert not await broker.validate_input_ticket(initial)
+
+    asyncio.run(exercise())
