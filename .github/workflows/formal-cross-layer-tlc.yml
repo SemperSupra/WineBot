@@ -66,6 +66,24 @@ jobs:
             exit 1
           fi
           echo "FORMAL_NEGATIVE_CONTROL=STALE_INPUT_COUNTEREXAMPLE_CONFIRMED"
+      - name: Prove split-owner restart without reconciliation is rejected by TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config SessionHandoverUnsafe.cfg \
+              SessionHandoverUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-handover.log" 2>&1; then
+            echo "FORMAL_HANDOVER_NEGATIVE=FAILED_TO_DETECT_SPLIT_OWNER"
+            exit 1
+          fi
+          if ! grep -Fq 'Invariant ConvergedAtRest is violated' \
+               "$RUNNER_TEMP/formal/unsafe-handover.log"; then
+            echo "FORMAL_HANDOVER_NEGATIVE=NO_EXPECTED_COUNTEREXAMPLE"
+            exit 1
+          fi
+          echo "FORMAL_HANDOVER_NEGATIVE=SPLIT_OWNER_COUNTEREXAMPLE_CONFIRMED"
       - name: Run dependency-free model contract tests
         shell: bash
         run: |
