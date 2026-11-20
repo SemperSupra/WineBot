@@ -151,6 +151,50 @@ def test_wininspect_rejects_truncated_rpc_frame_without_payload_disclosure():
         wininspect._read_frame(TruncatedSocket())
 
 
+
+@pytest.mark.parametrize(
+    "hello",
+    [
+        {"type": "unexpected", "version": "0.3.0"},
+        {"type": "hello", "version": "0.4.0"},
+        {"type": "hello"},
+        {"version": "0.3.0"},
+        {},
+    ],
+)
+def test_wininspect_rejects_invalid_daemon_hello_before_sending_request(hello):
+    fake = FakeSocket([hello])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        with pytest.raises(wininspect.WinInspectError, match="hello protocol mismatch"):
+            wininspect.request("daemon.capabilities")
+    assert fake.sent == b""
+
+
+def test_wininspect_caller_cannot_override_pinned_rpc_protocol_version():
+    fake = FakeSocket(
+        [
+            {"type": "hello", "version": "0.3.0"},
+            {"id": "winebot-abc123456789", "ok": True, "result": {"features": {}}},
+        ]
+    )
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        result = wininspect.request(
+            "daemon.capabilities", {"protocol_version": "0.4.0"}
+        )
+    assert result["result"] == {"features": {}}
+    sent_length = struct.unpack("!I", fake.sent[:4])[0]
+    sent_payload = json.loads(fake.sent[4 : 4 + sent_length].decode("utf-8"))
+    assert sent_payload["params"]["protocol_version"] == "0.3.0"
+
+
 def test_wininspect_blocks_mutating_methods():
     with pytest.raises(wininspect.WinInspectError):
         wininspect.request("input.text", {"text": "blocked"})
