@@ -20,6 +20,7 @@ except ImportError:
 from api.core.broker import broker
 from api.core.config_guard import validate_current_environment
 from api.core.discovery import discovery_manager
+from api.core.handover_recovery import reconcile_active_handover
 from api.core.models import ControlPolicyMode
 from api.core.monitor import inactivity_monitor_task
 from api.core.session_context import reset_current_session_dir, set_current_session_dir
@@ -115,6 +116,12 @@ async def lifespan(_app: FastAPI):
             interactive,
             session_control_mode=session_control_mode,
         )
+        # The current active pointer is the restart authority. Reconcile an
+        # interrupted pointer/profile/broker handover before API admission.
+        profile_link = os.path.join(
+            os.getenv("WINEPREFIX", "/wineprefix"), "drive_c", "users", "winebot"
+        )
+        reconcile_active_handover(session_dir, profile_link)
 
     # Start Discovery
     try:
