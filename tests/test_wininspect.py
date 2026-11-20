@@ -73,6 +73,50 @@ def test_wininspect_request_uses_length_prefixed_json():
     assert sent_payload["params"]["protocol_version"] == "0.3.0"
 
 
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"id": "", "ok": True, "result": {"features": {}}},
+        {"ok": True, "result": {"features": {}}},
+        {"id": "other-actor-request", "ok": True, "result": {"features": {}}},
+        {"id": "", "ok": False, "error": {"code": "E_BAD_METHOD"}},
+        {"id": "other-actor-request", "ok": False, "error": {"code": "E_BAD_METHOD"}},
+    ],
+)
+def test_wininspect_fails_closed_on_missing_or_foreign_rpc_correlation(reply):
+    """A real daemon's empty handler ID must never be accepted or leaked."""
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, reply])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="response correlation failed") as err:
+            wininspect.request("daemon.capabilities")
+    assert "other-actor-request" not in str(err.value)
+    assert fake.sent
+
+
+def test_wininspect_accepts_exact_correlation_on_failed_rpc_before_returning_error():
+    fake = FakeSocket(
+        [
+            {"type": "hello", "version": "0.3.0"},
+            {"id": "winebot-abc123456789", "ok": False,
+             "error": {"code": "E_BAD_REQUEST", "message": "synthetic-denial"}},
+        ]
+    )
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="synthetic-denial"):
+            wininspect.request("daemon.capabilities")
+
+
 def test_wininspect_blocks_mutating_methods():
     with pytest.raises(wininspect.WinInspectError):
         wininspect.request("input.text", {"text": "blocked"})
