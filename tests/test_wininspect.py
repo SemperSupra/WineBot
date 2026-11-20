@@ -120,14 +120,16 @@ def test_wininspect_accepts_exact_correlation_on_failed_rpc_before_returning_err
 
 @pytest.mark.parametrize(
     "body",
-    [b"[]", b"null", b"true", b'"raw"', b"12", b"not-json", b"\\xff"],
+    [b"[]", b"null", b"true", b'"raw"', b"12", b"not-json", bytes([255])],
 )
 def test_wininspect_rejects_untrusted_nonobject_or_malformed_rpc_frames(body):
     """A malformed daemon frame cannot turn into an uncaught API exception."""
     framed = struct.pack("!I", len(body)) + body
+
     class OneFrameSocket:
         def __init__(self):
             self.data = bytearray(framed)
+
         def recv(self, size):
             chunk = bytes(self.data[:size])
             del self.data[:size]
@@ -140,6 +142,7 @@ def test_wininspect_rejects_truncated_rpc_frame_without_payload_disclosure():
     class TruncatedSocket:
         def __init__(self):
             self.data = bytearray(struct.pack("!I", 4) + b"{")
+
         def recv(self, size):
             chunk = bytes(self.data[:size])
             del self.data[:size]
