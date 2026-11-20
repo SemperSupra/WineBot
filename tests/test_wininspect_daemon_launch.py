@@ -3,6 +3,9 @@
 Synthetic subprocess only: no real Wine process, network port or user files.
 """
 from pathlib import Path
+import runpy
+
+import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -45,3 +48,41 @@ def test_real_wine_workflow_refuses_known_unqualified_observer_binary_early():
     assert "6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04" in workflow
     assert "IC1_OBSERVER_CAUSE=upstream_binary_unqualified" in workflow
     assert "exit 1" in workflow[workflow.index(gate):workflow.index("Reclaim disposable standard-runner disk")]
+
+@pytest.mark.parametrize(
+    ("match", "info", "expected"),
+    [
+        (
+            {"hwnd": "0xA1"},
+            {"hwnd": "0xA1", "title": "sample.txt - Notepad++",
+             "visible": True, "pid": 193.0},
+            True,
+        ),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xB2", "title": "Notepad++",
+                              "visible": True, "pid": 193}, False),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xA1", "raw": "opaque"}, False),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xA1", "title": "Other editor",
+                              "visible": True, "pid": 193}, False),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xA1", "title": "Notepad++",
+                              "visible": False, "pid": 193}, False),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xA1", "title": "Notepad++",
+                              "visible": True, "pid": 0}, False),
+        ({"hwnd": "0xA1"}, {"hwnd": "0xA1", "title": "Notepad++",
+                              "visible": True, "pid": True}, False),
+        ({"hwnd": "0x0"}, {"hwnd": "0x0", "title": "Notepad++",
+                             "visible": True, "pid": 193}, False),
+        ({"hwnd": "not-a-handle"}, {"hwnd": "not-a-handle",
+                                     "title": "Notepad++", "visible": True,
+                                     "pid": 193}, False),
+        ("malformed", {"hwnd": "0xA1", "title": "Notepad++",
+                        "visible": True, "pid": 193}, False),
+        ({"hwnd": "0xA1"}, ["malformed"], False),
+    ],
+)
+def test_live_observer_requires_same_visible_notepad_hwnd(match, info, expected):
+    """Read-only live acceptance must not pass on fallback, stale or hidden windows."""
+    repo = Path(__file__).resolve().parents[1]
+    probe = runpy.run_path(
+        str(repo / "scripts/ci/qualify-mvp-wininspect-live.py")
+    )["qualified_notepad_window"]
+    assert probe(match, info) is expected
