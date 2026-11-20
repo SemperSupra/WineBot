@@ -176,7 +176,11 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
                 # its background TCP listener becomes available. The WineBot
                 # adapter is a service endpoint, so require the daemon's
                 # upstream-supported blocking/headless TCP mode explicitly.
-                ["wine", str(daemon_exe()), "--headless"],
+                # Match the adapter's loopback RPC endpoint explicitly.
+                # WinInspect's persisted Wine config and IPv6 defaults must
+                # not silently bind a different address or TCP port.
+                ["wine", str(daemon_exe()), "--headless",
+                 "--bind", "127.0.0.1", "--port", str(port())],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
