@@ -20,6 +20,10 @@ The models intentionally do **not** assert that the current production implement
 - Run separate stdlib Python fault/negative controls to ensure stale queued input and interrupted handover are detectable, and a stale artifact tuple is refused. These are scenario-level independent checks, **not** proofs against the implementation.
 - Require real source-code mapping and fault injection before marking any product behavior verified. Future phases: broker epoch/fencing point; handover intent+reconciliation startup; durable operations; recording commit/replay; atomic release authority.
 
+## Adversarial model-checker sentinel
+
+`ControlLeaseUnsafe.tla` intentionally models the check-to-effect hazard: an agent queues input while authorized, then STOP_NOW revokes authority, but an unchecked consumer still executes the queued action. The dedicated CI negative-control step **must receive a TLC counterexample for `NoUnauthorizedEffect`**; parser errors, timeouts or unexpected successful model checks fail the build instead. This sentinel does not prove an exploitable live dispatch, only that the formal oracle rejects the bad ordering. Source review of `api/routers/input.py` shows `broker.check_access()` before later `await run_async_command()` or `await _send_keys()`; no generation token accompanies that eventual effect. Qualify an actual commit-time fencing fix separately with controlled synthetic input.
+
 ## Required invariants
 
 **Control:** STOP_NOW invalidates queued older epochs; no agent effect may execute on an expired/superseded lease. One authoritative grant epoch; no assumption that an API's prior check atomically covers external Wine effects.
