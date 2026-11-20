@@ -291,13 +291,19 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": WININSPECT_PROTOCOL_VERSION,
             **(params or {}),
+            # The caller may not downgrade or substitute the wire protocol.
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
         },
     }
     with socket.create_connection((host(), port()), timeout=timeout_seconds()) as sock:
         sock.settimeout(timeout_seconds())
         hello = _read_frame(sock)
+        if (
+            hello.get("type") != "hello"
+            or hello.get("version") != WININSPECT_PROTOCOL_VERSION
+        ):
+            raise WinInspectError("WinInspect hello protocol mismatch")
         _write_frame(sock, payload)
         response = _read_frame(sock)
 
