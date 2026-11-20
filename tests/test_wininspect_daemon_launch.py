@@ -41,5 +41,7 @@ def test_real_wine_workflow_refuses_known_unqualified_observer_binary_early():
     assert workflow.index(gate) < workflow.index("Reclaim disposable standard-runner disk")
     assert "test -f scripts/ci/qualify-mvp-wininspect-live.py" in workflow
     assert "WinInspectPortable-v0.4.4.zip" in workflow
+    # A superficial rename must not evade the known bad archive digest.
+    assert "6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04" in workflow
     assert "IC1_OBSERVER_CAUSE=upstream_binary_unqualified" in workflow
     assert "exit 1" in workflow[workflow.index(gate):workflow.index("Reclaim disposable standard-runner disk")]
