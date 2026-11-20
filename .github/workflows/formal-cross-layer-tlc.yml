@@ -47,6 +47,25 @@ jobs:
               -workers 1 -deadlock -config "$model.cfg" "$model.tla"
           done
           echo "FORMAL_TLC_VERDICT=PASS"
+      - name: Prove adversarial stale-input model is rejected by TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config ControlLeaseUnsafe.cfg \
+              ControlLeaseUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-tlc.log" 2>&1; then
+            echo "FORMAL_NEGATIVE_CONTROL=FAILED_TO_DETECT_STALE_INPUT"
+            exit 1
+          fi
+          # A parser error or missing dependency is not a valid counterexample.
+          if ! grep -Fq 'Invariant NoUnauthorizedEffect is violated' \
+               "$RUNNER_TEMP/formal/unsafe-tlc.log"; then
+            echo "FORMAL_NEGATIVE_CONTROL=NO_EXPECTED_COUNTEREXAMPLE"
+            exit 1
+          fi
+          echo "FORMAL_NEGATIVE_CONTROL=STALE_INPUT_COUNTEREXAMPLE_CONFIRMED"
       - name: Run dependency-free model contract tests
         shell: bash
         run: |
