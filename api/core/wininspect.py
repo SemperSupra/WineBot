@@ -310,9 +310,16 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
     if response.get("id") != request_id:
         # Never expose untrusted daemon hello identity in API-visible errors.
         raise WinInspectError("WinInspect response correlation failed")
-    if not response.get("ok"):
-        error = response.get("error") or {}
-        raise WinInspectError(str(error.get("message") or error or "WinInspect request failed"))
+    if type(response.get("ok")) is not bool:
+        raise WinInspectError("WinInspect response status invalid")
+    if response["ok"] is False:
+        error = response.get("error")
+        if not isinstance(error, dict):
+            raise WinInspectError("WinInspect response error invalid")
+        message = error.get("message")
+        if not isinstance(message, str) or not message:
+            raise WinInspectError("WinInspect request failed")
+        raise WinInspectError(message)
     return {
         "result": response.get("result"),
         "metrics": response.get("metrics"),
