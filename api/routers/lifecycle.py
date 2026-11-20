@@ -960,6 +960,11 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
                 previous_target_state=previous_target_state,
                 previous_current_state=previous_current_state,
             )
+            # No previous active owner exists to restore after the active
+            # pointer has moved. Retain durable intent for startup replay.
+            if not current_session and read_session_dir() == target_dir:
+                await fail_operation(operation_id, error="handover requires restart reconciliation")
+                raise RuntimeError("Interrupted session activation requires restart reconciliation") from exc
             _clear_transition_marker(target_dir)
             if current_session and current_session != target_dir:
                 _clear_transition_marker(current_session)
