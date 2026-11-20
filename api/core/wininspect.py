@@ -355,6 +355,8 @@ def observer_capabilities() -> dict[str, Any]:
     result = request("observer.capabilities")["result"]
     if not isinstance(result, dict) or result.get("contract") != OBSERVER_READ_CONTRACT:
         raise WinInspectError("WinInspect observer response contract mismatch")
+    if result.get("actuation_authority") is not False:
+        raise WinInspectError("WinInspect observer response contract mismatch")
     allowed = (
         "contract", "source", "runtime", "state", "event_delivery",
         "scope", "target_identity", "actuation_authority", "max_batch", "retention",
