@@ -24,6 +24,8 @@ The models intentionally do **not** assert that the current production implement
 
 `ControlLeaseUnsafe.tla` intentionally models the check-to-effect hazard: an agent queues input while authorized, then STOP_NOW revokes authority, but an unchecked consumer still executes the queued action. The dedicated CI negative-control step **must receive a TLC counterexample for `NoUnauthorizedEffect`**; parser errors, timeouts or unexpected successful model checks fail the build instead. This sentinel does not prove an exploitable live dispatch, only that the formal oracle rejects the bad ordering. Source review of `api/routers/input.py` shows `broker.check_access()` before later `await run_async_command()` or `await _send_keys()`; no generation token accompanies that eventual effect. Qualify an actual commit-time fencing fix separately with controlled synthetic input.
 
+`SessionHandoverUnsafe.tla` is the companion crash-recovery negative control. It changes only the active-session pointer, crashes, then incorrectly declares the system idle without replay or compensation. TLC must find a `ConvergedAtRest` counterexample, distinguishing a source model with an actual recovery transition from one that simply assumes a clean restart. This still does not prove the Python implementation can recover; its observed marker readback/replay mechanism must be built and tested separately.
+
 ## Required invariants
 
 **Control:** STOP_NOW invalidates queued older epochs; no agent effect may execute on an expired/superseded lease. One authoritative grant epoch; no assumption that an API's prior check atomically covers external Wine effects.
