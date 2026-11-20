@@ -92,6 +92,7 @@ def test_invalid_cursor_never_dispatches(monkeypatch, stream, after, limit):
     _poll(events=[{**_event(), "hwnd": "0x123"}]),
     _poll(events=[{**_event(), "kind": "window.injected"}]),
     _poll(events=[{**_event(), "kind": "input.mouseClick"}]),
+    _poll(events=[{**_event(), "kind": ["window.shown"]}]),
     _poll(events=[_event()], next_sequence=0),
     {"contract": "wininspect.observer.read.v0", "status": "idle",
      "next_sequence": 1, "events": [_event()], "reinspect_required": False},
