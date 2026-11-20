@@ -195,6 +195,51 @@ def test_wininspect_caller_cannot_override_pinned_rpc_protocol_version():
     assert sent_payload["params"]["protocol_version"] == "0.3.0"
 
 
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"ok": "false", "result": {}},
+        {"ok": 1, "result": {}},
+        {"ok": None, "result": {}},
+        {"result": {}},
+    ],
+)
+def test_wininspect_refuses_nonboolean_or_missing_rpc_status(reply):
+    response = {"id": "winebot-abc123456789", **reply}
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, response])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="response status invalid"):
+            wininspect.request("daemon.capabilities")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [None, [], "unexpected raw daemon error", 0, {"message": ["unexpected"]}],
+)
+def test_wininspect_refuses_malformed_rpc_error_envelope(error):
+    reply = {"id": "winebot-abc123456789", "ok": False, "error": error}
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, reply])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError) as exc:
+            wininspect.request("daemon.capabilities")
+    assert str(exc.value) in {
+        "WinInspect response error invalid",
+        "WinInspect request failed",
+    }
+    assert "unexpected" not in str(exc.value)
+
+
 def test_wininspect_blocks_mutating_methods():
     with pytest.raises(wininspect.WinInspectError):
         wininspect.request("input.text", {"text": "blocked"})
