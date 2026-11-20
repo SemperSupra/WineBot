@@ -30,3 +30,16 @@ def test_rpc_daemon_uses_upstream_headless_mode(tmp_path):
         "--headless",
         "--bind", "127.0.0.1", "--port", str(wi.DEFAULT_PORT),
     ]
+
+
+def test_real_wine_workflow_refuses_known_unqualified_observer_binary_early():
+    """The observer must not burn a Wine build on a known-failing native ZIP."""
+    repo = Path(__file__).resolve().parents[1]
+    workflow = (repo / ".github/workflows/mvp-ic1-windows-workloads.yml").read_text()
+    gate = "Fail early on the known-unqualified WinInspect observer binary"
+    assert workflow.count(gate) == 1
+    assert workflow.index(gate) < workflow.index("Reclaim disposable standard-runner disk")
+    assert "test -f scripts/ci/qualify-mvp-wininspect-live.py" in workflow
+    assert "WinInspectPortable-v0.4.4.zip" in workflow
+    assert "IC1_OBSERVER_CAUSE=upstream_binary_unqualified" in workflow
+    assert "exit 1" in workflow[workflow.index(gate):workflow.index("Reclaim disposable standard-runner disk")]
