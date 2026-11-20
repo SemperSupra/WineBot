@@ -44,7 +44,8 @@ jobs:
           # Only the optional live observer path is blocked. The owning MVP
           # without this harness must retain its normal real-Wine acceptance.
           if test -f scripts/ci/qualify-mvp-wininspect-live.py &&
-             grep -Fq 'WinInspectPortable-v0.4.4.zip' docker/Dockerfile; then
+             { grep -Fq 'WinInspectPortable-v0.4.4.zip' docker/Dockerfile ||
+               grep -Fq '6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04' docker/Dockerfile; }; then
             echo 'IC1_OBSERVER_CAUSE=upstream_binary_unqualified'
             echo 'IC1_OBSERVER_GATE=await_corrected_source_qualified_artifact'
             exit 1
