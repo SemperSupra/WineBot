@@ -336,6 +336,10 @@ OBSERVER_EVENT_CONTRACT = "observer.portable.v0"
 OBSERVER_FRAME_KEYS = frozenset(
     {"contract", "stream", "source", "sequence", "status", "kind"}
 )
+OBSERVER_EVENT_KINDS = frozenset({
+    "window.created", "window.shown", "window.hidden", "window.destroyed",
+    "window.location_changed", "window.focused", "window.foreground_changed",
+})
 
 
 def _observer_sequence(value: Any) -> int:
@@ -411,7 +415,7 @@ def observer_poll(stream: str, after_sequence: int,
                 or item.get("stream") != stream
                 or item.get("source") != "win32.setwineventhook"
                 or item.get("status") != "observed"
-                or not isinstance(kind, str) or not 1 <= len(kind) <= 64
+                or kind not in OBSERVER_EVENT_KINDS
                 or not last < seq <= next_sequence):
             raise WinInspectError("WinInspect observer response contract mismatch")
         last = seq
