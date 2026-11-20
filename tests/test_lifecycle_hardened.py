@@ -188,11 +188,22 @@ def test_lifecycle_shutdown_idempotent_guard(tmp_path):
                     "/lifecycle/shutdown",
                     headers={"X-API-Key": "test-token"},
                 )
+                cancelled = client.post(
+                    "/lifecycle/cancel",
+                    headers={"X-API-Key": "test-token"},
+                )
 
     assert res1.status_code == 200
     assert res1.json()["status"] == "shutting_down"
     assert res2.status_code == 200
-    assert res2.json()["status"] == "already_shutting_down"
+    # Existing pending operation is replayed; never schedule a second worker
+    # or pretend the request has already torn down any components.
+    assert res2.json()["status"] == "shutting_down"
+    assert res2.json()["reused_pending"] is True
+    assert res2.json()["operation_id"] == res1.json()["operation_id"]
+    assert res2.json()["cancel_before"] == res1.json()["cancel_before"]
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
 
 
 @pytest.mark.anyio

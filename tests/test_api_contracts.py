@@ -204,7 +204,7 @@ def test_windows_focus_endpoint():
     assert response.status_code == 200
     assert response.json()["status"] == "focused"
     mock_safe.assert_called_once_with(
-        ["/automation/bin/x11.sh", "focus-window", "0x1234"]
+        ["/automation/bin/x11.sh", "focus", "0x1234"]
     )
 
 
@@ -461,8 +461,17 @@ def test_lifecycle_shutdown_exposes_operation_status(tmp_path):
     op_res = client.get(f"/operations/{op_id}", headers=_auth())
     assert op_res.status_code == 200
     op = op_res.json()
-    assert op["status"] == "succeeded"
+    # A cancellable graceful request is not a completed shutdown.
+    assert op["status"] == "running"
     assert op["kind"] == "lifecycle_shutdown"
+
+    cancelled = client.post("/lifecycle/cancel", headers=_auth())
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    finished = client.get(f"/operations/{op_id}", headers=_auth())
+    assert finished.status_code == 200
+    assert finished.json()["status"] == "succeeded"
+    assert finished.json()["result"]["status"] == "cancelled"
 
 
 def test_resume_session_rolls_back_state_on_broker_failure(tmp_path):

@@ -1,0 +1,107 @@
+name: MVP IC1 real Windows GUI and OpenTTD on layered Wine11
+
+# A focused acceptance slice; program-level game save and broker-input
+# causality are NOT claimed by this preliminary Windows workload smoke.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mvp-ic1-windows-workloads.yml'
+      - 'scripts/ci/qualify-mvp-windows-workloads.sh'
+      - 'scripts/ci/qualify-mvp-broker-real-keyboard.py'
+permissions:
+  contents: read
+concurrency:
+  group: ic1-windows-workloads-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+jobs:
+  real-windows-workloads:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact IC1 workload candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: layered
+      - name: Checkout pinned standalone Wine11 source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          persist-credentials: false
+          ref: 8c5ed8019a3518cf534b158662755172bfce7c59
+          path: wine11-candidate
+      - name: Reclaim disposable standard-runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+      - name: Fetch and checksum original rights-cleared Windows executables
+        timeout-minutes: 6
+        working-directory: layered
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          mkdir -p apps/mvp-ic1/npp apps/mvp-ic1/openttd
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.9.1/npp.8.9.9.1.portable.x64.zip' -o "$work/npp.zip"
+          printf 'cbcefa34677e10fe6dd19802f7d6b3b9860cd6de62afeaae7680e09c51b47779  %s\n' \
+            "$work/npp.zip" | sha256sum --status -c - || { echo 'MVP_WORKLOAD stage=editor_digest_failed'; exit 1; }
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            'https://cdn.openttd.org/openttd-releases/15.3/openttd-15.3-windows-win64.zip' -o "$work/game.zip"
+          printf '61c0a6a43d81008c7ff4330fb56351bbf66a980cdad041f1d0e08b51f2eeb34c  %s\n' \
+            "$work/game.zip" | sha256sum --status -c - || { echo 'MVP_WORKLOAD stage=game_digest_failed'; exit 1; }
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            'https://cdn.openttd.org/opengfx-releases/8.0/opengfx-8.0-all.zip' -o "$work/gfx.zip"
+          printf '43a0c1dabf39cb865394f3a6cc36d4da5c10ecfaaf55652043104806810903be  %s\n' \
+            "$work/gfx.zip" | sha256sum --status -c - || { echo 'MVP_WORKLOAD stage=gfx_digest_failed'; exit 1; }
+          for zip in npp game gfx; do
+            if unzip -Z1 "$work/$zip.zip" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+              echo 'MVP_WORKLOAD stage=archive_traversal'
+              exit 1
+            fi
+          done
+          unzip -qq "$work/npp.zip" -d apps/mvp-ic1/npp
+          unzip -qq "$work/game.zip" -d apps/mvp-ic1/openttd
+          unzip -qq "$work/gfx.zip" -d "$work/gfx"
+          test -f apps/mvp-ic1/npp/notepad++.exe || { echo 'MVP_WORKLOAD stage=editor_payload_layout'; exit 1; }
+          exe="$(find apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)"
+          test -n "$exe" || { echo 'MVP_WORKLOAD stage=game_payload_layout'; exit 1; }
+          # OpenTTD v15.3 MakeNewGameDone() runs game_start.scr after world
+          # generation. This deterministic upstream-supported hook is baked
+          # into the immutable app pack; it does not modify the user profile.
+          game_scripts="$(dirname "$exe")/scripts"
+          mkdir -p "$game_scripts"
+          test ! -e "$game_scripts/game_start.scr" ||
+            { echo 'MVP_WORKLOAD stage=script_collision'; exit 1; }
+          printf 'save ic1_winebot_mvp\n' > "$game_scripts/game_start.scr"
+          basedir="$(dirname "$exe")/baseset"
+          mkdir -p "$basedir"
+          find "$work/gfx" -type f \( -iname '*.tar' -o -iname '*.obg' -o -iname '*.grf' \) \
+            -exec cp -n '{}' "$basedir" \;
+          test -n "$(find "$basedir" -type f -print -quit)" ||
+            { echo 'MVP_WORKLOAD stage=gfx_missing'; exit 1; }
+          test -z "$(find apps/mvp-ic1 -type l -print -quit)" ||
+            { echo 'MVP_WORKLOAD stage=untrusted_symlink'; exit 1; }
+          echo 'MVP_WORKLOAD stage=original_assets_pinned'
+      - name: Syntax qualify bounded real workload harness
+        working-directory: layered
+        run: |
+          bash -n scripts/ci/qualify-mvp-windows-workloads.sh
+          # Reject accidentally appended/duplicated workload segments before
+          # spending minutes rebuilding the pinned Wine and Windows fixtures.
+          test "$(grep -Fc "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'" scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
+          test "$(grep -Fc '# OpenTTD 15.3 source documents' scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
+          test "$(tail -n 1 scripts/ci/qualify-mvp-windows-workloads.sh)" = "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'"
+          python3 -m py_compile scripts/ci/qualify-mvp-broker-real-keyboard.py
+          test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+          echo 'MVP_WORKLOAD stage=harness_syntax_pass'
+      - name: Run disposable app and game within exact layered Wine11
+        working-directory: layered
+        timeout-minutes: 60
+        run: bash scripts/ci/qualify-mvp-windows-workloads.sh
+      - name: Fixed-category receipt only
+        if: success()
+        run: echo 'MVP_WORKLOAD stage=real_gui_and_game_bounded_pass'

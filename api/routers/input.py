@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import os
@@ -7,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
@@ -390,6 +392,9 @@ async def click_at(data: ClickModel):
     win_title = data.window_title or "unknown"
 
     if not target_win_id:
+        # Discovery itself moves the pointer; do not swallow a policy denial.
+        if not await broker.check_access():
+            raise HTTPException(status_code=423, detail="Agent control denied by policy")
         try:
             await run_async_command(["xdotool", "mousemove", str(data.x), str(data.y)])
             win_res = await run_async_command(["xdotool", "getmousereturnwindow"])
@@ -435,7 +440,18 @@ async def click_at(data: ClickModel):
 
     cmd.extend(["click", str(data.button)])
 
-    result = await run_async_command(cmd)
+    # Target discovery and trace emission can await or outlive a lease.
+    # Gate immediately before the actual pointer motion / click.
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
+    try:
+        with broker.track_async_input():
+            if not await broker.check_access():
+                raise HTTPException(status_code=423, detail="Agent control denied by policy")
+            result = await run_async_command(cmd)
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=423, detail="Agent input interrupted by policy") from None
     if not result.get("ok"):
         emit_operation_timing(
             session_dir,
@@ -549,14 +565,29 @@ async def key_press(data: KeyModel):
         },
     )
 
-    result = await _send_keys(
-        keys=data.keys,
-        window_id=target_win_id,
-        window_title=target_win_title,
-        backend_preference=backend,
-        session_dir=session_dir,
-        timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,
-    )
+    # Revalidate after asynchronous target lookup and request tracing.
+    # This narrows preparation-stage revocation races; in-flight commands
+    # still require a separate cancellation/serialization design.
+    if not await broker.check_access():
+        raise HTTPException(status_code=423, detail="Agent control denied by policy")
+
+    # Only the explicit asynchronous xdotool backend is preemptible here.
+    # Synchronous AHK and auto-backend selection remain separate acceptance
+    # work; never claim complete in-flight command cancellation from this gate.
+    try:
+        with broker.track_async_input() if backend == "xdotool" else nullcontext():
+            if not await broker.check_access():
+                raise HTTPException(status_code=423, detail="Agent control denied by policy")
+            result = await _send_keys(
+                keys=data.keys,
+                window_id=target_win_id,
+                window_title=target_win_title,
+                backend_preference=backend,
+                session_dir=session_dir,
+                timeout=config.WINEBOT_TIMEOUT_INPUT_KEY_SECONDS,
+            )
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=423, detail="Agent input interrupted by policy") from None
 
     if not result.get("ok"):
         emit_operation_timing(

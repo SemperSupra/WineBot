@@ -5,7 +5,8 @@ ARG BUILD_DATE=unknown
 ARG SOURCE_REPO="https://github.com/SemperSupra/WineBot"
 
 # --- Stage 1: Tool Builders (Parallel) ---
-FROM debian:trixie-slim AS tool-base
+ARG TOOL_BUILDER_BASE_IMAGE=debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a
+FROM ${TOOL_BUILDER_BASE_IMAGE} AS tool-base
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY windows-tools/download_tool.sh /download_tool.sh
 
