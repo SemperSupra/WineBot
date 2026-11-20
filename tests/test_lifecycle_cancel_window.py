@@ -120,7 +120,11 @@ def test_default_graceful_shutdown_advertises_real_cancel_window():
             response = await lifecycle.lifecycle_shutdown()
             assert response["delay_seconds"] >= 10
             assert response["cancel_command"] == "POST /lifecycle/cancel"
-            assert response["cancel_before"] >= lifecycle.time.time() + 9
+            # The public response is deliberately integer epoch seconds;
+            # compare its exact truncation to the authoritative fractional
+            # deadline, then prove the real underlying window is still open.
+            assert response["cancel_before"] == int(lifecycle._shutdown_due_at)
+            assert lifecycle._shutdown_due_at >= lifecycle.time.time() + 9
             assert await lifecycle.lifecycle_cancel() == {"status": "cancelled"}
             atomic.assert_not_awaited()
             signal.assert_not_called()
