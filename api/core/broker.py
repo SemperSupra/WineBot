@@ -188,6 +188,12 @@ class InputBroker:
     async def check_access(self) -> bool:
         """Returns True if agent is allowed to execute."""
         with self._lock:
+            # STOP_NOW is an absolute veto, including headless and agent-only
+            # sessions. Never admit a new ticket after human emergency stop.
+            if self.state.user_intent == UserIntent.STOP_NOW:
+                if self.state.control_mode == ControlMode.AGENT:
+                    self.revoke_agent("user_stop_now")
+                return False
             if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
                 return False
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
