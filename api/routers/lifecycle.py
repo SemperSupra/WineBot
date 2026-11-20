@@ -418,6 +418,18 @@ def _restore_resume_state(
         os.environ["WINEBOT_SESSION_ID"] = os.path.basename(previous_session_dir)
         if previous_current_state:
             write_session_state(previous_session_dir, previous_current_state)
+        # Compensate the profile link as well as the active-session pointer.
+        old_user = os.path.join(previous_session_dir, "user")
+        _link_profile_checked(old_user)
+
+
+def _link_profile_checked(user_dir: str) -> None:
+    link_wine_user_dir(user_dir)
+    path = os.path.join(
+        os.getenv("WINEPREFIX", "/wineprefix"), "drive_c", "users", "winebot"
+    )
+    if not os.path.islink(path) or os.path.realpath(path) != os.path.realpath(user_dir):
+        raise RuntimeError("Session profile link verification failed")
 
 
 def _transition_marker_path(session_dir: str) -> str:
@@ -438,6 +450,12 @@ def _write_transition_marker(session_dir: str, phase: str, extra: dict[str, Any]
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, _transition_marker_path(session_dir))
+    # Persist the rename itself, not just the temporary file contents.
+    directory_fd = os.open(session_dir, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _clear_transition_marker(session_dir: str | None) -> None:
@@ -910,7 +928,7 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
             os.environ["WINEBOT_SESSION_DIR"] = target_dir
             os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
             os.environ["WINEBOT_USER_DIR"] = user_dir
-            link_wine_user_dir(user_dir)
+            _link_profile_checked(user_dir)
             write_session_state(target_dir, SESSION_STATE_ACTIVE)
             append_lifecycle_event(
                 target_dir, "session_resumed", "Session resumed via API", source="api"
