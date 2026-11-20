@@ -1,6 +1,7 @@
 """Restart handover recovery tests: synthetic files, no Wine or host effects."""
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -112,3 +113,24 @@ def test_malformed_marker_fails_closed(tmp_path):
     (target / "session.transition.json").write_text("{not-json", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Invalid handover marker"):
         reconcile_active_handover(str(target), str(profile))
+
+
+def test_live_resume_profile_link_is_verified_fail_closed(tmp_path, monkeypatch):
+    from api.routers.lifecycle import _link_profile_checked
+
+    prefix = tmp_path / "wineprefix"
+    user = tmp_path / "A" / "user"
+    user.mkdir(parents=True)
+    monkeypatch.setenv("WINEPREFIX", str(prefix))
+    _link_profile_checked(str(user))
+    link = prefix / "drive_c" / "users" / "winebot"
+    assert link.is_symlink()
+    assert link.resolve() == user.resolve()
+
+    other_user = tmp_path / "B" / "user"
+    other_user.mkdir(parents=True)
+    # Model a failed linker: it silently returns while leaving the old link.
+    with patch("api.routers.lifecycle.link_wine_user_dir"):
+        with pytest.raises(RuntimeError, match="profile link verification failed"):
+            _link_profile_checked(str(other_user))
+    assert link.resolve() == user.resolve()
