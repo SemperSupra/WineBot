@@ -466,11 +466,15 @@ def _clear_transition_marker(session_dir: str | None) -> None:
     if not session_dir:
         return
     path = _transition_marker_path(session_dir)
-    try:
-        if os.path.exists(path):
-            os.unlink(path)
-    except Exception:
-        pass
+    if os.path.islink(path):
+        raise RuntimeError("Refusing symlink transition marker")
+    if os.path.exists(path):
+        os.unlink(path)
+        directory_fd = os.open(session_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 @router.get("/operations/{operation_id}")
@@ -1035,9 +1039,12 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
             if current_session and current_session != target_dir:
                 if previous_current_state in (None, SESSION_STATE_ACTIVE):
                     write_session_state(current_session, SESSION_STATE_SUSPENDED)
-            _clear_transition_marker(target_dir)
+            # Keep the active-side intent until last: if we die after
+            # removing the peer marker, startup can verify converged state
+            # and finish active-side cleanup idempotently.
             if current_session and current_session != target_dir:
                 _clear_transition_marker(current_session)
+            _clear_transition_marker(target_dir)
         except Exception as exc:
             _restore_resume_state(
                 previous_session_dir=current_session,
