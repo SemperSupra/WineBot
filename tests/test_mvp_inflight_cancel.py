@@ -5,6 +5,10 @@ the pending input cannot complete. It does not send real keystrokes, inspect
 users or claim cancellation of already-delivered X11/AHK effects.
 """
 import asyncio
+import contextlib
+import os
+import signal
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -85,5 +89,59 @@ def test_inflight_xdotool_path_interrupted_by_human_stop(path):
         finally:
             with broker._lock:
                 broker.state = saved
+
+    asyncio.run(run())
+
+
+def test_cancelled_real_async_child_is_terminated_and_reaped(tmp_path):
+    """A revoked asynchronous input waiter must not leave its direct child alive.
+
+    Real local Python subprocess, synthetic fixture, no desktop/input/network.
+    This is not a guarantee about process groups or already emitted X11 events.
+    """
+    from api.utils.process import run_async_command
+
+    pid_file = tmp_path / "synthetic-child.pid"
+
+    async def run():
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import os, sys, time; from pathlib import Path; "
+                "Path(sys.argv[1]).write_text(str(os.getpid()), encoding='ascii'); "
+                "time.sleep(30)"
+            ),
+            str(pid_file),
+        ]
+        task = asyncio.create_task(run_async_command(command, timeout=3))
+        child_pid = None
+        try:
+            # Wait for the actual child to acknowledge readiness. Bounded to
+            # two seconds; no assumed spawn delay or hard-coded process ID.
+            for _ in range(200):
+                if pid_file.exists():
+                    raw = pid_file.read_text(encoding="ascii")
+                    if raw.isdecimal():
+                        child_pid = int(raw)
+                        break
+                await asyncio.sleep(0.01)
+            assert child_pid is not None and child_pid > 0
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=2)
+
+            # A successfully reaped direct child must no longer have a PID.
+            with pytest.raises(ProcessLookupError):
+                os.kill(child_pid, 0)
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                    await asyncio.wait_for(task, timeout=2)
+            if child_pid is not None:
+                # Safety net in case a regression leaves the synthetic child.
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(child_pid, signal.SIGKILL)
 
     asyncio.run(run())
