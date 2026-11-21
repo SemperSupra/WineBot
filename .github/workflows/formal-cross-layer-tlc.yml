@@ -12,6 +12,7 @@ on:
       - "api/utils/files.py"
       - "tests/test_invariants.py"
       - "tests/test_mvp_control_safety.py"
+      - "tests/test_mvp_inflight_cancel.py"
       - "tests/test_handover_restart_recovery.py"
       - "scripts/ci/test.sh"
       - ".github/workflows/formal-cross-layer-tlc.yml"
