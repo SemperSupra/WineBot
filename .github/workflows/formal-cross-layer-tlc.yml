@@ -9,6 +9,8 @@ on:
       - "api/routers/input.py"
       - "api/routers/lifecycle.py"
       - "api/server.py"
+      - "api/utils/files.py"
+      - "tests/test_invariants.py"
       - "tests/test_mvp_control_safety.py"
       - "tests/test_handover_restart_recovery.py"
       - "scripts/ci/test.sh"
