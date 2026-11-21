@@ -423,6 +423,17 @@ def _restore_resume_state(
         os.environ["WINEBOT_SESSION_ID"] = os.path.basename(previous_session_dir)
         if previous_current_state:
             write_session_state(previous_session_dir, previous_current_state)
+        # Restore and verify the Wine profile link after a failed activation.
+        _link_profile_checked(os.path.join(previous_session_dir, "user"))
+
+
+def _link_profile_checked(user_dir: str) -> None:
+    link_wine_user_dir(user_dir)
+    profile_link = os.path.join(
+        os.getenv("WINEPREFIX", "/wineprefix"), "drive_c", "users", "winebot"
+    )
+    if not os.path.islink(profile_link) or os.path.realpath(profile_link) != os.path.realpath(user_dir):
+        raise RuntimeError("Session profile link verification failed")
 
 
 def _transition_marker_path(session_dir: str) -> str:
@@ -443,6 +454,12 @@ def _write_transition_marker(session_dir: str, phase: str, extra: dict[str, Any]
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, _transition_marker_path(session_dir))
+    # fsync directory so the intent rename survives a process crash/reboot.
+    directory_fd = os.open(session_dir, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _clear_transition_marker(session_dir: str | None) -> None:
@@ -991,7 +1008,7 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
             os.environ["WINEBOT_SESSION_DIR"] = target_dir
             os.environ["WINEBOT_SESSION_ID"] = os.path.basename(target_dir)
             os.environ["WINEBOT_USER_DIR"] = user_dir
-            link_wine_user_dir(user_dir)
+            _link_profile_checked(user_dir)
             write_session_state(target_dir, SESSION_STATE_ACTIVE)
             append_lifecycle_event(
                 target_dir, "session_resumed", "Session resumed via API", source="api"
@@ -1023,6 +1040,16 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
                 previous_target_state=previous_target_state,
                 previous_current_state=previous_current_state,
             )
+            # A first activation has no older owner to compensate to.
+            # Retain transaction intent for startup reconciliation rather
+            # than silently acknowledging an incomplete operation.
+            if not current_session and read_session_dir() == target_dir:
+                await fail_operation(
+                    operation_id, error="handover requires restart reconciliation"
+                )
+                raise RuntimeError(
+                    "Interrupted session activation requires restart reconciliation"
+                ) from exc
             _clear_transition_marker(target_dir)
             if current_session and current_session != target_dir:
                 _clear_transition_marker(current_session)
