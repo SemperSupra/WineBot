@@ -68,6 +68,14 @@ def _atomic_write_text(path: str, content: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
+        # fsync of the temporary file alone does not make the directory
+        # entry replacement durable after host power loss or filesystem
+        # replay. A failed directory sync must fail closed to the caller.
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
