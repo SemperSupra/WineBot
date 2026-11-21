@@ -87,6 +87,29 @@ jobs:
           persist-credentials: false
           path: contracts
 
+      - name: Attest exact external conformance revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=205666f7f0235cb0fc51ca8a5af84f9f67831a74
+          actual="$(git -C contracts rev-parse HEAD)"
+          test "$actual" = "$expected" || {
+            echo "CONTRACTS_SOURCE=REJECTED_REVISION_MISMATCH"
+            exit 1
+          }
+          test -z "$(git -C contracts status --porcelain)" || {
+            echo "CONTRACTS_SOURCE=REJECTED_DIRTY_CHECKOUT"
+            exit 1
+          }
+          echo "CONTRACTS_SOURCE=EXACT_COMMIT_VERIFIED"
+          echo "CONTRACTS_REVISION=$actual"
+          {
+            echo "### External conformance source custody"
+            echo "Contract repository: mark-e-deyoung/winebot-contracts"
+            echo "Exact revision: \`$actual\`"
+            echo "Admitted: yes; test verdict is independently determined"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
