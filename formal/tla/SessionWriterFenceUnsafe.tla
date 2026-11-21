@@ -25,7 +25,7 @@ UnsafeCommit(w) ==
   /\ phase[w] = "seen"
   /\ owner' = Target(w)
   /\ epoch' = observed[w] + 1
-  /\ staleCommit' = staleCommit \/ (observed[w] # epoch)
+  /\ staleCommit' = (staleCommit \/ (observed[w] # epoch))
   /\ phase' = [phase EXCEPT ![w] = "done"]
   /\ UNCHANGED observed
 
