@@ -18,6 +18,9 @@ DEFAULT_TIMEOUT_SECONDS = 3.0
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
     "daemon.health",
+    "observer.capabilities",
+    "observer.open",
+    "observer.poll",
     "daemon.capabilities",
     "daemon.status",
     "daemon.metrics",
@@ -50,6 +53,14 @@ _daemon_proc: subprocess.Popen | None = None
 
 class WinInspectError(RuntimeError):
     """Raised when the WinInspect daemon cannot satisfy a request."""
+
+
+class WinInspectRPCError(WinInspectError):
+    """A failed RPC with a normalized, machine-readable error code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def enabled() -> bool:
@@ -291,7 +302,23 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         raise WinInspectError("WinInspect response correlation failed")
     if not response.get("ok"):
         error = response.get("error") or {}
-        raise WinInspectError(str(error.get("message") or error or "WinInspect request failed"))
+        if isinstance(error, dict):
+            code = error.get("code")
+            code = code if isinstance(code, str) else ""
+            message = str(error.get("message") or error or "WinInspect request failed")
+        else:
+            code = ""
+            message = str(error or "WinInspect request failed")
+        if method.startswith("observer."):
+            allowed = {
+                "E_OBSERVER_OVERFLOW", "E_OBSERVER_GAP",
+                "E_OBSERVER_STALE_SOURCE", "E_OBSERVER_INVALID_CURSOR",
+                "E_OBSERVER_UNSUPPORTED", "E_BAD_REQUEST", "E_ACCESS_DENIED",
+            }
+            code = code if code in allowed else "E_OBSERVER_UNKNOWN"
+            # Never disclose an untrusted daemon error string or hello identity.
+            message = "WinInspect observer RPC rejected"
+        raise WinInspectRPCError(code, message)
     return {
         "result": response.get("result"),
         "metrics": response.get("metrics"),
@@ -301,6 +328,111 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
 
 def capabilities() -> dict[str, Any]:
     return request("daemon.capabilities")["result"]
+
+
+MAX_OBSERVER_SEQUENCE = (1 << 53) - 1
+OBSERVER_READ_CONTRACT = "wininspect.observer.read.v0"
+OBSERVER_EVENT_CONTRACT = "observer.portable.v0"
+OBSERVER_FRAME_KEYS = frozenset(
+    {"contract", "stream", "source", "sequence", "status", "kind"}
+)
+OBSERVER_EVENT_KINDS = frozenset({
+    "window.created", "window.shown", "window.hidden", "window.destroyed",
+    "window.location_changed", "window.focused", "window.foreground_changed",
+})
+
+
+def _observer_sequence(value: Any) -> int:
+    if type(value) not in (int, float) or not 0 <= value <= MAX_OBSERVER_SEQUENCE:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    if int(value) != value:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    return int(value)
+
+
+def observer_capabilities() -> dict[str, Any]:
+    """Discover opt-in source availability; registration is not delivery proof."""
+    result = request("observer.capabilities")["result"]
+    if not isinstance(result, dict) or result.get("contract") != OBSERVER_READ_CONTRACT:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    if result.get("actuation_authority") is not False:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    allowed = (
+        "contract", "source", "runtime", "state", "event_delivery",
+        "scope", "target_identity", "actuation_authority", "max_batch", "retention",
+    )
+    return {field: result[field] for field in allowed if field in result}
+
+
+def observer_open() -> dict[str, Any]:
+    """Return an explicit source-incarnation/offset, never a desktop control lease."""
+    result = request("observer.open")["result"]
+    if not isinstance(result, dict) or result.get("contract") != OBSERVER_READ_CONTRACT:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    stream = result.get("stream")
+    if not isinstance(stream, str) or not 1 <= len(stream) <= 96:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    after = _observer_sequence(result.get("after_sequence"))
+    if result.get("cursor_mode") != "explicit_stream_and_offset":
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    return {
+        "contract": OBSERVER_READ_CONTRACT,
+        "stream": stream,
+        "after_sequence": after,
+        "cursor_mode": "explicit_stream_and_offset",
+    }
+
+
+def observer_poll(stream: str, after_sequence: int,
+                  max_events: int = 32) -> dict[str, Any]:
+    """Read only canonical event kinds; on overflow/stale source, reinspect."""
+    if not isinstance(stream, str) or not 1 <= len(stream) <= 96:
+        raise WinInspectError("Invalid WinInspect observer cursor")
+    if type(after_sequence) is not int or not 0 <= after_sequence <= MAX_OBSERVER_SEQUENCE:
+        raise WinInspectError("Invalid WinInspect observer cursor")
+    if type(max_events) is not int or not 1 <= max_events <= 128:
+        raise WinInspectError("Invalid WinInspect observer batch bound")
+    result = request("observer.poll", {
+        "stream": stream, "after_sequence": after_sequence, "max_events": max_events,
+    })["result"]
+    if not isinstance(result, dict) or result.get("contract") != OBSERVER_READ_CONTRACT:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    status = result.get("status")
+    events = result.get("events")
+    if status not in ("observed", "idle") or not isinstance(events, list):
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    if len(events) > max_events or (status == "idle") != (len(events) == 0):
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    next_sequence = _observer_sequence(result.get("next_sequence"))
+    if next_sequence < after_sequence or result.get("reinspect_required") is not False:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    canonical = []
+    last = after_sequence
+    for item in events:
+        if not isinstance(item, dict) or set(item) != OBSERVER_FRAME_KEYS:
+            raise WinInspectError("WinInspect observer response contract mismatch")
+        seq = _observer_sequence(item.get("sequence"))
+        kind = item.get("kind")
+        if (item.get("contract") != OBSERVER_EVENT_CONTRACT
+                or item.get("stream") != stream
+                or item.get("source") != "win32.setwineventhook"
+                or item.get("status") != "observed"
+                or not isinstance(kind, str) or kind not in OBSERVER_EVENT_KINDS
+                or not last < seq <= next_sequence):
+            raise WinInspectError("WinInspect observer response contract mismatch")
+        last = seq
+        canonical.append({
+            "contract": OBSERVER_EVENT_CONTRACT, "stream": stream,
+            "source": "win32.setwineventhook", "sequence": seq,
+            "status": "observed", "kind": kind,
+        })
+    if events and last != next_sequence:
+        raise WinInspectError("WinInspect observer response contract mismatch")
+    return {
+        "contract": OBSERVER_READ_CONTRACT,
+        "status": status, "next_sequence": next_sequence,
+        "events": canonical, "reinspect_required": False,
+    }
 
 
 def health() -> dict[str, Any]:
