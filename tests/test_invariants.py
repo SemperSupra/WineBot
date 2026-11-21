@@ -1,4 +1,5 @@
 import os
+import stat
 from unittest.mock import patch
 
 import pytest
@@ -93,3 +94,40 @@ def test_critical_state_write_is_fail_closed(tmp_path):
     with patch("api.utils.files.os.replace", side_effect=OSError("disk failure")):
         with pytest.raises(OSError):
             write_session_state(str(session_dir), "active")
+
+
+def test_atomic_session_state_fsyncs_file_then_directory(tmp_path):
+    """Success means both data and the new directory entry were synced."""
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    real_fsync = os.fsync
+    fsync_targets = []
+
+    def instrument(fd):
+        fsync_targets.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        return real_fsync(fd)
+
+    with patch("api.utils.files.os.fsync", side_effect=instrument):
+        write_session_state(str(session_dir), "active")
+
+    assert fsync_targets == ["file", "dir"]
+    assert (session_dir / "session.state").read_text(encoding="utf-8") == "active"
+
+
+def test_atomic_session_state_directory_fsync_failure_is_not_acknowledged(tmp_path):
+    """A renamed-but-uncommitted file must raise rather than report success."""
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    real_fsync = os.fsync
+
+    def directory_fail(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("directory sync rejected")
+        return real_fsync(fd)
+
+    with patch("api.utils.files.os.fsync", side_effect=directory_fail):
+        with pytest.raises(OSError, match="directory sync rejected"):
+            write_session_state(str(session_dir), "active")
+    # The rename may have occurred before the durability failure; callers
+    # must reconcile the on-disk state rather than assume rollback.
+    assert list(session_dir.glob("tmp-*")) == []
