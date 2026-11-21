@@ -58,7 +58,15 @@ ALLOWED_PREFIXES: Final[list[str]] = [
 ]
 
 
-def _atomic_write_text(path: str, content: str) -> None:
+def _atomic_write_text(
+    path: str, content: str, *, durable_directory: bool = False
+) -> None:
+    """Atomically replace one file; optionally persist its directory entry.
+
+    File fsync protects the replacement contents, but POSIX rename durability
+    requires a parent-directory fsync before reporting a state transition
+    committed. Do not silently swallow a failed session-state commit.
+    """
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix="tmp-", dir=directory, text=True)
@@ -68,6 +76,12 @@ def _atomic_write_text(path: str, content: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
+        if durable_directory:
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -406,7 +420,7 @@ def ensure_user_profile(user_dir: str) -> None:
 
 
 def write_session_dir(path: str) -> None:
-    _atomic_write_text(SESSION_FILE, path)
+    _atomic_write_text(SESSION_FILE, path, durable_directory=True)
     set_current_session_dir(path)
 
 
@@ -752,7 +766,9 @@ def link_wine_user_dir(user_dir: str) -> None:
 
 
 def write_session_state(session_dir: str, state: str) -> None:
-    _atomic_write_text(os.path.join(session_dir, "session.state"), state)
+    _atomic_write_text(
+        os.path.join(session_dir, "session.state"), state, durable_directory=True
+    )
 
 
 def get_instance_mode() -> str:
