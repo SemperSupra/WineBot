@@ -4,10 +4,10 @@ Synthetic subprocess only: no real Wine process, network port or user files.
 """
 import runpy
 from pathlib import Path
-
-import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from api.core import wininspect as wi
 
