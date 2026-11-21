@@ -22,7 +22,7 @@ def test_sessions_resume_concurrent_calls_idempotent(tmp_path):
     ), patch("api.routers.lifecycle.write_session_dir"):
         with patch("api.routers.lifecycle.write_session_state"):
             with patch("api.routers.lifecycle.append_lifecycle_event"):
-                with patch("api.routers.lifecycle.link_wine_user_dir"):
+                with patch("api.routers.lifecycle._link_profile_checked"):
                     with patch("api.routers.lifecycle.ensure_user_profile"):
                         with patch("api.routers.lifecycle.broker.update_session"):
                             res1 = client.post(
