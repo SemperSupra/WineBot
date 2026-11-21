@@ -1,0 +1,175 @@
+name: Windows Installer Fixture Parity RDTE
+
+# Original Windows API fixture only. Zero private assets, no uploads or releases.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-installer-fixture-rdte.yml'
+      - 'cmd/windows-installer-fixture/**'
+      - 'cmd/installer-capture/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fixture-parity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  windows-native-reference:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Pinned Go compiler
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: cmd/windows-installer-fixture/go.mod
+          cache: false
+      - name: Native WinAPI file and HKCU install/uninstall
+        shell: pwsh
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          GOTOOLCHAIN: 'local'
+          WINEBOT_FIXTURE_PERMIT: synthetic-ci
+        run: |
+          Push-Location cmd/windows-installer-fixture
+          go build -trimpath -o "$env:RUNNER_TEMP\fixture.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "WIN_INSTALL_FIXTURE stage=build_failed" }
+          Pop-Location
+          & "$env:RUNNER_TEMP\fixture.exe" install
+          if ($LASTEXITCODE -ne 0) { throw "WIN_INSTALL_FIXTURE stage=native_install_failed" }
+          $key = 'HKCU:\Software\WineBotInstallerFixture'
+          $state = (Get-ItemProperty -Path $key -Name InstallState -ErrorAction Stop).InstallState
+          if ($state -ne 'synthetic-v1') { throw "WIN_INSTALL_FIXTURE stage=native_registry_failed" }
+          $proof = Join-Path $env:APPDATA 'WineBotInstallerFixture\installed.txt'
+          if ((Get-Content -Raw -Path $proof).Trim() -ne 'synthetic-v1') {
+            throw "WIN_INSTALL_FIXTURE stage=native_file_failed"
+          }
+          & "$env:RUNNER_TEMP\fixture.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { throw "WIN_INSTALL_FIXTURE stage=native_uninstall_failed" }
+          if ((Test-Path $key) -or (Test-Path $proof)) {
+            throw "WIN_INSTALL_FIXTURE stage=native_cleanup_failed"
+          }
+          "WIN_INSTALL_FIXTURE stage=native_pass"
+
+  wine-prefix-registry-observation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Pinned Go compiler
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: cmd/installer-capture/go.mod
+          cache: false
+      - name: Install distro Wine for isolated infrastructure smoke
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 xvfb xauth
+          command -v wine
+          command -v wineboot
+      - name: Compare actual Wine HKCU before and after PE execution
+        shell: bash
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          GOTOOLCHAIN: 'local'
+          WINEBOT_FIXTURE_PERMIT: synthetic-ci
+          WINEDEBUG: '-all'
+          WINEARCH: win64
+          WINEDLLOVERRIDES: 'mscoree,mshtml='
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          export WINEPREFIX="$work/prefix" WORK="$work"
+          mkdir -p "$WINEPREFIX"
+          (cd cmd/windows-installer-fixture && GOOS=windows GOARCH=amd64 go build -trimpath -o "$work/fixture.exe" .)
+          (cd cmd/installer-capture && go build -trimpath -o "$work/capture" .)
+          export WIN_FIXTURE="$work/fixture.exe"
+          xvfb-run -a /bin/bash -euo pipefail -c '
+            timeout 180 wineboot -u >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            test -s "$WINEPREFIX/user.reg" || exit 31
+            cp "$WINEPREFIX/user.reg" "$WORK/before.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-before.json" >/dev/null || exit 33
+            timeout 120 wine "$WIN_FIXTURE" install >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            test -s "$WINEPREFIX/user.reg" || exit 32
+            cp "$WINEPREFIX/user.reg" "$WORK/after.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-after.json" >/dev/null || exit 34
+            timeout 120 wine "$WIN_FIXTURE" uninstall >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            test -s "$WINEPREFIX/user.reg" || exit 35
+            cp "$WINEPREFIX/user.reg" "$WORK/uninstalled.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/fs-uninstalled.json" >/dev/null || exit 36
+          ' || { echo 'WIN_INSTALL_FIXTURE stage=wine_execution_failed'; exit 1; }
+          "$work/capture" diff -before "$work/fs-before.json" -after "$work/fs-after.json" -out "$work/fs-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=filesystem_diff_failed'; exit 1; }
+          python3 - "$work/fs-delta.json" <<'PY'
+          import hashlib
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              changes = json.load(f)["changes"]
+          proof_hash = hashlib.sha256(b"synthetic-v1\n").hexdigest()
+          assert any(
+              c.get("path", "").endswith("WineBotInstallerFixture/installed.txt")
+              and c.get("operation") == "added"
+              and c.get("after", {}).get("sha256") == proof_hash
+              for c in changes
+          ), "WIN_INSTALL_FIXTURE stage=installed_file_not_observed"
+          PY
+          "$work/capture" regdiff -before "$work/before.reg" -after "$work/after.reg" -out "$work/delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=wine_registry_parse_failed'; exit 1; }
+          if "$work/capture" regverify -actual "$work/before.reg" -expected "$work/after.reg" >/dev/null 2>&1; then
+            echo 'WIN_INSTALL_FIXTURE stage=false_registry_equivalence'
+            exit 1
+          fi
+          python3 - "$work/delta.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              data = json.load(f)
+          assert data["schema"] == 1
+          assert any(
+              "WineBotInstallerFixture" in c["key"]
+              and c.get("name", "") == "InstallState"
+              and c["operation"] in ("added", "changed")
+              for c in data["changes"]
+          ), "WIN_INSTALL_FIXTURE stage=registry_change_not_observed"
+          PY
+          "$work/capture" diff -before "$work/fs-after.json" -after "$work/fs-uninstalled.json" -out "$work/fs-uninstall-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=filesystem_uninstall_diff_failed'; exit 1; }
+          "$work/capture" regdiff -before "$work/after.reg" -after "$work/uninstalled.reg" -out "$work/registry-uninstall-delta.json" ||
+            { echo 'WIN_INSTALL_FIXTURE stage=registry_uninstall_diff_failed'; exit 1; }
+          python3 - "$work/fs-uninstall-delta.json" "$work/registry-uninstall-delta.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              files = json.load(f)["changes"]
+          with open(sys.argv[2], encoding="utf-8") as f:
+              registry = json.load(f)["changes"]
+          assert any(
+              c.get("path", "").endswith("WineBotInstallerFixture/installed.txt")
+              and c.get("operation") == "removed"
+              for c in files
+          ), "WIN_INSTALL_FIXTURE stage=uninstalled_file_not_observed"
+          assert any(
+              "WineBotInstallerFixture" in c["key"]
+              and c.get("name", "") == "InstallState"
+              and c.get("operation") == "removed"
+              for c in registry
+          ), "WIN_INSTALL_FIXTURE stage=uninstalled_registry_not_observed"
+          PY
+          echo 'WIN_INSTALL_FIXTURE stage=wine_install_uninstall_roundtrip_pass'
