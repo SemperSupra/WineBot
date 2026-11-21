@@ -1,0 +1,91 @@
+name: Formal Cross-Layer Safety (TLC)
+
+on:
+  pull_request:
+    paths:
+      - "formal/**"
+      - ".github/workflows/formal-cross-layer-tlc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-cross-layer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-finite-state-models:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout public synthetic model source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install pinned public TLC v1.7.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/formal"
+          curl --fail --location --silent --show-error --retry 2 \
+            --connect-timeout 15 --max-time 90 \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
+            -o "$RUNNER_TEMP/formal/tla2tools.jar"
+          printf 'bee4a54f3ee3d4afc347c3240ec2d9e93b075104  %s\n' \
+            "$RUNNER_TEMP/formal/tla2tools.jar" | sha1sum --check --status
+          java -version
+      - name: Exhaustive finite-state invariant checking
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          for model in ControlLease SessionHandover ReleaseAdmission; do
+            echo "TLC_MODEL=$model"
+            timeout 90s java -Xmx768m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config "$model.cfg" "$model.tla"
+          done
+          echo "FORMAL_TLC_VERDICT=PASS"
+      - name: Prove adversarial stale-input model is rejected by TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config ControlLeaseUnsafe.cfg \
+              ControlLeaseUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-tlc.log" 2>&1; then
+            echo "FORMAL_NEGATIVE_CONTROL=FAILED_TO_DETECT_STALE_INPUT"
+            exit 1
+          fi
+          # A parser error or missing dependency is not a valid counterexample.
+          if ! grep -Fq 'Invariant NoUnauthorizedEffect is violated' \
+               "$RUNNER_TEMP/formal/unsafe-tlc.log"; then
+            echo "FORMAL_NEGATIVE_CONTROL=NO_EXPECTED_COUNTEREXAMPLE"
+            exit 1
+          fi
+          echo "FORMAL_NEGATIVE_CONTROL=STALE_INPUT_COUNTEREXAMPLE_CONFIRMED"
+      - name: Prove split-owner restart without reconciliation is rejected by TLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config SessionHandoverUnsafe.cfg \
+              SessionHandoverUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-handover.log" 2>&1; then
+            echo "FORMAL_HANDOVER_NEGATIVE=FAILED_TO_DETECT_SPLIT_OWNER"
+            exit 1
+          fi
+          if ! grep -Fq 'Invariant ConvergedAtRest is violated' \
+               "$RUNNER_TEMP/formal/unsafe-handover.log"; then
+            echo "FORMAL_HANDOVER_NEGATIVE=NO_EXPECTED_COUNTEREXAMPLE"
+            exit 1
+          fi
+          echo "FORMAL_HANDOVER_NEGATIVE=SPLIT_OWNER_COUNTEREXAMPLE_CONFIRMED"
+      - name: Run dependency-free model contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s formal/tests -p 'test_*.py' -v

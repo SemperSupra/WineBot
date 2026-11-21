@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from api.core.broker import InputBroker
-from api.core.models import ControlMode, UserIntent
+from api.core.models import ControlMode, ControlPolicyMode, UserIntent
 
 
 def _broker() -> InputBroker:
@@ -110,3 +110,56 @@ def test_active_agent_lease_is_revoked_across_session_handover():
     assert state.control_mode == ControlMode.USER
     assert state.lease_expiry is None
     assert asyncio.run(b.check_access()) is False
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [ControlPolicyMode.HYBRID, ControlPolicyMode.AGENT_ONLY],
+)
+def test_stop_now_is_absolute_veto_in_headless_policy_modes(policy):
+    """A fresh request after emergency stop cannot use implicit access."""
+    with patch("api.core.broker.get_instance_control_mode", return_value="hybrid"):
+        b = InputBroker()
+    with b._lock:
+        b.state.interactive = False
+        b.state.control_mode = ControlMode.AGENT
+        b.state.effective_control_mode = policy
+    assert asyncio.run(b.check_access()) is True
+
+    asyncio.run(b.set_user_intent(UserIntent.STOP_NOW))
+    assert b.get_state().control_mode == ControlMode.USER
+    assert asyncio.run(b.check_access()) is False
+    # Even switching policy after STOP_NOW must not resurrect access.
+    asyncio.run(b.set_session_control_mode(ControlPolicyMode.AGENT_ONLY))
+    assert asyncio.run(b.check_access()) is False
+    with pytest.raises(HTTPException) as stopped:
+        token = asyncio.run(b.issue_grant_challenge())["token"]
+        asyncio.run(b.grant_agent(30, user_ack=True, challenge_token=token))
+    assert stopped.value.status_code == 403
+
+
+def test_stop_now_cancels_tracked_async_input_in_headless_mode():
+    """Fail-stop semantics also apply to already-admitted async input waits."""
+    async def exercise():
+        with patch("api.core.broker.get_instance_control_mode", return_value="hybrid"):
+            b = InputBroker()
+        with b._lock:
+            b.state.interactive = False
+            b.state.control_mode = ControlMode.AGENT
+            b.state.effective_control_mode = ControlPolicyMode.AGENT_ONLY
+        started = asyncio.Event()
+
+        async def held():
+            with b.track_async_input():
+                started.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(held())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await b.set_user_intent(UserIntent.STOP_NOW)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert not b._active_async_input
+        assert not await b.check_access()
+
+    asyncio.run(exercise())
