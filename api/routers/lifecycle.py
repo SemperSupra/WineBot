@@ -1030,6 +1030,11 @@ async def resume_session(data: SessionResumeModel | None = Body(default=None)):
                 interactive,
                 session_control_mode=session_control_mode,
             )
+            # Commit the prior owner out of ACTIVE before removing the durable
+            # intent. If this write is interrupted, startup replay can finish.
+            if current_session and current_session != target_dir:
+                if previous_current_state in (None, SESSION_STATE_ACTIVE):
+                    write_session_state(current_session, SESSION_STATE_SUSPENDED)
             _clear_transition_marker(target_dir)
             if current_session and current_session != target_dir:
                 _clear_transition_marker(current_session)
