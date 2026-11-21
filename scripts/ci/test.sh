@@ -40,4 +40,5 @@ pytest \
   tests/test_mvp_control_api.py \
   tests/test_mvp_mouse_lease.py \
   tests/test_mvp_inflight_cancel.py \
-  tests/test_handover_restart_recovery.py
+  tests/test_handover_restart_recovery.py \
+  tests/test_session_state_durability.py
