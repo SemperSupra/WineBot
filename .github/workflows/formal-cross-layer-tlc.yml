@@ -110,6 +110,10 @@ jobs:
           if ! grep -Fq 'Invariant NoStaleWrite is violated' \
                "$RUNNER_TEMP/formal/unsafe-two-writer.log"; then
             echo "FORMAL_TWO_WRITER_NEGATIVE=NO_EXPECTED_COUNTEREXAMPLE"
+            # All input is versioned public synthetic model source; print
+            # only bounded diagnostic lines, never runner environment dumps.
+            grep -E '^(Error:|Invariant |Semantic errors|.*Error.*|.*SessionWriterFenceUnsafe.*)' \
+              "$RUNNER_TEMP/formal/unsafe-two-writer.log" | head -n 20 || true
             exit 1
           fi
           echo "FORMAL_TWO_WRITER_NEGATIVE=STALE_COMMIT_COUNTEREXAMPLE_CONFIRMED"
