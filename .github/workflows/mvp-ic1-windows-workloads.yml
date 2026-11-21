@@ -8,6 +8,9 @@ on:
       - '.github/workflows/mvp-ic1-windows-workloads.yml'
       - 'scripts/ci/qualify-mvp-windows-workloads.sh'
       - 'scripts/ci/qualify-mvp-broker-real-keyboard.py'
+      - 'tests/test_wininspect_daemon_launch.py'
+      - 'api/core/wininspect.py'
+      - 'scripts/ci/qualify-mvp-wininspect-live.py'
 permissions:
   contents: read
 concurrency:
@@ -33,6 +36,20 @@ jobs:
           persist-credentials: false
           ref: 8c5ed8019a3518cf534b158662755172bfce7c59
           path: wine11-candidate
+      - name: Fail early on the known-unqualified WinInspect observer binary
+        working-directory: layered
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the optional live observer path is blocked. The owning MVP
+          # without this harness must retain its normal real-Wine acceptance.
+          if test -f scripts/ci/qualify-mvp-wininspect-live.py &&
+             { grep -Fq 'WinInspectPortable-v0.4.4.zip' docker/Dockerfile ||
+               grep -Fq '6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04' docker/Dockerfile; }; then
+            echo 'IC1_OBSERVER_CAUSE=upstream_binary_unqualified'
+            echo 'IC1_OBSERVER_GATE=await_corrected_source_qualified_artifact'
+            exit 1
+          fi
       - name: Reclaim disposable standard-runner disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
@@ -90,6 +107,7 @@ jobs:
         working-directory: layered
         run: |
           bash -n scripts/ci/qualify-mvp-windows-workloads.sh
+          python3 -m py_compile scripts/ci/qualify-mvp-wininspect-live.py
           # Reject accidentally appended/duplicated workload segments before
           # spending minutes rebuilding the pinned Wine and Windows fixtures.
           test "$(grep -Fc "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'" scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1

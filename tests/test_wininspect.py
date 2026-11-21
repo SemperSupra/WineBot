@@ -73,6 +73,173 @@ def test_wininspect_request_uses_length_prefixed_json():
     assert sent_payload["params"]["protocol_version"] == "0.3.0"
 
 
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"id": "", "ok": True, "result": {"features": {}}},
+        {"ok": True, "result": {"features": {}}},
+        {"id": "other-actor-request", "ok": True, "result": {"features": {}}},
+        {"id": "", "ok": False, "error": {"code": "E_BAD_METHOD"}},
+        {"id": "other-actor-request", "ok": False, "error": {"code": "E_BAD_METHOD"}},
+    ],
+)
+def test_wininspect_fails_closed_on_missing_or_foreign_rpc_correlation(reply):
+    """A real daemon's empty handler ID must never be accepted or leaked."""
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, reply])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="response correlation failed") as err:
+            wininspect.request("daemon.capabilities")
+    assert "other-actor-request" not in str(err.value)
+    assert fake.sent
+
+
+def test_wininspect_accepts_exact_correlation_on_failed_rpc_before_returning_error():
+    fake = FakeSocket(
+        [
+            {"type": "hello", "version": "0.3.0"},
+            {"id": "winebot-abc123456789", "ok": False,
+             "error": {"code": "E_BAD_REQUEST", "message": "synthetic-denial"}},
+        ]
+    )
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="synthetic-denial"):
+            wininspect.request("daemon.capabilities")
+
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[]", b"null", b"true", b'"raw"', b"12", b"not-json", bytes([255])],
+)
+def test_wininspect_rejects_untrusted_nonobject_or_malformed_rpc_frames(body):
+    """A malformed daemon frame cannot turn into an uncaught API exception."""
+    framed = struct.pack("!I", len(body)) + body
+
+    class OneFrameSocket:
+        def __init__(self):
+            self.data = bytearray(framed)
+
+        def recv(self, size):
+            chunk = bytes(self.data[:size])
+            del self.data[:size]
+            return chunk
+    with pytest.raises(wininspect.WinInspectError, match="invalid WinInspect JSON frame"):
+        wininspect._read_frame(OneFrameSocket())
+
+
+def test_wininspect_rejects_truncated_rpc_frame_without_payload_disclosure():
+    class TruncatedSocket:
+        def __init__(self):
+            self.data = bytearray(struct.pack("!I", 4) + b"{")
+
+        def recv(self, size):
+            chunk = bytes(self.data[:size])
+            del self.data[:size]
+            return chunk
+    with pytest.raises(wininspect.WinInspectError, match="connection closed while reading frame"):
+        wininspect._read_frame(TruncatedSocket())
+
+
+
+@pytest.mark.parametrize(
+    "hello",
+    [
+        {"type": "unexpected", "version": "0.3.0"},
+        {"type": "hello", "version": "0.4.0"},
+        {"type": "hello"},
+        {"version": "0.3.0"},
+        {},
+    ],
+)
+def test_wininspect_rejects_invalid_daemon_hello_before_sending_request(hello):
+    fake = FakeSocket([hello])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        with pytest.raises(wininspect.WinInspectError, match="hello protocol mismatch"):
+            wininspect.request("daemon.capabilities")
+    assert fake.sent == b""
+
+
+def test_wininspect_caller_cannot_override_pinned_rpc_protocol_version():
+    fake = FakeSocket(
+        [
+            {"type": "hello", "version": "0.3.0"},
+            {"id": "winebot-abc123456789", "ok": True, "result": {"features": {}}},
+        ]
+    )
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        result = wininspect.request(
+            "daemon.capabilities", {"protocol_version": "0.4.0"}
+        )
+    assert result["result"] == {"features": {}}
+    sent_length = struct.unpack("!I", fake.sent[:4])[0]
+    sent_payload = json.loads(fake.sent[4 : 4 + sent_length].decode("utf-8"))
+    assert sent_payload["params"]["protocol_version"] == "0.3.0"
+
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"ok": "false", "result": {}},
+        {"ok": 1, "result": {}},
+        {"ok": None, "result": {}},
+        {"result": {}},
+    ],
+)
+def test_wininspect_refuses_nonboolean_or_missing_rpc_status(reply):
+    response = {"id": "winebot-abc123456789", **reply}
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, response])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError, match="response status invalid"):
+            wininspect.request("daemon.capabilities")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [None, [], "unexpected raw daemon error", 0, {"message": ["unexpected"]}],
+)
+def test_wininspect_refuses_malformed_rpc_error_envelope(error):
+    reply = {"id": "winebot-abc123456789", "ok": False, "error": error}
+    fake = FakeSocket([{"type": "hello", "version": "0.3.0"}, reply])
+    with (
+        patch("api.core.wininspect.ensure_daemon", return_value={"running": True}),
+        patch("api.core.wininspect.uuid.uuid4") as mock_uuid,
+        patch("api.core.wininspect.socket.create_connection", return_value=fake),
+    ):
+        mock_uuid.return_value.hex = "abc1234567890"
+        with pytest.raises(wininspect.WinInspectError) as exc:
+            wininspect.request("daemon.capabilities")
+    assert str(exc.value) in {
+        "WinInspect response error invalid",
+        "WinInspect request failed",
+    }
+    assert "unexpected" not in str(exc.value)
+
+
 def test_wininspect_blocks_mutating_methods():
     with pytest.raises(wininspect.WinInspectError):
         wininspect.request("input.text", {"text": "blocked"})

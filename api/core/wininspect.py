@@ -14,6 +14,9 @@ from api.utils.process import find_processes, manage_process
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1985
+# Upstream WinInspect product v0.4.0 still speaks TCP protocol v0.3.0.
+# Keep wire protocol version independent from the product release version.
+WININSPECT_PROTOCOL_VERSION = "0.3.0"
 DEFAULT_TIMEOUT_SECONDS = 3.0
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
@@ -172,7 +175,15 @@ def ensure_daemon(start: bool = True) -> dict[str, Any]:
         log_file = open(_log_path(), "ab")
         try:
             proc = subprocess.Popen(
-                ["wine", str(daemon_exe())],
+                # WinInspect tray mode can exit under headless Wine before
+                # its background TCP listener becomes available. The WineBot
+                # adapter is a service endpoint, so require the daemon's
+                # upstream-supported blocking/headless TCP mode explicitly.
+                # Match the adapter's loopback RPC endpoint explicitly.
+                # WinInspect's persisted Wine config and IPv6 defaults must
+                # not silently bind a different address or TCP port.
+                ["wine", str(daemon_exe()), "--headless",
+                 "--bind", "127.0.0.1", "--port", str(port())],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -252,9 +263,13 @@ def _read_frame(sock: socket.socket) -> dict[str, Any]:
         raise WinInspectError(f"WinInspect frame too large: {length}")
     payload = _recv_exact(sock, length)
     try:
-        return json.loads(payload.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise WinInspectError(f"invalid WinInspect JSON frame: {exc}") from exc
+        decoded = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Never expose arbitrary malformed daemon content in API errors.
+        raise WinInspectError("invalid WinInspect JSON frame") from exc
+    if not isinstance(decoded, dict):
+        raise WinInspectError("invalid WinInspect JSON frame root")
+    return decoded
 
 
 def _write_frame(sock: socket.socket, payload: dict[str, Any]) -> None:
@@ -276,22 +291,35 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.4.0",
             **(params or {}),
+            # The caller may not downgrade or substitute the wire protocol.
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
         },
     }
     with socket.create_connection((host(), port()), timeout=timeout_seconds()) as sock:
         sock.settimeout(timeout_seconds())
         hello = _read_frame(sock)
+        if (
+            hello.get("type") != "hello"
+            or hello.get("version") != WININSPECT_PROTOCOL_VERSION
+        ):
+            raise WinInspectError("WinInspect hello protocol mismatch")
         _write_frame(sock, payload)
         response = _read_frame(sock)
 
     if response.get("id") != request_id:
         # Never expose untrusted daemon hello identity in API-visible errors.
         raise WinInspectError("WinInspect response correlation failed")
-    if not response.get("ok"):
-        error = response.get("error") or {}
-        raise WinInspectError(str(error.get("message") or error or "WinInspect request failed"))
+    if type(response.get("ok")) is not bool:
+        raise WinInspectError("WinInspect response status invalid")
+    if response["ok"] is False:
+        error = response.get("error")
+        if not isinstance(error, dict):
+            raise WinInspectError("WinInspect response error invalid")
+        message = error.get("message")
+        if not isinstance(message, str) or not message:
+            raise WinInspectError("WinInspect request failed")
+        raise WinInspectError(message)
     return {
         "result": response.get("result"),
         "metrics": response.get("metrics"),

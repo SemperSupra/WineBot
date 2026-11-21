@@ -40,6 +40,11 @@ RUN bash /download_tool.sh "WinInspect" \
     "https://github.com/SemperSupra/WinInspect/releases/download/v0.4.4/WinInspectPortable-v0.4.4.zip" \
     "6ac0a65f774ffe69672f1c459254931ebfddb1e52c9fbec14b5db1348ccaad04" \
     "/opt/winebot/windows-tools/WinSpy" \
+    && for binary in wininspectd.exe wininspect.exe wininspect-gui.exe; do \
+         test -s "/opt/winebot/windows-tools/WinSpy/App/WinInspect/$binary" || exit 1; \
+         cp "/opt/winebot/windows-tools/WinSpy/App/WinInspect/$binary" \
+            "/opt/winebot/windows-tools/WinSpy/$binary" || exit 1; \
+       done \
     && find /opt/winebot/windows-tools -name "*.txt" -delete
 
 # --- Stage 2: Base System (From pre-built base) ---
