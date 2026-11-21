@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - "formal/**"
+      - "api/core/broker.py"
+      - "api/core/handover_recovery.py"
+      - "api/routers/input.py"
+      - "api/routers/lifecycle.py"
+      - "api/server.py"
+      - "tests/test_mvp_control_safety.py"
+      - "tests/test_handover_restart_recovery.py"
+      - "scripts/ci/test.sh"
       - ".github/workflows/formal-cross-layer-tlc.yml"
   workflow_dispatch:
 
