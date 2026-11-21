@@ -8,7 +8,11 @@ import json
 import os
 from pathlib import Path
 
-from api.core.constants import SESSION_STATE_ACTIVE, SESSION_STATE_SUSPENDED
+from api.core.constants import (
+    SESSION_STATE_ACTIVE,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_SUSPENDED,
+)
 from api.utils.files import read_session_state, write_session_state
 
 MARKER_NAME = "session.transition.json"
@@ -92,14 +96,15 @@ def reconcile_active_handover(session_dir: str, profile_link: str) -> str:
                 # Crash after deleting a peer marker is replayable only if
                 # both persisted owners already reached the safe end state.
                 if (read_session_state(str(active)) != SESSION_STATE_ACTIVE or
-                    read_session_state(str(peer)) == SESSION_STATE_ACTIVE):
+                    read_session_state(str(peer)) not in
+                    (SESSION_STATE_SUSPENDED, SESSION_STATE_COMPLETED)):
                     raise RuntimeError("Absent handover peer marker before commit")
             elif (other.get("phase") != "resume_handover_out" or
                   other["extra"].get("operation_id") != operation_id or
                   _safe_peer(other["extra"].get("target_session"), peer) != active):
                 raise RuntimeError("Conflicting handover peer marker")
         if peer is not None and peer != active:
-            if read_session_state(str(peer)) == SESSION_STATE_ACTIVE:
+            if read_session_state(str(peer)) in (None, SESSION_STATE_ACTIVE):
                 write_session_state(str(peer), SESSION_STATE_SUSPENDED)
         write_session_state(str(active), SESSION_STATE_ACTIVE)
         if peer is not None and peer != active:
@@ -110,14 +115,15 @@ def reconcile_active_handover(session_dir: str, profile_link: str) -> str:
             other = _marker(peer)
             if other is None:
                 if (read_session_state(str(active)) != SESSION_STATE_ACTIVE or
-                    read_session_state(str(peer)) == SESSION_STATE_ACTIVE):
+                    read_session_state(str(peer)) not in
+                    (SESSION_STATE_SUSPENDED, SESSION_STATE_COMPLETED)):
                     raise RuntimeError("Absent handover peer marker before commit")
             elif (other.get("phase") != "resume_target_prepare" or
                   other["extra"].get("operation_id") != operation_id or
                   _safe_peer(other["extra"].get("previous_session"), peer) != active):
                 raise RuntimeError("Conflicting handover peer marker")
             # Even a stray target ACTIVE must not leave dual active state.
-            if read_session_state(str(peer)) == SESSION_STATE_ACTIVE:
+            if read_session_state(str(peer)) in (None, SESSION_STATE_ACTIVE):
                 write_session_state(str(peer), SESSION_STATE_SUSPENDED)
         write_session_state(str(active), SESSION_STATE_ACTIVE)
         if peer is not None and peer != active:
