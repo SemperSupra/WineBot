@@ -40,6 +40,8 @@ def test_crash_after_active_pointer_update_converges_target(tmp_path):
     profile = _profile_link(tmp_path, target)
     _write_marker(target, "resume_target_prepare", {"previous_session": str(old)})
     _write_marker(old, "resume_handover_out", {"target_session": str(target)})
+    # Simulate crash with both persisted sessions incorrectly still ACTIVE.
+    (old / "session.state").write_text("active", encoding="utf-8")
     assert reconcile_active_handover(str(target), str(profile)) == "reconciled"
     assert (target / "session.state").read_text() == "active"
     assert (old / "session.state").read_text() == "suspended"
@@ -54,6 +56,7 @@ def test_crash_before_active_pointer_update_keeps_old_owner(tmp_path):
     profile = _profile_link(tmp_path, old)
     _write_marker(old, "resume_handover_out", {"target_session": str(target)})
     _write_marker(target, "resume_target_prepare", {"previous_session": str(old)})
+    (target / "session.state").write_text("active", encoding="utf-8")
     assert reconcile_active_handover(str(old), str(profile)) == "reconciled"
     assert (old / "session.state").read_text() == "active"
     assert (target / "session.state").read_text() == "suspended"
@@ -61,13 +64,15 @@ def test_crash_before_active_pointer_update_keeps_old_owner(tmp_path):
     assert not (target / "session.transition.json").exists()
 
 
-def test_crash_after_first_marker_before_peer_marker_can_resume(tmp_path):
+def test_pointer_switch_without_recipient_peer_intent_fails_closed(tmp_path):
     old = _session(tmp_path, "A")
     target = _session(tmp_path, "B")
     profile = _profile_link(tmp_path, target)
     _write_marker(target, "resume_target_prepare", {"previous_session": str(old)})
-    assert reconcile_active_handover(str(target), str(profile)) == "reconciled"
-    assert (target / "session.state").read_text() == "active"
+    with pytest.raises(RuntimeError, match="Absent handover peer marker"):
+        reconcile_active_handover(str(target), str(profile))
+    assert (target / "session.transition.json").exists()
+    assert (target / "session.state").read_text() != "active"
 
 
 def test_profile_link_mismatch_fails_closed_without_deleting_intent(tmp_path):
@@ -134,3 +139,28 @@ def test_live_resume_profile_link_is_verified_fail_closed(tmp_path, monkeypatch)
         with pytest.raises(RuntimeError, match="profile link verification failed"):
             _link_profile_checked(str(other_user))
     assert link.resolve() == user.resolve()
+
+
+def test_replay_after_peer_cleanup_removes_remaining_marker(tmp_path):
+    old = _session(tmp_path, "A")
+    target = _session(tmp_path, "B")
+    profile = _profile_link(tmp_path, target)
+    (target / "session.state").write_text("active", encoding="utf-8")
+    _write_marker(target, "resume_target_prepare", {"previous_session": str(old)})
+    # Crash after unlink+fsync of the old peer marker; persisted states
+    # have already safely converged, so only active-side cleanup remains.
+    assert reconcile_active_handover(str(target), str(profile)) == "reconciled"
+    assert not (target / "session.transition.json").exists()
+    assert (old / "session.state").read_text() == "suspended"
+
+
+def test_incomplete_cleanup_without_peer_marker_is_quarantined(tmp_path):
+    old = _session(tmp_path, "A")
+    target = _session(tmp_path, "B")
+    profile = _profile_link(tmp_path, target)
+    (old / "session.state").write_text("active", encoding="utf-8")
+    _write_marker(target, "resume_target_prepare", {"previous_session": str(old)})
+    with pytest.raises(RuntimeError, match="Absent handover peer marker"):
+        reconcile_active_handover(str(target), str(profile))
+    assert (target / "session.transition.json").exists()
+    assert (old / "session.state").read_text() == "active"
