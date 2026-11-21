@@ -10,6 +10,8 @@ on:
       - "api/routers/lifecycle.py"
       - "api/server.py"
       - "api/utils/files.py"
+      - "api/core/writer_admission.py"
+      - "tests/test_writer_admission.py"
       - "tests/test_invariants.py"
       - "tests/test_mvp_control_safety.py"
       - "tests/test_mvp_inflight_cancel.py"

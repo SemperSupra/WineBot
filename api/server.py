@@ -29,6 +29,7 @@ from api.core.versioning import (
     ARTIFACT_SCHEMA_VERSION,
     EVENT_SCHEMA_VERSION,
 )
+from api.core.writer_admission import admit_single_writer
 from api.routers import automation, control, health, input, lifecycle, recording
 from api.utils.config import config
 from api.utils.files import (
@@ -87,7 +88,7 @@ async def resource_monitor_task():
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def _lifespan_after_writer_admission(_app: FastAPI):
     validation_errors = validate_current_environment()
     if validation_errors:
         joined = "; ".join(validation_errors)
@@ -144,6 +145,15 @@ async def lifespan(_app: FastAPI):
         append_lifecycle_event(
             session_dir, "api_stopped", "API server stopping", source="api"
         )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Admission precedes any persistent instance metadata, user-profile
+    # relink, broker hydration or interrupted handover reconciliation.
+    with admit_single_writer(config.WINEBOT_SESSION_ROOT):
+        async with _lifespan_after_writer_admission(app):
+            yield
 
 
 app = FastAPI(
