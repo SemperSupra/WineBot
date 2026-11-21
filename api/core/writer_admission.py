@@ -5,9 +5,9 @@ POSIX filesystem lock, not a distributed lock or generation-fencing scheme.
 
 import os
 import stat
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 try:
     import fcntl
