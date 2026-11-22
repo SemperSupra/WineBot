@@ -70,3 +70,32 @@ independent blocked gates.
 DLE: Durable = source and CI receipts tied to exact commits; Legible = this
 model/refinement gap and negative counterexample; Executable = concrete
 implement/qualify/admit sequence, no hidden manual waiver.
+
+## Early entrypoint/FD continuity experiment (2026-11-22, #184)
+The first API-lifespan guard (#183) was source-qualified but incomplete:
+`docker/entrypoint.sh` changes instance state, starts Wine/X11 and may start
+traces/recorders before uvicorn's FastAPI lifespan. The early admission
+experiment now acquires the **same** Linux `flock` descriptor before root
+user setup, carries it without release across shell, gosu and Uvicorn,
+and validates its inode/root/open-file-description on each side.
+The API validates the inherited FD rather than independently reopening the
+same lock and accidentally releasing an inherited lock on shutdown.
+
+This is ONE cooperative process-family owner, not a claim that only one
+process runs. The admitted shell and its child API and Wine services
+intentionally coexist, and the high descriptor may be inherited by other
+children until they exit. If any child survives shell death, admission
+remains denied, not silently transferred. Validate this on real
+process/container exit before production use.
+
+A configured alternate `WINEBOT_SESSION_ROOT` is acceptable only when
+present before entrypoint acquisition; config-file root overrides after
+admission are refused. Infrastructure may no longer silently fall back
+to `/tmp/winebot-sessions` under the admitted root. The kernel lease is
+advisory and only within a qualified Linux filesystem/mount namespace:
+remote/NFS, cross-host, hostile same-UID unlink attacks, detached Wine
+effects, multi-file atomic commit and monotonic durable generation CAS
+remain **unqualified**. Source tests demonstrate bounded inherited-FD
+continuity, competing-process rejection, mismatch/quarantine, and SIGKILL
+under public synthetic execution; they are not equivalent to an end-to-end
+real Wine11 two-container workload. Keep DRAFT and release-held.

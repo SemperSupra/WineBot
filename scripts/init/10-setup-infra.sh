@@ -27,6 +27,12 @@ export WINEBOT_SESSION_RESUMED="$RESUMED"
 echo "$SESSION_DIR" > /tmp/winebot_current_session
 
 if ! mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"; then
+    # Never silently switch to an unadmitted fallback root after the
+    # instance-wide process lease has been acquired.
+    if [ -n "${WINEBOT_WRITER_LOCK_FD:-}" ]; then
+        echo 'WINEBOT_WRITER_ADMISSION=SESSION_ROOT_UNAVAILABLE' >&2
+        exit 73
+    fi
     FALLBACK_SESSION_ROOT="/tmp/winebot-sessions"
     echo "WARN: Unable to create session dir at ${SESSION_DIR}; falling back to ${FALLBACK_SESSION_ROOT}." >&2
     SESSION_ROOT="$FALLBACK_SESSION_ROOT"
