@@ -118,7 +118,12 @@ def test_root_change_and_spoofed_inherited_fd_fail_closed(tmp_path, monkeypatch)
 
 
 def test_entrypoint_admits_before_all_mutating_setup_and_forbids_fallback():
-    entrypoint = (REPO_ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
+    entrypoint_path = REPO_ROOT / "docker/entrypoint.sh"
+    if not entrypoint_path.is_file():
+        # Production/test Docker images install the script at /entrypoint.sh;
+        # the source checkout retains its original docker/entrypoint.sh path.
+        entrypoint_path = REPO_ROOT / "entrypoint.sh"
+    entrypoint = entrypoint_path.read_text(encoding="utf-8")
     infra = (REPO_ROOT / "scripts/init/10-setup-infra.sh").read_text(
         encoding="utf-8"
     )
