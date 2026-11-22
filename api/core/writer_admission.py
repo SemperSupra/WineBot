@@ -67,10 +67,16 @@ def _acquire_writer_fd(session_root: str) -> int:
         # A root-launched legacy entrypoint may have chowned the previous
         # writer lock to the winebot UID before its next root invocation.
         allowed_owners = {os.geteuid()}
-        if os.geteuid() == 0:
+        if os.geteuid() == 0 and lock_stat.st_uid != 0:
+            # Root-only CI workcells do not have the winebot account.
+            # Resolve that identity only when an existing lock is nonroot;
+            # a root-owned lock does not need an alternate-owner exception.
             if pwd is None:
                 raise WriterAdmissionError("Writer account resolution unavailable")
-            allowed_owners.add(pwd.getpwnam("winebot").pw_uid)
+            try:
+                allowed_owners.add(pwd.getpwnam("winebot").pw_uid)
+            except KeyError as exc:
+                raise WriterAdmissionError("Writer account resolution unavailable") from exc
         if (
             not stat.S_ISREG(lock_stat.st_mode)
             or lock_stat.st_nlink != 1
