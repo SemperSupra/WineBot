@@ -11,6 +11,8 @@ pytest \
   tests/test_config_strict_validation.py \
   tests/test_invariants.py \
   tests/test_writer_admission.py \
+  tests/test_early_writer_admission.py \
+  tests/test_startup_checkpoint_redaction.py \
   tests/test_input_validation.py \
   tests/test_input_keyboard_conformance.py \
   tests/test_input_lifecycle_regression.py \

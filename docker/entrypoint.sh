@@ -58,6 +58,19 @@ if [ "${WINEBOT_STATE_MODEL:-legacy}" = "layered" ]; then
     fi
 fi
 
+# Admit the entire instance before root chown, instance-state writes, Wine,
+# recorder, tracing or API startup. Do not use a separate API-only lock.
+export WINEBOT_SESSION_ROOT="${WINEBOT_SESSION_ROOT:-/artifacts/sessions}"
+if [ -z "${WINEBOT_WRITER_LOCK_FD:-}" ] && [ -z "${WINEBOT_WRITER_LOCK_ROOT:-}" ]; then
+    exec python3 /api/core/writer_admission.py --exec-entrypoint "$@"
+fi
+if ! python3 /api/core/writer_admission.py --validate-inherited; then
+    echo 'WINEBOT_STARTUP_ERROR stage=writer_admission' >&2
+    exit 73
+fi
+ADMITTED_WRITER_ROOT="$WINEBOT_SESSION_ROOT"
+ADMITTED_WRITER_FD="$WINEBOT_WRITER_LOCK_FD"
+
 # 1. Root Level Setup (User creation, permissions)
 source /scripts/init/00-setup-user.sh
 
@@ -125,6 +138,16 @@ fi
 if [ -f "$WINEBOT_INSTANCE_CONFIG" ]; then
     chmod 600 "$WINEBOT_INSTANCE_CONFIG"
     set -a; source "$WINEBOT_INSTANCE_CONFIG"; set +a
+fi
+
+# Configuration overrides must never redirect the session root or replace
+# the inherited lock FD after the earliest mutating setup was admitted.
+if [ "${WINEBOT_SESSION_ROOT:-}" != "$ADMITTED_WRITER_ROOT" ] ||
+   [ "${WINEBOT_WRITER_LOCK_FD:-}" != "$ADMITTED_WRITER_FD" ] ||
+   [ "${WINEBOT_WRITER_LOCK_ROOT:-}" != "$ADMITTED_WRITER_ROOT" ] ||
+   ! python3 /api/core/writer_admission.py --validate-inherited; then
+    echo 'WINEBOT_STARTUP_ERROR stage=writer_root_or_fd_changed' >&2
+    exit 73
 fi
 
 if ! python3 /scripts/internal/validate-winebot-config.py >/tmp/winebot-config-validation.log 2>&1; then

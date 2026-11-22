@@ -3,6 +3,7 @@
 
 # --- Session Setup ---
 SESSION_ROOT="${WINEBOT_SESSION_ROOT:-/artifacts/sessions}"
+echo 'WINEBOT_INFRA_CHECKPOINT=begin'
 RESUMED="0"
 if [ -n "${WINEBOT_SESSION_DIR:-}" ]; then
     SESSION_DIR="$WINEBOT_SESSION_DIR"
@@ -15,18 +16,31 @@ elif [ -n "${WINEBOT_SESSION_ID:-}" ]; then
 else
     SESSION_TS=$(date +%s)
     SESSION_DATE=$(date -u +%Y-%m-%d)
-    SESSION_RAND=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+    # Bounded CSPRNG generation: never leave a /dev/urandom pipe or any
+    # unrelated child holding the inherited writer lock indefinitely.
+    SESSION_RAND="$(timeout 5s python3 -c 'import secrets; print(secrets.token_hex(5))')" || {
+        echo 'WINEBOT_INFRA_CHECKPOINT=entropy_failed' >&2
+        exit 73
+    }
     SESSION_ID="session-${SESSION_DATE}-${SESSION_TS}-${SESSION_RAND}${WINEBOT_SESSION_LABEL:+-${WINEBOT_SESSION_LABEL}}"
     SESSION_DIR="${SESSION_ROOT}/${SESSION_ID}"
 fi
+echo 'WINEBOT_INFRA_CHECKPOINT=session_identity_ready'
 
 export WINEBOT_SESSION_ROOT="$SESSION_ROOT"
 export WINEBOT_SESSION_ID="$SESSION_ID"
 export WINEBOT_SESSION_DIR="$SESSION_DIR"
 export WINEBOT_SESSION_RESUMED="$RESUMED"
 echo "$SESSION_DIR" > /tmp/winebot_current_session
+echo 'WINEBOT_INFRA_CHECKPOINT=ephemeral_pointer_written'
 
-if ! mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"; then
+if ! timeout 15s mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"; then
+    # Never silently switch to an unadmitted fallback root after the
+    # instance-wide process lease has been acquired.
+    if [ -n "${WINEBOT_WRITER_LOCK_FD:-}" ]; then
+        echo 'WINEBOT_WRITER_ADMISSION=SESSION_ROOT_UNAVAILABLE' >&2
+        exit 73
+    fi
     FALLBACK_SESSION_ROOT="/tmp/winebot-sessions"
     echo "WARN: Unable to create session dir at ${SESSION_DIR}; falling back to ${FALLBACK_SESSION_ROOT}." >&2
     SESSION_ROOT="$FALLBACK_SESSION_ROOT"
@@ -36,6 +50,8 @@ if ! mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scrip
     echo "$SESSION_DIR" > /tmp/winebot_current_session
     mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"
 fi
+
+echo 'WINEBOT_INFRA_CHECKPOINT=session_dirs_ready'
 
 # --- Xvfb Setup ---
 rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
@@ -57,6 +73,8 @@ for i in $(seq 1 15); do
     # Exponential backoff
     WAIT_TIME=$(python3 -c "print(min(2.0, $WAIT_TIME * 1.5))")
 done
+
+echo 'WINEBOT_INFRA_CHECKPOINT=xvfb_ready'
 
 # --- WM Setup ---
 # Configure Openbox (copy configs)
@@ -88,3 +106,4 @@ tint2 >/dev/null 2>&1 &
 
 # Allow time for WM/Taskbar windows to map
 sleep 2
+echo 'WINEBOT_INFRA_CHECKPOINT=completed'
