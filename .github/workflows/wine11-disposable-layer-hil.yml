@@ -8,6 +8,17 @@ on:
       - 'compose/layered.yml'
       - 'docker/Dockerfile'
       - 'docker/entrypoint.sh'
+      # Real startup and read-only HIL must requalify actual early-admission
+      # and infrastructure changes, not only the entrypoint wrapper.
+      - 'api/core/writer_admission.py'
+      - 'api/server.py'
+      - 'api/core/handover_recovery.py'
+      - 'scripts/init/00-setup-user.sh'
+      - 'scripts/init/10-setup-infra.sh'
+      - 'scripts/init/30-start-services.sh'
+      - 'scripts/ci/classify-startup-logs.py'
+      - 'tests/test_early_writer_admission.py'
+      - 'tests/test_startup_checkpoint_redaction.py'
       - 'scripts/layers/**'
       - 'scripts/ci/qualify-wine11-layered.sh'
       - 'scripts/ci/classify-layer-init-logs.py'
