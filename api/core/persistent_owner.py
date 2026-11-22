@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from api.core.writer_admission import admit_single_writer
-
 from api.utils.files import _atomic_write_text
 
 OWNER_FILE = ".winebot-committed-owner.json"
