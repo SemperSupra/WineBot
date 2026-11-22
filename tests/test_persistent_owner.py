@@ -104,6 +104,12 @@ def test_directory_sync_failure_is_not_acknowledged_as_commit(tmp_path):
             commit_persistent_owner(str(root), str(a), 0, "operation-1")
     # The rename may already have landed; no invented rollback/ACK.
     assert read_persistent_owner(str(root)).generation == 1
+    # A retry of that exact operation must repair the parent fsync before
+    # it may acknowledge the persisted idempotent owner record.
+    with patch("api.core.persistent_owner.os.fsync", wraps=real_sync) as sync:
+        replay = commit_persistent_owner(str(root), str(a), 0, "operation-1")
+    assert replay.generation == 1
+    assert sync.call_count >= 1
 
 
 def test_two_real_processes_with_same_expected_epoch_only_one_commits(tmp_path):

@@ -138,6 +138,17 @@ def commit_persistent_owner(
                 current.session_dir == requested
                 and current.generation == expected_generation + 1
             ):
+                # A prior caller may have seen rename succeed but parent
+                # fsync fail. Never ACK its idempotent replay without a
+                # fresh successful durability barrier on the same directory.
+                directory_fd = os.open(
+                    directory,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                )
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
                 return current
             raise OwnerGenerationConflict("Owner operation identity reused")
         actual = current.generation if current else 0
