@@ -58,3 +58,21 @@ Independent from WinInspect-private native v0.5/cloud admission #468/#561.
 No paid compute, private Actions minutes or source projection.
 DLE = Durable (exact SHA+receipts), Legible (red/blue counterexamples),
 Executable (gated source-to-runtime refinement plan).
+
+## Source-only storage primitive workcell (#186)
+The isolated `api/core/persistent_owner.py` introduces a strict version-1
+one-file persistent owner record under the already admitted session root,
+with monotonically advancing generation and explicit operation identity.
+Its compare-and-swap acquires the same `writer_admission` lease, validates
+root/session identity, refuses symlinks, unknown schema or corrupted data,
+and writes through the established tempfile fsync → replace → parent fsync
+primitive. Replay of the same operation/generation is idempotent; stale
+generations and operation-ID reuse are denied. Synthetic tests include two
+real competing Python processes and injected parent-directory fsync failure.
+
+**Not integrated:** none of `docker/entrypoint.sh`, `api/routers/lifecycle.py`,
+`api/server.py` or the legacy `/tmp` pointer is changed by this workcell.
+No immediate product behavior or recovered active owner is claimed.
+Integration follows release-accepted early admission #184 and must cover
+the source-to-model mapping, root mount/permission handling, paired
+handover journals, replay/quarantine and actual guest behavior.
