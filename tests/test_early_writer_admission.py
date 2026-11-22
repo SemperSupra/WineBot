@@ -140,3 +140,16 @@ def test_entrypoint_admits_before_all_mutating_setup_and_forbids_fallback():
     assert infra.index("SESSION_ROOT_UNAVAILABLE") < infra.index(
         'FALLBACK_SESSION_ROOT="/tmp/winebot-sessions"'
     )
+
+
+def test_bounded_session_identity_and_storage_admission_sources():
+    infra = (REPO_ROOT / "scripts/init/10-setup-infra.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "timeout 5s python3 -c 'import secrets; print(secrets.token_hex(5))'" in infra
+    assert "timeout 15s mkdir -p" in infra
+    assert "WINEBOT_INFRA_CHECKPOINT=entropy_failed" in infra
+    assert "cat /dev/urandom | tr -dc" not in infra
+    assert infra.index("WINEBOT_INFRA_CHECKPOINT=session_identity_ready") < infra.index(
+        "WINEBOT_INFRA_CHECKPOINT=ephemeral_pointer_written"
+    )

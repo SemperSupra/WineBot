@@ -35,11 +35,14 @@ def main() -> int:
     # Check latest possible phase first; no log contents are ever forwarded.
     for marker, code in (
         ("WINEBOT_WRITER_ADMISSION=SESSION_ROOT_UNAVAILABLE", "unadmitted_root_rejected"),
+        ("WINEBOT_INFRA_CHECKPOINT=entropy_failed", "infra_entropy_failed"),
         ("Pass 4: Services", "reached_services"),
         ("Pass 3: Wine Environment", "reached_wine"),
         ("WINEBOT_INFRA_CHECKPOINT=completed", "infra_completed"),
         ("WINEBOT_INFRA_CHECKPOINT=xvfb_ready", "infra_xvfb_ready"),
         ("WINEBOT_INFRA_CHECKPOINT=session_dirs_ready", "infra_session_ready"),
+        ("WINEBOT_INFRA_CHECKPOINT=ephemeral_pointer_written", "infra_pointer_written"),
+        ("WINEBOT_INFRA_CHECKPOINT=session_identity_ready", "infra_identity_ready"),
         ("WINEBOT_INFRA_CHECKPOINT=begin", "infra_begin"),
         ("Pass 2: Infrastructure", "reached_infrastructure"),
         ("Xvfb failed to start", "xvfb_failure"),
