@@ -31,9 +31,16 @@ def main() -> int:
         if "WINEBOT_STARTUP_ERROR stage=" + marker + " " in raw:
             print("STARTUP_DIAGNOSTIC stage=" + code)
             return 0
+    # Fixed, path-free progress checkpoints, never raw stdout or secrets.
+    # Check latest possible phase first; no log contents are ever forwarded.
     for marker, code in (
+        ("WINEBOT_WRITER_ADMISSION=SESSION_ROOT_UNAVAILABLE", "unadmitted_root_rejected"),
         ("Pass 4: Services", "reached_services"),
         ("Pass 3: Wine Environment", "reached_wine"),
+        ("WINEBOT_INFRA_CHECKPOINT=completed", "infra_completed"),
+        ("WINEBOT_INFRA_CHECKPOINT=xvfb_ready", "infra_xvfb_ready"),
+        ("WINEBOT_INFRA_CHECKPOINT=session_dirs_ready", "infra_session_ready"),
+        ("WINEBOT_INFRA_CHECKPOINT=begin", "infra_begin"),
         ("Pass 2: Infrastructure", "reached_infrastructure"),
         ("Xvfb failed to start", "xvfb_failure"),
         ("Configuration admission rejected", "configuration_rejected"),

@@ -3,6 +3,7 @@
 
 # --- Session Setup ---
 SESSION_ROOT="${WINEBOT_SESSION_ROOT:-/artifacts/sessions}"
+echo 'WINEBOT_INFRA_CHECKPOINT=begin'
 RESUMED="0"
 if [ -n "${WINEBOT_SESSION_DIR:-}" ]; then
     SESSION_DIR="$WINEBOT_SESSION_DIR"
@@ -43,6 +44,8 @@ if ! mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scrip
     mkdir -p "$SESSION_DIR/logs" "$SESSION_DIR/screenshots" "$SESSION_DIR/scripts"
 fi
 
+echo 'WINEBOT_INFRA_CHECKPOINT=session_dirs_ready'
+
 # --- Xvfb Setup ---
 rm -f "/tmp/.X${DISPLAY##*:}-lock" "/tmp/.X11-unix/X${DISPLAY##*:}"
 Xvfb "$DISPLAY" -screen 0 "$SCREEN" -ac -noreset +extension RANDR >/dev/null 2>&1 &
@@ -63,6 +66,8 @@ for i in $(seq 1 15); do
     # Exponential backoff
     WAIT_TIME=$(python3 -c "print(min(2.0, $WAIT_TIME * 1.5))")
 done
+
+echo 'WINEBOT_INFRA_CHECKPOINT=xvfb_ready'
 
 # --- WM Setup ---
 # Configure Openbox (copy configs)
@@ -94,3 +99,4 @@ tint2 >/dev/null 2>&1 &
 
 # Allow time for WM/Taskbar windows to map
 sleep 2
+echo 'WINEBOT_INFRA_CHECKPOINT=completed'
