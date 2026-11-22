@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           cd formal/tla
-          for model in ControlLease SessionHandover ReleaseAdmission; do
+          for model in ControlLease SessionHandover ReleaseAdmission PersistentSessionOwner; do
             echo "TLC_MODEL=$model"
             timeout 90s java -Xmx768m -XX:+UseParallelGC \
               -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
@@ -95,6 +95,26 @@ jobs:
             exit 1
           fi
           echo "FORMAL_HANDOVER_NEGATIVE=SPLIT_OWNER_COUNTEREXAMPLE_CONFIRMED"
+      - name: Prove that ephemeral pointer loss strands durable handover intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config PersistentSessionOwnerUnsafe.cfg \
+              PersistentSessionOwnerUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-ephemeral-owner.log" 2>&1; then
+            echo "FORMAL_POINTER_NEGATIVE=UNEXPECTED_NO_COUNTEREXAMPLE"
+            exit 1
+          fi
+          if ! grep -Fq 'Invariant NoOrphanAtRest is violated' \
+               "$RUNNER_TEMP/formal/unsafe-ephemeral-owner.log"; then
+            echo "FORMAL_POINTER_NEGATIVE=NO_EXPECTED_ORPHAN"
+            grep -E '^(Error:|Invariant |Semantic errors|.*Error.*)' \
+              "$RUNNER_TEMP/formal/unsafe-ephemeral-owner.log" | head -n 20 || true
+            exit 1
+          fi
+          echo "FORMAL_POINTER_NEGATIVE=ORPHANED_INTENT_COUNTEREXAMPLE_CONFIRMED"
       - name: Run dependency-free model contract tests
         shell: bash
         run: |
