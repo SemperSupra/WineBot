@@ -57,6 +57,8 @@ static class Program
                     matchingProvider++;
                     if (ev.ProcessID != Environment.ProcessId) return;
                     matchingProcess++;
+                    // Exclude EventSource manifests and other provider metadata.
+                    if (ev.ID != 1) return;
                     try
                     {
                         int state = Convert.ToInt32(ev.PayloadByName("state"));
@@ -75,7 +77,8 @@ static class Program
             // Fixed classification only; no event content in public logs.
             if (matchingProvider == 0) { Console.Error.WriteLine("ETW_FAIL_NO_PROVIDER"); return 4; }
             if (matchingProcess == 0) { Console.Error.WriteLine("ETW_FAIL_NO_MATCHING_PROCESS"); return 5; }
-            if (count != Expected) { Console.Error.WriteLine("ETW_FAIL_COUNT"); return 6; }
+            if (count < Expected) { Console.Error.WriteLine(unexpected > 0 ? "ETW_FAIL_DECODE" : "ETW_FAIL_MISSING_EVENTS"); return 6; }
+            if (count > Expected) { Console.Error.WriteLine("ETW_FAIL_EXTRA_EVENTS"); return 8; }
             if (unexpected != 0) { Console.Error.WriteLine("ETW_FAIL_PAYLOAD"); return 7; }
             Console.WriteLine("PASS: native_etw_file_capture_decode");
             return 0;
