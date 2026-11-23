@@ -1,0 +1,30 @@
+name: Wine11 heap lifecycle no-patch parser synthetic controls
+on:
+  push:
+    branches:
+      - rdte/wine11-heap-trace-parser-r1-20261123
+    paths:
+      - rdte/wine11-heap-trace/**
+      - .github/workflows/wine11-heap-trace-parser-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-heap-trace-parser-r1
+  cancel-in-progress: false
+jobs:
+  offline-source-derived-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Go stdlib narrow Wine11 heap trace parser and fail-closed adversarial controls
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 -race ./rdte/wine11-heap-trace
+          echo 'PASS: source_wine11_heap_trace_offline_controls'
+      - name: Trace boundary closeout
+        if: always()
+        run: echo 'Synthetic source-format tests only; not actual Wine11 runtime capture. No private target trace, raw Wine pointers, host tools or uploads.'
