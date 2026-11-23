@@ -32,6 +32,7 @@ export WINEBOT_CONFIG_VOLUME="$prefix-config"
 export WINEBOT_USERDATA_VOLUME="$prefix-userdata"
 export WINEBOT_ARTIFACT_VOLUME="$prefix-artifacts"
 export WINEBOT_SHARED_VOLUME="$prefix-shared"
+export WINEBOT_CONTROL_VOLUME="$prefix-control"
 export WINEBOT_API_TOKEN=synthetic-ci-only-token
 export WINEBOT_VNC_PASSWORD=synthetic-ci-only-password
 
@@ -41,7 +42,7 @@ bash scripts/layers/preflight.sh --create >/dev/null 2>&1 || fail preflight_crea
 bash scripts/layers/preflight.sh --check >/dev/null 2>&1 || fail preflight_check
 volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
-  "$WINEBOT_SHARED_VOLUME")
+  "$WINEBOT_SHARED_VOLUME" "$WINEBOT_CONTROL_VOLUME")
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 || fail compose_invalid
 
 mkdir -p apps/ci-fixture
@@ -82,20 +83,20 @@ docker run --rm --network none --read-only --cap-drop ALL \
 # Hold the cross-container deployment lease while first and replay state
 # initializers complete; the lock must reject a second independent process.
 deployment_gate_cid="$(docker run -d --network none --read-only --cap-drop ALL \
-  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --security-opt no-new-privileges \
   --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
   --entrypoint /bin/sh \
-  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  -v "$WINEBOT_CONTROL_VOLUME:/winebot-control" \
   "$app_image" /usr/local/bin/winebot-deployment-gate 2>/dev/null)" ||
   fail deployment_gate_start
 docker exec "$deployment_gate_cid" test -f /run/winebot-deployment-ready \
   >/dev/null 2>&1 || fail deployment_gate_not_ready
 gate_log="$(mktemp)"
 if docker run --rm --network none --read-only --cap-drop ALL \
-  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --security-opt no-new-privileges \
   --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
   --entrypoint /bin/sh \
-  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  -v "$WINEBOT_CONTROL_VOLUME:/winebot-control" \
   "$app_image" /usr/local/bin/winebot-deployment-gate >"$gate_log" 2>&1; then
   rm -f "$gate_log"
   fail competing_gate_admitted
@@ -106,6 +107,19 @@ if ! grep -Fxq 'DEPLOYMENT_GATE stage=lock_contended' "$gate_log"; then
 fi
 rm -f "$gate_log"
 echo 'LAYER_RDTE stage=competing_gate_rejected'
+
+# Even with the protected volume deliberately mounted into an unrelated
+# unprivileged synthetic test container, UID1000 cannot access or unlink
+# the controller's root-owned directory entry. The real runtime never
+# mounts this volume at all.
+if docker run --rm --network none --read-only --user 1000:1000 \
+  --cap-drop ALL --security-opt no-new-privileges --entrypoint /bin/sh \
+  -v "$WINEBOT_CONTROL_VOLUME:/winebot-control" "$app_image" -ec '
+    rm /winebot-control/.winebot-deployment-gate.lock
+  ' >/dev/null 2>&1; then
+  fail untrusted_guest_replaced_controller_lock
+fi
+echo 'LAYER_RDTE stage=guest_control_lock_unlink_rejected'
 
 # One-shot root task prepares only volume root ownership, never user contents.
 docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
@@ -168,10 +182,10 @@ docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL \
 # identical gate must then successfully acquire it (synthetic volumes only).
 docker rm -f "$deployment_gate_cid" >/dev/null 2>&1 || fail gate_stop
 deployment_gate_cid="$(docker run -d --network none --read-only --cap-drop ALL \
-  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --security-opt no-new-privileges \
   --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
   --entrypoint /bin/sh \
-  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  -v "$WINEBOT_CONTROL_VOLUME:/winebot-control" \
   "$app_image" /usr/local/bin/winebot-deployment-gate 2>/dev/null)" ||
   fail gate_restart
 docker exec "$deployment_gate_cid" test -f /run/winebot-deployment-ready \

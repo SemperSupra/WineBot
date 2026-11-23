@@ -42,7 +42,7 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
 
     def test_external_volumes_and_disposable_runtime_are_enforced(self):
         source = (ROOT / "compose/layered.yml").read_text(encoding="utf-8")
-        self.assertEqual(source.count("external: true"), 7)
+        self.assertEqual(source.count("external: true"), 8)
         self.assertIn("condition: service_completed_successfully", source)
         self.assertIn("read_only: true", source)
         self.assertIn("user: \"1000:1000\"", source)
@@ -71,6 +71,18 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertLess(gate.index("flock -n -x 9"),
                         gate.index("winebot-deployment-ready"))
         self.assertIn("exec sleep infinity", gate)
+        self.assertIn("source: control-plane", compose)
+        self.assertIn("target: /winebot-control", compose)
+        self.assertIn("WINEBOT_CONTROL_VOLUME:", compose)
+        self.assertIn("root=/winebot-control", gate)
+        self.assertIn("control_root_owner_invalid", gate)
+        self.assertNotIn("/state/artifacts", gate)
+        self.assertIn("guest_control_lock_unlink_rejected", fixture)
+        self.assertIn("test ! -e /winebot-control", hil)
+        self.assertNotIn("cap_add: [DAC_OVERRIDE]", compose)
+        self.assertIn("WINEBOT_CONTROL_VOLUME", (
+            ROOT / "scripts/layers/preflight.sh"
+        ).read_text())
         self.assertIn("stage=competing_gate_rejected", fixture)
         self.assertIn("stage=gate_release_reacquire_passed", fixture)
         self.assertIn("stage=competing_deployment_rejected", hil)

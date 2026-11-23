@@ -22,11 +22,12 @@ export WINEBOT_CONFIG_VOLUME="$prefix-config"
 export WINEBOT_USERDATA_VOLUME="$prefix-userdata"
 export WINEBOT_ARTIFACT_VOLUME="$prefix-artifacts"
 export WINEBOT_SHARED_VOLUME="$prefix-shared"
+export WINEBOT_CONTROL_VOLUME="$prefix-control"
 export WINEBOT_API_TOKEN=synthetic-hil-local-only-token
 export WINEBOT_VNC_PASSWORD=synthetic-hil-local-only-password
 volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
-  "$WINEBOT_SHARED_VOLUME")
+  "$WINEBOT_SHARED_VOLUME" "$WINEBOT_CONTROL_VOLUME")
 cleanup() {
   docker compose -p "$prefix-challenger" -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
   docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
@@ -188,6 +189,8 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   printf "durable-wineprefix\n" > /wineprefix/hil-proof
   printf "durable-evidence\n" > /artifacts/hil-proof
   test -s /apps/.winebot-app-content-sha256
+  # The runtime has no control-volume mount at any guest-reachable path.
+  test ! -e /winebot-control
   if touch /apps/unauthorized-executable.exe >/dev/null 2>&1; then exit 13; fi
   if touch /opt/winebot/unauthorized-root-write >/dev/null 2>&1; then exit 14; fi
 ' >/dev/null 2>&1 || fail state_write_or_readonly
