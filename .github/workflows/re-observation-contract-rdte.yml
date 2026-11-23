@@ -1,0 +1,30 @@
+name: Cross-provider research observation contract RDTE
+on:
+  push:
+    branches:
+      - rdte/re-observation-contract-r1-20261123
+    paths:
+      - rdte/re-observation-contract/**
+      - .github/workflows/re-observation-contract-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: re-observation-contract-r1
+  cancel-in-progress: false
+jobs:
+  offline-evidence-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Native Go offline source and negative controls
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 -race ./rdte/re-observation-contract
+          echo 'PASS: synthetic_cross_provider_refusal_matrix'
+      - name: Safe closeout
+        if: always()
+        run: echo 'No actual target, privileged runtime, private source, memory export, uploaded artifact, image push or release.'
