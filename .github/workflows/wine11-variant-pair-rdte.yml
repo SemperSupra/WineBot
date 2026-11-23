@@ -1,0 +1,27 @@
+name: Wine11 paired-variant manifest admission (synthetic)
+on:
+  push:
+    branches:
+      - rdte/wine11-variant-pair-r1-20261123
+    paths:
+      - rdte/wine11-variant-pair/**
+      - .github/workflows/wine11-variant-pair-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-variant-pair-r1
+  cancel-in-progress: false
+jobs:
+  offline-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Strict offline Go contract and negative controls
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -race -count=1 ./rdte/wine11-variant-pair
+          echo 'PASS: synthetic_wine11_variant_pair_contract'
