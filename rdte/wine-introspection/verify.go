@@ -103,9 +103,10 @@ func verify(r io.Reader) error {
 }
 
 func main() {
-    if verify(os.Stdin)!=nil {
-        // Never echo raw addresses, paths or sensitive input in public CI.
-        fmt.Fprintln(os.Stderr,"FAIL: wine_introspection_current_state")
+    if err:=verify(os.Stdin);err!=nil {
+        // Every error is a fixed source-owned classification: no raw input,
+        // addresses, paths or data are interpolated into public CI output.
+        fmt.Fprintln(os.Stderr,"FAIL: wine_introspection_current_state cause="+err.Error())
         os.Exit(1)
     }
     fmt.Println("PASS: wine_introspection_current_state")
