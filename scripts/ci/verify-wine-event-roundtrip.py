@@ -5,6 +5,7 @@ Fail closed and emit only fixed public status lines; never echo raw events.
 """
 import json
 import sys
+
 from event_bridge import EventBridge
 
 
