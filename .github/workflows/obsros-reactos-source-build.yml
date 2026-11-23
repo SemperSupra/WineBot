@@ -1,0 +1,158 @@
+name: OBS-ROS ReactOS Source Build and QEMU Qualification
+on:
+  push:
+    branches:
+      - rdte/reactos-source-boot-20261123
+    paths:
+      - .github/workflows/obsros-reactos-source-build.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: obsros-reactos-source-boot
+  cancel-in-progress: false
+env:
+  REACTOS_SOURCE_SHA: 4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6
+
+jobs:
+  source-build:
+    name: Full stock ReactOS source build (MSVC i386 Debug)
+    runs-on: windows-2022
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm bounded public-only execution
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'SemperSupra/WineBot') { throw 'Unexpected repository' }
+          if ($env:GITHUB_REF -ne 'refs/heads/rdte/reactos-source-boot-20261123') { throw 'Unexpected ref' }
+          git --version
+          cmake --version
+          choco --version
+      - name: Install Ninja and ReactOS upstream Flex/Bison bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install ninja -y --no-progress
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\toolbin" | Out-Null
+          & curl.exe --fail --show-error --silent --location --retry 3 --connect-timeout 20 --max-time 300 -o flexbison.7z https://svn.reactos.org/storage/vperevertkin/flexbison.7z
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS upstream flexbison download failed' }
+          Get-FileHash flexbison.7z -Algorithm SHA256 | Format-List | Out-String | Write-Output
+          & 7z x flexbison.7z "-o$env:GITHUB_WORKSPACE\toolbin" -y
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS upstream flexbison extract failed' }
+          "$env:GITHUB_WORKSPACE\toolbin" | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          "BISON_PKGDATADIR=$env:GITHUB_WORKSPACE\toolbin\share\bison" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "M4=$env:GITHUB_WORKSPACE\toolbin\m4.exe" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Activate MSVC v14 cross-toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+          toolset: '14'
+      - name: Fetch exact public ReactOS source, no local WineBot checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & git clone --filter=blob:none --single-branch https://github.com/reactos/reactos.git reactos
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS clone failed' }
+          & git -C reactos checkout --detach $env:REACTOS_SOURCE_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS pinned checkout failed' }
+          $head = (& git -C reactos rev-parse HEAD).Trim()
+          if ($head -ne $env:REACTOS_SOURCE_SHA) { throw "Source mismatch: $head" }
+          New-Item -ItemType Directory -Force receipts | Out-Null
+          "source_sha=$head" | Set-Content receipts/source.txt
+          & git -C reactos status --porcelain=v1 | Out-File receipts/source-status.txt -Encoding utf8
+      - name: Configure complete stock x86 Debug image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S reactos -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE:FILEPATH=toolchain-msvc.cmake -DARCH:STRING=i386 -DCMAKE_BUILD_TYPE:STRING=Debug -DDLL_EXPORT_VERSION:STRING=0x502 -DENABLE_ROSTESTS=1 -DENABLE_ROSAPPS=1
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS configure failed' }
+      - name: Full compile (not a partial sensor or fixture build)
+        shell: pwsh
+        run: |
+          cmake --build build -- -k0
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS complete build failed' }
+      - name: Produce stock BootCD and LiveCD
+        shell: pwsh
+        run: |
+          cmake --build build --target bootcd livecd
+          if ($LASTEXITCODE -ne 0) { throw 'ReactOS ISO targets failed' }
+          foreach ($file in @('build/bootcd.iso','build/livecd.iso')) {
+            if (!(Test-Path $file)) { throw "Missing $file" }
+            $item = Get-Item $file
+            if ($item.Length -lt 10000000) { throw "Implausible ISO size: $file" }
+            $sha = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$file $($item.Length) $sha" | Out-File receipts/iso-sha256.txt -Append -Encoding utf8
+          }
+          cmd /c ver | Out-File receipts/windows-version.txt -Encoding utf8
+          cmake --version | Out-File receipts/cmake-version.txt -Encoding utf8
+          ninja --version | Out-File receipts/ninja-version.txt -Encoding utf8
+      - name: Upload immutable build candidate and manifest (not release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-reactos-stock-source-build
+          path: |
+            build/bootcd.iso
+            build/livecd.iso
+            receipts/
+          retention-days: 3
+          if-no-files-found: warn
+
+  qemu-boot:
+    name: Independent stock LiveCD QEMU boot evidence (non-release)
+    needs: source-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Retrieve exact in-run stock ISO artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: obsros-reactos-stock-source-build
+          path: iso
+      - name: Install QEMU, no privileged KVM needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 socat
+      - name: Bounded no-network TCG boot with independent host trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          find iso -type f -maxdepth 4 -print | sort > receipts/inputs.txt
+          iso_file="$(find iso -type f -name 'livecd.iso' -print -quit)"
+          test -n "$iso_file"
+          sha256sum "$iso_file" > receipts/booted-iso-sha256.txt
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          printf '%s\n' cpu_in cpu_out memory_region_ops_read memory_region_ops_write > receipts/trace-events.txt
+          timeout 115s qemu-system-i386 -machine pc -cpu pentium3 -smp 1 -m 768 -boot order=d -cdrom "$iso_file" -nic none -display none -vga std -serial file:receipts/serial.log -monitor unix:obsros-qemu-monitor.sock,server,nowait -no-reboot -trace events=receipts/trace-events.txt,file=receipts/qemu-trace.log > receipts/qemu-stderr.log 2>&1 &
+          pid="$!"
+          for i in $(seq 1 30); do
+            test -S obsros-qemu-monitor.sock && break
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          sleep 70
+          if test -S obsros-qemu-monitor.sock; then
+            printf 'screendump receipts/screen.ppm\n' | socat - UNIX-CONNECT:obsros-qemu-monitor.sock > receipts/monitor.txt 2>&1 || true
+          fi
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          if test ! -s receipts/screen.ppm; then
+            echo 'QEMU_SCREENSHOT_NOT_CAPTURED' | tee receipts/classification.txt
+            exit 1
+          fi
+          echo 'QEMU_EXECUTED_SCREENSHOT_CAPTURED_BOOT_MILESTONE_NOT_YET_CLASSIFIED' | tee receipts/classification.txt
+      - name: Preserve synthetic public boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-reactos-qemu-boot-observation
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
