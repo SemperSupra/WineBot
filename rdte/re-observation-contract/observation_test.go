@@ -2,6 +2,7 @@
 package evidence
 import ("encoding/json";"strings";"testing")
 func str(s string)*string{return &s}
+func sizePtr(n uint64)*uint64{return &n}
 func fixture(sensor string) Observation{
     o:=Observation{
         Schema:Schema,Backend:"windows",Sensor:sensor,Kind:"nt_handle",
@@ -9,7 +10,7 @@ func fixture(sensor string) Observation{
         Coverage:"partial",SourceCommit:strings.Repeat("a",40),Trust:"UNVERIFIED",
     }
     if sensor=="traceevent"{o.Kind="etw_transition"}
-    if sensor=="win32_api"{o.Backend="wine";o.Kind="heap_allocation";o.AddressSpace="windows_process_va";o.Address=str("0x200040")}
+    if sensor=="win32_api"{o.Backend="wine";o.Kind="heap_allocation";o.AddressSpace="windows_process_va";o.Address=str("0x200040");o.SizeBytes=sizePtr(256)}
     return o
 }
 func TestSupportedSyntheticSources(t *testing.T){
@@ -29,6 +30,9 @@ func TestRejectFabricatedEvidence(t *testing.T){
         "address domain":func(o *Observation){o.AddressSpace="wine_server_host_va"},
         "lost address":func(o *Observation){o.Address=nil},
         "bad address":func(o *Observation){o.Address=str("0x0")},
+        "size missing":func(o *Observation){o.SizeBytes=nil},
+        "size zero":func(o *Observation){o.SizeBytes=sizePtr(0)},
+        "size overflow":func(o *Observation){o.Address=str("0xfffffffffffffff0");o.SizeBytes=sizePtr(100)},
         "wrong backend":func(o *Observation){o.Backend="other"},
         "empty sha":func(o *Observation){o.SourceCommit=""},
         "wrong coverage":func(o *Observation){o.Coverage="complete"},

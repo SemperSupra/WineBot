@@ -14,6 +14,7 @@ type Observation struct {
     ProcessID uint64 `json:"process_id"`
     AddressSpace string `json:"address_space"`
     Address *string `json:"address"`
+    SizeBytes *uint64 `json:"size_bytes"`
     SemanticType *string `json:"semantic_type"`
     ObjectID *string `json:"object_id"`
     Generation *uint64 `json:"generation"`
@@ -24,6 +25,7 @@ type Observation struct {
 var fields=map[string]bool{
     "schema":true,"backend":true,"sensor":true,"kind":true,
     "origin":true,"process_id":true,"address_space":true,"address":true,
+    "size_bytes":true,
     "semantic_type":true,"object_id":true,"generation":true,
     "coverage":true,"source_commit":true,"trust":true,
 }
@@ -75,7 +77,10 @@ func Validate(raw []byte) (Observation,error) {
             !hexAddress.MatchString(*out.Address){return out,errors.New("wrong_address_domain")}
         n,err:=strconv.ParseUint((*out.Address)[2:],16,64)
         if err!=nil || n==0{return out,errors.New("bad_address")}
-    }else if out.AddressSpace!="none" || out.Address!=nil{
+        if out.SizeBytes==nil || *out.SizeBytes==0 || n>^uint64(0)-*out.SizeBytes {
+            return out,errors.New("bad_allocation_extent")
+        }
+    }else if out.AddressSpace!="none" || out.Address!=nil || out.SizeBytes!=nil{
         return out,errors.New("wrong_address_domain")
     }
     return out,nil
