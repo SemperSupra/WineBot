@@ -77,8 +77,10 @@ jobs:
             printf 'FAIL: wine_remote_fixture_exit_code=%s\n' "$code"
             exit 1
           fi
-          if ! grep -Fqx 'PASS: metadata_only_remote_child_module_and_virtual_region' \
-              "$RUNNER_TEMP/synthetic-stdout.txt"; then
+          # MinGW console puts() may emit CRLF through Wine redirection.
+          # Normalize ONLY carriage returns, preserve exact whole-line match.
+          if ! tr -d '\r' <"$RUNNER_TEMP/synthetic-stdout.txt" |
+              grep -Fqx 'PASS: metadata_only_remote_child_module_and_virtual_region'; then
             echo 'FAIL: wine_remote_pass_marker_absent'
             exit 1
           fi
