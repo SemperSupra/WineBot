@@ -65,11 +65,23 @@ jobs:
           export WINEPREFIX="$RUNNER_TEMP/remote-query-prefix"
           export WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml='
           mkdir -p "$WINEPREFIX"
+          trap 'rm -f "$RUNNER_TEMP/synthetic-stdout.txt" "$RUNNER_TEMP/synthetic-stderr.txt"' EXIT
+          set +e
           timeout 180s xvfb-run -a wine "$RUNNER_TEMP/remote-fixture.exe" \
             >"$RUNNER_TEMP/synthetic-stdout.txt" 2>"$RUNNER_TEMP/synthetic-stderr.txt"
-          grep -Fqx 'PASS: metadata_only_remote_child_module_and_virtual_region' \
-            "$RUNNER_TEMP/synthetic-stdout.txt"
-          rm -f "$RUNNER_TEMP/synthetic-stdout.txt" "$RUNNER_TEMP/synthetic-stderr.txt"
+          code=$?
+          set -e
+          # Only an integer from original fixture / timeout is disclosed.
+          # Launcher output and any addresses remain ephemeral and private.
+          if [ "$code" -ne 0 ]; then
+            printf 'FAIL: wine_remote_fixture_exit_code=%s\n' "$code"
+            exit 1
+          fi
+          if ! grep -Fqx 'PASS: metadata_only_remote_child_module_and_virtual_region' \
+              "$RUNNER_TEMP/synthetic-stdout.txt"; then
+            echo 'FAIL: wine_remote_pass_marker_absent'
+            exit 1
+          fi
           echo 'PASS: real_wine_remote_readonly_query'
       - name: Safe scope closeout
         if: always()
