@@ -80,10 +80,24 @@ jobs:
               raise SystemExit(f"unexpected debugcon output {data[:64]!r}")
           print("SYNTHETIC_PIO_DEBUGCON_AB_PASS")
           PY
-          if ! grep -E 'cpu_out.*(0xe9|233)' receipts/qemu-trace.log receipts/qemu-stderr.log > receipts/cpu-out-observed.txt 2>/dev/null; then
-            echo QEMU_SOURCE_BUILD_PASS_DEVICE_TRACE_MISSING > receipts/classification.txt
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          log = Path("receipts/qemu-stderr.log").read_text(errors="replace")
+          matches = re.findall(
+              r"^memory_region_ops_write cpu 0 .* addr 0xe9 value 0x([0-9a-fA-F]+) size 1 name 'isa-debugcon'$",
+              log,
+              re.MULTILINE,
+          )
+          sequence = [int(value, 16) for value in matches]
+          Path("receipts/device-e9-observed.txt").write_text(
+              "observed_e9_values=" + ",".join(f"0x{x:02x}" for x in sequence) + "\n"
+          )
+          if len(sequence) != 2 or sequence != [0x41, 0x42]:
+              Path("receipts/classification.txt").write_text("QEMU_DEVICE_IO_EVENTS_MISSING_OR_WRONG\n")
+              raise SystemExit(f"expected exactly [0x41,0x42] host e9 writes, got {sequence}")
+          print("QEMU_HOST_MEMORY_REGION_WRITE_E9_AB_PASS")
+          PY
           echo QEMU_SOURCE_BUILT_AND_SYNTHETIC_HOST_PIO_TRACE_PASS > receipts/classification.txt
       - name: Preserve QEMU trace proof and candidate binary (not product)
         if: always()
