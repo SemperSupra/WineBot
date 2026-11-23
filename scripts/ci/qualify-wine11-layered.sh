@@ -28,6 +28,7 @@ volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
   "$WINEBOT_SHARED_VOLUME")
 cleanup() {
+  docker compose -p "$prefix-challenger" -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
   docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
   for volume in "${volumes[@]}"; do
     docker volume rm "$volume" >/dev/null 2>&1 || true
@@ -190,6 +191,25 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   if touch /apps/unauthorized-executable.exe >/dev/null 2>&1; then exit 13; fi
   if touch /opt/winebot/unauthorized-root-write >/dev/null 2>&1; then exit 14; fi
 ' >/dev/null 2>&1 || fail state_write_or_readonly
+
+# A *different* Compose project with the same external persistent volumes
+# cannot advance its initializer while the first deployment gate is healthy.
+# This verifies the real dependency graph (not only a no-deps helper).
+if docker compose -p "$prefix-challenger" -f compose/layered.yml \
+  up --no-build -d state-init >/dev/null 2>&1; then
+  fail competing_deployment_admitted
+fi
+challenger_init="$(docker compose -p "$prefix-challenger" -f compose/layered.yml \
+  ps -a -q state-init 2>/dev/null || true)"
+if [ -n "$challenger_init" ]; then
+  challenger_state="$(docker inspect --format '{{.State.Status}}' "$challenger_init" 2>/dev/null || true)"
+  case "$challenger_state" in
+    running) fail competing_initializer_running ;;
+  esac
+fi
+docker compose -p "$prefix-challenger" -f compose/layered.yml down --remove-orphans \
+  >/dev/null 2>&1 || fail competing_deployment_cleanup
+echo 'WINE11_LAYER_HIL stage=competing_deployment_rejected'
 
 # Another Compose project using the same external volumes may NOT
 # initialize persistent state while an admitted WineBot runtime is alive.

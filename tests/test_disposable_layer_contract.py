@@ -51,12 +51,31 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("read_only: true", source)
         # Every runtime state/app volume refuses Docker image copy-up, or
         # Compose may initialize/chown it before one-shot seed/state services.
-        self.assertEqual(source.count("nocopy: true"), 7)
+        self.assertEqual(source.count("nocopy: true"), 8)
         self.assertIn("WINEBOT_STATE_MODEL: layered", source)
         self.assertIn("WINEBOT_INPUT_TRACE_WINDOWS: \"1\"", source)
         self.assertIn("127.0.0.1:8000:8000", source)
         self.assertNotIn("    build:", source)
         self.assertNotIn("actions/upload-artifact@", source)
+
+    def test_deployment_gate_spans_state_initializer_to_runtime_admission(self):
+        compose = (ROOT / "compose/layered.yml").read_text()
+        gate = (ROOT / "scripts/layers/deployment-gate.sh").read_text()
+        image = (ROOT / "docker/app-bundle.Dockerfile").read_text()
+        fixture = (ROOT / "scripts/ci/qualify-disposable-layers.sh").read_text()
+        hil = (ROOT / "scripts/ci/qualify-wine11-layered.sh").read_text()
+        self.assertIn("  deployment-gate:", compose)
+        self.assertEqual(compose.count("condition: service_healthy"), 2)
+        self.assertIn("winebot-deployment-gate", image)
+        self.assertIn("flock -n -x 9", gate)
+        self.assertLess(gate.index("flock -n -x 9"),
+                        gate.index("winebot-deployment-ready"))
+        self.assertIn("exec sleep infinity", gate)
+        self.assertIn("stage=competing_gate_rejected", fixture)
+        self.assertIn("stage=gate_release_reacquire_passed", fixture)
+        self.assertIn("stage=competing_deployment_rejected", hil)
+        self.assertIn('up --no-build -d state-init', hil)
+        self.assertNotIn("docker volume rm", gate)
 
     def test_layered_api_is_enabled_without_unauthenticated_fallback(self):
         compose = (ROOT / "compose/layered.yml").read_text(encoding="utf-8")

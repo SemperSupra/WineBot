@@ -3,6 +3,36 @@
 # All state and app volumes are EXTERNAL and cannot be deleted by down -v.
 name: winebot-layered
 services:
+  # Optional-startup controller: second flock domain serializes the *entire*
+  # Compose bootstrap before state-init, through runtime writer admission.
+  # Isolated disposable controller, no network or access to other state.
+  deployment-gate:
+    image: ${WINEBOT_APP_BUNDLE_IMAGE:?pin application pack to sha256 digest}
+    entrypoint: ["/bin/sh", "/usr/local/bin/winebot-deployment-gate"]
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 128m
+    tmpfs:
+      - /run:rw,nosuid,nodev,mode=0700,size=1m
+    volumes:
+      - type: volume
+        source: artifacts
+        target: /state/artifacts
+        volume:
+          nocopy: true
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/winebot-deployment-ready"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
+      start_period: 1s
+    restart: "no"
+
   app-seed:
     image: ${WINEBOT_APP_BUNDLE_IMAGE:?pin application pack to sha256 digest}
     user: "0:0"
@@ -17,6 +47,9 @@ services:
     restart: "no"
 
   state-init:
+    depends_on:
+      deployment-gate:
+        condition: service_healthy
     image: ${WINEBOT_APP_BUNDLE_IMAGE:?pin application pack to sha256 digest}
     entrypoint: ["/bin/sh", "/usr/local/bin/winebot-prepare-state"]
     user: "0:0"
@@ -53,6 +86,8 @@ services:
       - /run:rw,nosuid,nodev,mode=0755,size=64m
       - /var/tmp:rw,nosuid,nodev,mode=1777,size=64m
     depends_on:
+      deployment-gate:
+        condition: service_healthy
       app-seed:
         condition: service_completed_successfully
       state-init:
