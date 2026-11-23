@@ -1,0 +1,89 @@
+name: Actual source-Wine11 typed current-state and heap-lifetime join RDTE
+on:
+  push:
+    branches:
+      - rdte/wine11-live-typed-lifetime-join-r1-20261123
+    paths:
+      - rdte/re-lifetime-join/**
+      - .github/workflows/wine11-live-typed-lifetime-join-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-live-typed-lifetime-join-r1
+  cancel-in-progress: false
+jobs:
+  offline-refusal-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Exact integrated Go -race and refusal suite
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 -race ./rdte/re-observation-contract ./rdte/wine11-heap-trace ./rdte/re-lifetime-join
+          echo 'PASS: synthetic_typed_heap_lifetime_refusals'
+  pinned-source-wine11-live-join:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout integration verifier
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Checkout immutable already-qualified source Wine11 fixture producer
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          ref: 858121cb3cb2bbf2196869b8befef302efd143dd
+          path: wine11-source
+          persist-credentials: false
+      - name: Assert immutable upstream fixture producer source
+        run: |
+          set -euo pipefail
+          test "$(git -C wine11-source rev-parse HEAD)" = '858121cb3cb2bbf2196869b8befef302efd143dd'
+          echo 'PASS: source_wine11_fixture_ref_pinned'
+      - name: Prepare disposable public runner space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build pristine SHA256-pinned upstream Wine11 and synthetic fixture
+        run: |
+          set -euo pipefail
+          docker build --progress=plain -f wine11-source/docker/wine11-source.Dockerfile -t wine11-live-join:source wine11-source
+          echo 'PASS: unmodified_pinned_source_wine11_built'
+      - name: Capture and join real synthetic Wine11 heap and Win32 evidence
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/wine11-re-join"
+          mkdir -p "$work"
+          chmod 0777 "$work"
+          trap 'rm -f "$work/"*' EXIT
+          docker run --rm --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,src=$work,dst=/output" \
+            wine11-live-join:source \
+            /bin/bash -euo pipefail -c '
+              wine --version | grep -Fx wine-11.0;
+              export WINEPREFIX=/tmp/wric-join-prefix WINEARCH=wow64 WINEDEBUG=-all;
+              mkdir -p "$WINEPREFIX";
+              timeout 90s xvfb-run -a wineboot --init >/tmp/wric-boot.out 2>/tmp/wric-boot.err;
+              export WINEDEBUG=+heap;
+              timeout 240s xvfb-run -a wine /opt/winebot-wine/rdte/wric-introspection-fixture.exe \
+                >/tmp/wric-heap.out 2>/output/wric-raw.heap;
+              cp "$WINEPREFIX/drive_c/wric-witness.jsonl" /output/wric-witness.jsonl;
+              rm -f /tmp/wric-boot.out /tmp/wric-boot.err /tmp/wric-heap.out
+            '
+          python3 wine11-source/rdte/wine11-heap-trace/select_fixture_events.py \
+            --witness "$work/wric-witness.jsonl" \
+            --trace "$work/wric-raw.heap" \
+            --output "$work/wric-target.heap"
+          export WINE11_JOIN_WITNESS="$work/wric-witness.jsonl"
+          export WINE11_JOIN_TRACE="$work/wric-target.heap"
+          GO111MODULE=off go test -count=1 -run '^TestPinnedWine11RuntimeJoin$' ./rdte/re-lifetime-join
+          echo 'PASS: actual_source_wine11_synthetic_typed_lifetime_join'
+      - name: Boundary closeout
+        if: always()
+        run: echo 'Real source Wine11 synthetic fixture only, no raw address output, image publishing, private data, private Actions spend, semantic object attribution or release.'
