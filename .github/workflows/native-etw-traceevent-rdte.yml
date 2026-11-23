@@ -30,6 +30,12 @@ jobs:
           dotnet build rdte/native-etw-traceevent/TraceEventRDTE.csproj -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Build failure' }
           Write-Output 'PASS: traceevent_synthetic_compilation'
+      - name: Reject duplicate and reordered synthetic ETW sequences offline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project rdte/native-etw-traceevent/TraceEventRDTE.csproj -c Release --no-build -- --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'ETW source-owned negative control failure' }
       - name: Real user-mode Windows ETW event producer/consumer
         shell: pwsh
         run: |
