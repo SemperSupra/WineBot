@@ -47,12 +47,16 @@ static class Program
 
             int count = 0;
             int unexpected = 0;
+            int matchingProvider = 0;
+            int matchingProcess = 0;
             using (var source = new ETWTraceEventSource(file))
             {
                 source.Dynamic.All += ev =>
                 {
-                    if (ev.ProviderGuid != providerGuid ||
-                        ev.ProcessID != Environment.ProcessId) return;
+                    if (ev.ProviderGuid != providerGuid) return;
+                    matchingProvider++;
+                    if (ev.ProcessID != Environment.ProcessId) return;
+                    matchingProcess++;
                     try
                     {
                         int state = Convert.ToInt32(ev.PayloadByName("state"));
@@ -68,7 +72,11 @@ static class Program
                 source.Process(); // finite file, never a live infinite reader
             }
 
-            if (count != Expected || unexpected != 0) return 4;
+            // Fixed classification only; no event content in public logs.
+            if (matchingProvider == 0) { Console.Error.WriteLine("ETW_FAIL_NO_PROVIDER"); return 4; }
+            if (matchingProcess == 0) { Console.Error.WriteLine("ETW_FAIL_NO_MATCHING_PROCESS"); return 5; }
+            if (count != Expected) { Console.Error.WriteLine("ETW_FAIL_COUNT"); return 6; }
+            if (unexpected != 0) { Console.Error.WriteLine("ETW_FAIL_PAYLOAD"); return 7; }
             Console.WriteLine("PASS: native_etw_file_capture_decode");
             return 0;
         }
