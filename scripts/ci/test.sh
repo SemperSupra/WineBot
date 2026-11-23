@@ -12,6 +12,7 @@ pytest \
   tests/test_invariants.py \
   tests/test_persistent_owner.py \
   tests/test_writer_admission.py \
+  tests/test_lock_inode_custody_negative.py \
   tests/test_early_writer_admission.py \
   tests/test_startup_checkpoint_redaction.py \
   tests/test_input_validation.py \
