@@ -1,0 +1,72 @@
+name: Wine11 source introspection R2 isolated free-tier RDTE
+on:
+  push:
+    branches:
+      - rdte/wine11-introspection-r2-20261123
+    paths:
+      - rdte/wine-introspection/**
+      - docker/wine11-source.Dockerfile
+      - .github/workflows/wine11-introspection-source-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-introspection-r2
+  cancel-in-progress: false
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Strict source-exact typed evidence and negative controls
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 ./rdte/wine-introspection/verify.go ./rdte/wine-introspection/verify_test.go
+          echo 'PASS: wine11_introspection_schema_controls'
+  wine11-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disposable disk capacity
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build exact-source unmodified Wine11 WoW64 and PE64 introspector
+        run: |
+          set -euo pipefail
+          docker build --progress=plain -f docker/wine11-source.Dockerfile \
+            -t wine11-introspection-r2:source .
+          echo 'PASS: pinned_wine11_source_and_fixture_compiled'
+      - name: Offline Wine11 live introspection and strict host verification
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wric-wine11-output"
+          chmod 0777 "$RUNNER_TEMP/wric-wine11-output"
+          docker run --rm --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,src=$RUNNER_TEMP/wric-wine11-output,dst=/output" \
+            wine11-introspection-r2:source \
+            /bin/bash -euo pipefail -c '
+              export WINEPREFIX=/tmp/wric-prefix WINEARCH=wow64 WINEDEBUG=-all;
+              mkdir -p "$WINEPREFIX";
+              timeout 240s xvfb-run -a wine \
+                /opt/winebot-wine/rdte/wric-introspection-fixture.exe \
+                >/tmp/wric-launcher.out 2>/tmp/wric-launcher.err;
+              cp "$WINEPREFIX/drive_c/wric-witness.jsonl" /output/wric-witness.jsonl;
+              rm -f /tmp/wric-launcher.out /tmp/wric-launcher.err
+            '
+          GO111MODULE=off go run ./rdte/wine-introspection/verify.go \
+            <"$RUNNER_TEMP/wric-wine11-output/wric-witness.jsonl"
+          rm -f "$RUNNER_TEMP/wric-wine11-output/wric-witness.jsonl"
+          echo 'PASS: source_wine11_native_current_state'
+      - name: Safe closeout marker
+        if: always()
+        run: |
+          echo 'R2 isolated source Wine11+WoW64 and synthetic PE64 only.'
+          echo 'No Wine source patch, private target, screenshot, image push or uploaded artifacts.'
