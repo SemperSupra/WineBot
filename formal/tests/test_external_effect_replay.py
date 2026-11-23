@@ -7,6 +7,7 @@ import unittest
 from collections import deque
 from dataclasses import dataclass, replace
 
+
 @dataclass(frozen=True)
 class State:
     generation: int = 0
