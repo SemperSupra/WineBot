@@ -70,6 +70,12 @@ func TestSymlinkOwnerAndLockRefusal(t *testing.T){
  if err:=os.WriteFile(target,[]byte("unsafe"),0600);err!=nil {t.Fatal(err)}
  for _,name:=range []string{ownerName,lockName}{
   link:=filepath.Join(root,name)
+  // The prior owner-record test has legitimately created a lock file.
+  // Remove it only inside this synthetic fixture before testing a
+  // symlink at the same name; do not change production lock handling.
+  if name==lockName {
+   if err:=os.Remove(link);err!=nil && !errors.Is(err,os.ErrNotExist) {t.Fatal(err)}
+  }
   if err:=os.Symlink(target,link);err!=nil {t.Fatal(err)}
   if _,err:=claim(root,uid,"session",0,"operation");err==nil {t.Fatalf("%s symlink accepted",name)}
   if err:=os.Remove(link);err!=nil {t.Fatal(err)}
