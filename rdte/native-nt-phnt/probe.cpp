@@ -36,7 +36,36 @@ int main()
         wcsncmp(type_info->TypeName.Buffer, L"Event", 5) != 0)
         return 13;
 
+    // Independent read-only native NT thread query. A thread ID and TEB
+    // location are runtime-known anchors; no thread memory is exported.
+    THREAD_BASIC_INFORMATION thread_info = {};
+    ULONG thread_bytes = 0;
+    const NTSTATUS tstatus = NtQueryInformationThread(
+        GetCurrentThread(), ThreadBasicInformation, &thread_info,
+        sizeof(thread_info), &thread_bytes);
+    if (!NT_SUCCESS(tstatus) || !thread_info.TebBaseAddress ||
+        static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(
+            thread_info.ClientId.UniqueThread)) != GetCurrentThreadId())
+        return 14;
+
+    // Independently query an exact synthetic virtual allocation through the
+    // native NT API. VirtualAlloc/VirtualFree create no persistent state.
+    void* memory = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT,
+                                PAGE_READWRITE);
+    if (!memory) return 15;
+    MEMORY_BASIC_INFORMATION memory_info = {};
+    SIZE_T memory_bytes = 0;
+    const NTSTATUS mstatus = NtQueryVirtualMemory(
+        GetCurrentProcess(), memory, MemoryBasicInformation,
+        &memory_info, sizeof(memory_info), &memory_bytes);
+    const bool memory_ok = NT_SUCCESS(mstatus) &&
+        memory_info.BaseAddress == memory &&
+        memory_info.RegionSize >= 4096 &&
+        memory_info.State == MEM_COMMIT;
+    if (!VirtualFree(memory, 0, MEM_RELEASE)) return 16;
+    if (!memory_ok) return 17;
+
     // Only a fixed category exits to public CI; pointers stay process-local.
-    std::puts("PASS: native_nt_process_peb_and_event_handle");
+    std::puts("PASS: native_nt_process_thread_event_and_virtual_memory");
     return 0;
 }
