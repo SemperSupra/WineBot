@@ -11,6 +11,15 @@ on:
       # Real startup and read-only HIL must requalify actual early-admission
       # and infrastructure changes, not only the entrypoint wrapper.
       - 'api/core/writer_admission.py'
+      # Owner-pointer semantics may change startup/recovery in a combined
+      # candidate; source-only formal green cannot replace real Wine11 HIL.
+      - 'api/core/persistent_owner.py'
+      - 'tests/test_persistent_owner.py'
+      - 'formal/PERSISTENT_SESSION_OWNER.md'
+      - 'formal/tla/PersistentSessionOwner*.tla'
+      - 'formal/tla/PersistentSessionOwner*.cfg'
+      - 'formal/tests/test_persistent_session_owner.py'
+      - 'scripts/ci/test.sh'
       - 'api/server.py'
       - 'api/core/handover_recovery.py'
       - 'scripts/init/00-setup-user.sh'
