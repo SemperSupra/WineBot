@@ -78,7 +78,7 @@ jobs:
         run: |
           cmake --build build --target bootcd livecd
           if ($LASTEXITCODE -ne 0) { throw 'ReactOS ISO targets failed' }
-          foreach ($file in @('build/bootcd.iso','build/livecd.iso')) {
+          foreach ($file in @('build/bootcd.iso','build/liveimg.iso')) {
             if (!(Test-Path $file)) { throw "Missing $file" }
             $item = Get-Item $file
             if ($item.Length -lt 10000000) { throw "Implausible ISO size: $file" }
@@ -95,7 +95,7 @@ jobs:
           name: obsros-reactos-stock-source-build
           path: |
             build/bootcd.iso
-            build/livecd.iso
+            build/liveimg.iso
             receipts/
           retention-days: 3
           if-no-files-found: warn
@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           mkdir -p receipts
           find iso -type f -maxdepth 4 -print | sort > receipts/inputs.txt
-          iso_file="$(find iso -type f -name 'livecd.iso' -print -quit)"
+          iso_file="$(find iso -type f -name 'liveimg.iso' -print -quit)"
           test -n "$iso_file"
           sha256sum "$iso_file" > receipts/booted-iso-sha256.txt
           qemu-system-i386 --version > receipts/qemu-version.txt
