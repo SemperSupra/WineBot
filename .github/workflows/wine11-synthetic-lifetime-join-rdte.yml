@@ -1,0 +1,32 @@
+name: Wine11 synthetic heap-current-state evidence join RDTE
+on:
+  push:
+    branches:
+      - rdte/wine11-synthetic-lifetime-join-r1-20261123
+    paths:
+      - rdte/re-lifetime-join/**
+      - rdte/re-observation-contract/**
+      - rdte/wine11-heap-trace/**
+      - .github/workflows/wine11-synthetic-lifetime-join-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-synthetic-lifetime-join-r1
+  cancel-in-progress: false
+jobs:
+  original-synthetic-join:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Test exact-source Wine11 trace parser and typed evidence join
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -race -count=1 ./rdte/re-observation-contract ./rdte/wine11-heap-trace ./rdte/re-lifetime-join
+          echo 'PASS: wine11_synthetic_current_state_plus_heap_join'
+      - name: Scope closeout
+        if: always()
+        run: echo 'Synthetic only; no process provenance, private source, raw trace publication, paid runners or release.'
