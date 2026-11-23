@@ -19,9 +19,31 @@ static class Program
 {
     private const int Expected = 3;
 
-    private static int Main()
+    // A correct count alone can hide duplicate/missing or reordered states.
+    private static bool ExactlyOrdered(IReadOnlyList<int> states)
     {
-        if (!OperatingSystem.IsWindows()) return 2;
+        if (states.Count != Expected) return false;
+        for (int i = 0; i < Expected; i++)
+            if (states[i] != i + 1) return false;
+        return true;
+    }
+
+    private static int SelfTest()
+    {
+        if (!ExactlyOrdered(new[] { 1, 2, 3 }) ||
+            ExactlyOrdered(new[] { 1, 1, 3 }) ||
+            ExactlyOrdered(new[] { 1, 3, 2 }) ||
+            ExactlyOrdered(new[] { 1, 2 }) ||
+            ExactlyOrdered(new[] { 1, 2, 3, 3 }) ||
+            ExactlyOrdered(Array.Empty<int>())) return 11;
+        Console.WriteLine("PASS: etw_sequence_negative_controls");
+        return 0;
+    }
+
+    private static int Main(string[] args)
+    {
+        if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
+        if (args.Length != 0 || !OperatingSystem.IsWindows()) return 2;
         var file = Path.Combine(Path.GetTempPath(),
             "winebot-etw-" + Guid.NewGuid().ToString("N") + ".etl");
         var sessionName = "WineBotRDTE-" + Guid.NewGuid().ToString("N");
@@ -49,6 +71,7 @@ static class Program
             int unexpected = 0;
             int matchingProvider = 0;
             int matchingProcess = 0;
+            var seenStates = new System.Collections.Generic.List<int>();
             using (var source = new ETWTraceEventSource(file))
             {
                 source.Dynamic.All += ev =>
@@ -64,6 +87,7 @@ static class Program
                         int state = Convert.ToInt32(ev.PayloadByName("state"));
                         if (state < 1 || state > Expected)
                             Interlocked.Increment(ref unexpected);
+                        seenStates.Add(state);
                         Interlocked.Increment(ref count);
                     }
                     catch
@@ -80,6 +104,7 @@ static class Program
             if (count < Expected) { Console.Error.WriteLine(unexpected > 0 ? "ETW_FAIL_DECODE" : "ETW_FAIL_MISSING_EVENTS"); return 6; }
             if (count > Expected) { Console.Error.WriteLine("ETW_FAIL_EXTRA_EVENTS"); return 8; }
             if (unexpected != 0) { Console.Error.WriteLine("ETW_FAIL_PAYLOAD"); return 7; }
+            if (!ExactlyOrdered(seenStates)) { Console.Error.WriteLine("ETW_FAIL_SEQUENCE"); return 9; }
             Console.WriteLine("PASS: native_etw_file_capture_decode");
             return 0;
         }
