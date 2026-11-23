@@ -58,7 +58,7 @@ static class Program
                     if (ev.ProcessID != Environment.ProcessId) return;
                     matchingProcess++;
                     // Exclude EventSource manifests and other provider metadata.
-                    if (ev.ID != 1) return;
+                    if ((int)ev.ID != 1) return;
                     try
                     {
                         int state = Convert.ToInt32(ev.PayloadByName("state"));
