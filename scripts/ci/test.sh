@@ -10,6 +10,7 @@ pytest \
   tests/test_conformance_runtime_policy.py \
   tests/test_config_strict_validation.py \
   tests/test_invariants.py \
+  tests/test_persistent_owner.py \
   tests/test_writer_admission.py \
   tests/test_early_writer_admission.py \
   tests/test_startup_checkpoint_redaction.py \
