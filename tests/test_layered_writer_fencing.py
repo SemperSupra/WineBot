@@ -4,7 +4,6 @@ No deployment, network, non-synthetic state, or privileged test target.
 These controls are not evidence of an atomic inter-container handoff.
 """
 import fcntl
-import io
 import os
 import subprocess
 import sys
