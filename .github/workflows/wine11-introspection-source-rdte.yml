@@ -5,6 +5,9 @@ on:
       - rdte/wine11-introspection-r2-20261123
     paths:
       - rdte/wine-introspection/**
+      - rdte/wine11/event_bridge.py
+      - scripts/ci/test_verify_wine_event_roundtrip.py
+      - scripts/ci/verify-wine-event-roundtrip.py
       - docker/wine11-source.Dockerfile
       - .github/workflows/wine11-introspection-source-rdte.yml
   workflow_dispatch:
