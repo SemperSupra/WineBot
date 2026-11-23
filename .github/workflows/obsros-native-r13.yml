@@ -1,0 +1,338 @@
+name: OBS-ROS R13 native lifecycle and persistent installation
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/obsros-native-r13.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  qmp-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Native QMP checkpoint, mutation, rollback and independent guest output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils binutils
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          cat > boot.S <<'ASM'
+          .code16
+          .global _start
+          _start:
+              cli
+              xorw %ax,%ax
+              movw %ax,%ds
+              movw %ax,%es
+              movw %ax,%ss
+              movw $0x7c00,%sp
+              sti
+              movb %dl,drive
+              movb $'R',%al
+              outb %al,$0xe9
+          loop:
+              xorw %ax,%ax
+              int $0x16
+              movw $0x8000,%bx
+              movw $0x0201,%ax
+              movw $0x0002,%cx
+              xorb %dh,%dh
+              movb drive,%dl
+              int $0x13
+              jc fail
+              movb 0x8000,%al
+              addb $'0',%al
+              outb %al,$0xe9
+              incb counter
+              movb counter,%al
+              movb %al,0x8000
+              movw $0x8000,%bx
+              movw $0x0301,%ax
+              movw $0x0002,%cx
+              xorb %dh,%dh
+              movb drive,%dl
+              int $0x13
+              jc fail
+              movb counter,%al
+              addb $'0',%al
+              outb %al,$0xe9
+              jmp loop
+          fail:
+              movb $'E',%al
+              outb %al,$0xe9
+              cli
+              hlt
+              jmp fail
+          counter: .byte 0
+          drive: .byte 0
+          .org 510
+          .word 0xaa55
+          ASM
+          as --32 boot.S -o boot.o
+          ld -m elf_i386 -Ttext 0x7c00 --oformat binary boot.o -o boot.bin
+          sha256sum boot.bin > receipts/fixture.sha256
+          cp boot.S receipts/
+          python -c 'from pathlib import Path; b=Path("boot.bin").read_bytes(); assert len(b)==512 and b[-2:]==bytes.fromhex("55aa")'
+          truncate -s 16M disk.raw
+          dd if=boot.bin of=disk.raw conv=notrunc status=none
+          qemu-img convert -f raw -O qcow2 disk.raw disk.qcow2
+          cat > lifecycle.py <<'PY'
+          import json, pathlib, socket, subprocess, time
+          from contextlib import ExitStack
+          P=pathlib.Path
+          receipts=P("receipts")
+          log=(receipts/"qmp.ndjson").open("w", buffering=1)
+          def record(direction,obj):
+              log.write(json.dumps({"direction":direction,"monotonic_ns":time.monotonic_ns(),"message":obj})+"\n")
+          def wait_file(path,expected,seconds=20):
+              end=time.monotonic()+seconds
+              while time.monotonic()<end:
+                  if path.exists():
+                      b=path.read_bytes()
+                      if b==expected: return
+                      if not expected.startswith(b): raise RuntimeError(repr(b))
+                  time.sleep(.1)
+              raise TimeoutError(f"expected {expected!r}")
+          class QMP:
+              def __init__(self):
+                  self.s=socket.socket(socket.AF_UNIX)
+                  self.s.settimeout(5)
+                  end=time.monotonic()+15
+                  while True:
+                      try: self.s.connect("qmp.sock"); break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if time.monotonic()>end: raise
+                          time.sleep(.1)
+                  self.f=self.s.makefile("rb")
+                  self.i=0
+                  assert "QMP" in self.recv()
+                  self.call("qmp_capabilities")
+              def recv(self):
+                  b=self.f.readline(262145)
+                  if not b or len(b)>262144 or not b.endswith(b"\n"): raise ValueError("invalid frame")
+                  m=json.loads(b); record("recv",m); return m
+              def call(self,cmd,args=None,expect_error=False):
+                  self.i+=1
+                  m={"execute":cmd,"id":self.i}
+                  if args is not None: m["arguments"]=args
+                  record("send",m)
+                  self.s.sendall(json.dumps(m).encode()+b"\r\n")
+                  for _ in range(128):
+                      r=self.recv()
+                      if "event" in r: continue
+                      assert r.get("id")==self.i,r
+                      if expect_error:
+                          assert "error" in r,r
+                          return r["error"]
+                      if "error" in r: raise RuntimeError(r)
+                      assert "return" in r,r
+                      return r["return"]
+                  raise RuntimeError("event budget exceeded")
+              def job(self,cmd,job_id,tag,expect_error=False):
+                  args={"job-id":job_id,"tag":tag,"devices":["fixture-disk"]}
+                  if cmd!="snapshot-delete": args["vmstate"]="fixture-disk"
+                  self.call(cmd,args)
+                  end=time.monotonic()+45
+                  while time.monotonic()<end:
+                      jobs=self.call("query-jobs")
+                      matching=[j for j in jobs if j["id"]==job_id]
+                      if len(matching)==1 and matching[0]["status"]=="concluded":
+                          j=matching[0]; assert j["type"]==cmd,j
+                          (receipts/(job_id+".json")).write_text(json.dumps(j,indent=2))
+                          assert ("error" in j)==expect_error,j
+                          self.call("job-dismiss",{"id":job_id})
+                          return
+                      time.sleep(.1)
+                  raise TimeoutError(job_id)
+          debug=receipts/"guest-debug.bin"
+          args=["qemu-system-i386","-accel","tcg","-machine","pc","-m","64","-smp","1","-nic","none","-display","none","-serial","none","-monitor","none","-qmp","unix:qmp.sock,server=on,wait=off","-debugcon","file:"+str(debug),"-global","isa-debugcon.iobase=0xe9","-blockdev","driver=file,node-name=fixture-file,filename=disk.qcow2","-blockdev","driver=qcow2,node-name=fixture-disk,file=fixture-file","-device","ide-hd,drive=fixture-disk","-boot","order=c"]
+          with (receipts/"qemu-stderr.txt").open("wb") as err:
+              p=subprocess.Popen(args,stdout=err,stderr=err)
+              try:
+                  q=QMP()
+                  wait_file(debug,b"R")
+                  blocks=q.call("query-block")
+                  writable=[b["inserted"]["node-name"] for b in blocks if b.get("inserted") and not b["inserted"]["ro"]]
+                  assert writable==["fixture-disk"],blocks
+                  q.call("stop")
+                  assert not q.call("query-status")["running"]
+                  q.job("snapshot-save","save0","base")
+                  q.call("cont")
+                  def key(): q.call("send-key",{"keys":[{"type":"qcode","data":"a"}],"hold-time":50})
+                  key(); wait_file(debug,b"R01")
+                  key(); wait_file(debug,b"R0112")
+                  q.call("stop")
+                  q.job("snapshot-load","load0","base")
+                  q.call("cont")
+                  key(); wait_file(debug,b"R011201")
+                  q.call("stop")
+                  q.job("snapshot-delete","delete0","base")
+                  q.call("quit")
+                  p.wait(timeout=10)
+                  assert p.returncode==0,p.returncode
+              finally:
+                  if p.poll() is None: p.terminate(); p.wait(timeout=10)
+          subprocess.run(["qemu-img","convert","-f","qcow2","-O","raw","disk.qcow2","after.raw"],check=True)
+          with open("after.raw","rb") as f:
+              f.seek(512); assert f.read(1)==b"\x01"
+          (receipts/"classification.txt").write_text("QMP_CONCLUDED_SAVE_LOAD_DELETE_PASS; GUEST_RAM_DISK_COUNTER_ABA_PASS; OFFLINE_DISK_BYTE_PASS; SYNTHETIC_ONLY\n")
+          PY
+          cp lifecycle.py receipts/
+          timeout 180s python lifecycle.py
+      - name: Retain bounded lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r13-native-lifecycle
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
+  reactos-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check public execution scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+      - name: Retrieve existing public source-built ISO
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271529806
+          github-token: ${{ github.token }}
+          name: obsros-reactos-stock-source-build
+          path: stock
+      - name: Derive unattended installer configuration and test persistent guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils xorriso mtools
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          iso="$(find stock -type f -name bootcd.iso -print -quit)"
+          test -n "$iso"
+          printf '%s  %s\n' cce7389f10018a81d0cfd075e1c0391d255288717e0bc19453572f0d5ce0f0ef "$iso" | sha256sum -c -
+          sha256sum "$iso" > receipts/original-iso.sha256
+          printf '%s\n' 'reactos/reactos@4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6' 'public artifact 14866900023' > receipts/provenance.txt
+          xorriso -osirrox on -indev "$iso" -extract /freeldr.ini freeldr.ini -extract /reactos/unattend.inf unattend.inf >receipts/extract.txt 2>&1
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("freeldr.ini")
+          b=p.read_bytes()
+          assert b.count(b"DefaultOS=LiveImg_Debug")==1
+          p.write_bytes(b.replace(b"DefaultOS=LiveImg_Debug",b"DefaultOS=Setup_Debug").replace(b"TimeOut=10",b"TimeOut=1"))
+          p=Path("unattend.inf")
+          b=p.read_bytes()
+          assert b.count(b"UnattendSetupEnabled = no")==1
+          p.write_bytes(b.replace(b"UnattendSetupEnabled = no",b"UnattendSetupEnabled = yes"))
+          PY
+          cp freeldr.ini unattend.inf receipts/
+          xorriso -indev "$iso" -outdev install.iso -boot_image any replay -map freeldr.ini /freeldr.ini -map unattend.inf /reactos/unattend.inf -commit -end > receipts/remaster.txt 2>&1
+          sha256sum install.iso > receipts/derived-iso.sha256
+          xorriso -indev install.iso -report_el_torito plain >receipts/eltorito.txt 2>&1
+          grep -qi 'El Torito boot img' receipts/eltorito.txt
+          xorriso -osirrox on -indev install.iso -extract /freeldr.ini check.ini -extract /reactos/unattend.inf check.inf >/dev/null 2>&1
+          cmp freeldr.ini check.ini
+          cmp unattend.inf check.inf
+          qemu-img create -f qcow2 guest.qcow2 2G
+          cat > install.py <<'PY'
+          import json, pathlib, socket, subprocess, time
+          P=pathlib.Path
+          receipts=P("receipts")
+          def phase(name,cd,boot,seconds):
+              sock=P(name+".sock")
+              serial=receipts/(name+".serial")
+              args=["qemu-system-i386","-accel","tcg","-machine","pc","-cpu","pentium3","-smp","1","-m","768","-nic","none","-display","none","-vga","std","-serial","file:"+str(serial),"-monitor","none","-qmp",f"unix:{sock},server=on,wait=off","-drive","file=guest.qcow2,format=qcow2,if=ide","-boot",boot,"-no-reboot"]
+              if cd: args+=["-cdrom","install.iso"]
+              with (receipts/(name+".stderr")).open("wb") as err,(receipts/(name+".qmp.ndjson")).open("w",buffering=1) as log:
+                  p=subprocess.Popen(args,stdout=err,stderr=err)
+                  s=socket.socket(socket.AF_UNIX); s.settimeout(4)
+                  outcome="UNKNOWN"
+                  try:
+                      end=time.monotonic()+20
+                      while not sock.exists() and p.poll() is None and time.monotonic()<end: time.sleep(.1)
+                      if p.poll() is not None: raise RuntimeError("early exit")
+                      s.connect(str(sock)); f=s.makefile("rb"); i=0
+                      def recv():
+                          b=f.readline(262145)
+                          if not b or len(b)>262144: raise EOFError()
+                          obj=json.loads(b); log.write(json.dumps(obj)+"\n"); return obj
+                      assert "QMP" in recv()
+                      def call(cmd,args=None):
+                          nonlocal i
+                          i+=1; m={"execute":cmd,"id":i}
+                          if args: m["arguments"]=args
+                          s.sendall(json.dumps(m).encode()+b"\r\n")
+                          for _ in range(128):
+                              r=recv()
+                              if "event" in r: continue
+                              assert r.get("id")==i and "return" in r,r
+                              return r["return"]
+                          raise RuntimeError("event budget")
+                      call("qmp_capabilities")
+                      start=time.monotonic(); next_capture=start; n=0
+                      while p.poll() is None and time.monotonic()-start<seconds:
+                          if serial.exists() and serial.stat().st_size>16*1024*1024: raise RuntimeError("serial budget exceeded")
+                          if time.monotonic()>=next_capture:
+                              try: call("screendump",{"filename":str(receipts/(f"{name}-{n:02d}.ppm"))})
+                              except (EOFError,OSError): break
+                              n+=1; next_capture=time.monotonic()+30
+                          time.sleep(1)
+                      if p.poll() is not None:
+                          outcome=f"VM_EXIT_{p.returncode}"
+                          assert p.returncode==0,p.returncode
+                      else:
+                          outcome="TIME_BOUND_OR_QMP_END"
+                          try: call("screendump",{"filename":str(receipts/(name+"-final.ppm"))}); call("quit")
+                          except (EOFError,OSError): pass
+                  finally:
+                      s.close()
+                      if p.poll() is None:
+                          p.terminate()
+                          try: p.wait(timeout=10)
+                          except subprocess.TimeoutExpired: p.kill(); p.wait()
+                      (receipts/(name+".status")).write_text(outcome+"\n")
+              return outcome
+          def disk_probe(name):
+              subprocess.run(["qemu-img","convert","-f","qcow2","-O","raw","guest.qcow2","probe.raw"],check=True)
+              with open("probe.raw","rb") as f: m=f.read(512)
+              assert m[-2:]==b"\x55\xaa","no MBR signature"
+              part=[]
+              for i in range(4):
+                  e=m[446+i*16:462+i*16]; start=int.from_bytes(e[8:12],"little"); count=int.from_bytes(e[12:16],"little")
+                  if e[4] and start and count: part.append((e[4],start,count))
+              (receipts/(name+"-partitions.json")).write_text(json.dumps(part))
+              assert part,"no disk partition"
+              for typ,start,count in part:
+                  r=subprocess.run(["mdir","-i",f"probe.raw@@{start*512}","::/ReactOS/system32/ntoskrnl.exe"],capture_output=True,text=True,timeout=15)
+                  (receipts/(name+f"-kernel-{start}.txt")).write_text(r.stdout+r.stderr)
+                  if r.returncode==0:
+                      P("probe.raw").unlink()
+                      return
+              P("probe.raw").unlink()
+              raise RuntimeError("installed kernel not independently located")
+          first=phase("stage1",True,"order=c,once=d",360)
+          disk_probe("stage1")
+          second=phase("stage2",True,"order=c",300)
+          disk_probe("stage2")
+          third=phase("diskonly",False,"order=c",100)
+          disk_probe("diskonly")
+          (receipts/"classification.txt").write_text("PERSISTENT_DISK_KERNEL_PRESENT; DISK_ONLY_BOOT_ATTEMPT_CAPTURED; DESKTOP_AND_REBOOT_REQUIRE_INDEPENDENT_SCREEN_SERIAL_CLASSIFICATION\n")
+          PY
+          cp install.py receipts/
+          timeout 850s python install.py
+      - name: Retain bounded installation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r13-reactos-persistent-install
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
