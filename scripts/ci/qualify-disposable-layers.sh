@@ -76,7 +76,7 @@ docker run --rm --network none --read-only --cap-drop ALL \
   "$app_image" >/dev/null 2>&1 || fail reverified_app
 
 # One-shot root task prepares only volume root ownership, never user contents.
-docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN \
+docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
   --security-opt no-new-privileges --memory 256m --pids-limit 64 \
   --entrypoint /bin/sh \
   -v "$WINEBOT_PREFIX_VOLUME:/state/prefix" \
@@ -105,8 +105,9 @@ docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL \
   ' >/dev/null 2>&1 || fail first_runtime
 
 # Replay the exact privileged bootstrap against *already user-owned* volumes
-# with preserved files. CAP_CHOWN-only root must not try chmod on UID1000.
-docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN \
+# with preserved files. Root needs DAC_OVERRIDE only to reopen the locked,
+# mode-0600 UID1000 writer lock; never chmod user-owned volume directories.
+docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
   --security-opt no-new-privileges --memory 256m --pids-limit 64 \
   --entrypoint /bin/sh \
   -v "$WINEBOT_PREFIX_VOLUME:/state/prefix" \
