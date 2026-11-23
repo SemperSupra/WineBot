@@ -1,0 +1,60 @@
+name: Native NT phnt synthetic RDTE
+on:
+  push:
+    branches:
+      - rdte/native-nt-phnt-r1-20261123
+    paths:
+      - rdte/native-nt-phnt/**
+      - .github/workflows/native-nt-phnt-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-nt-phnt-r1
+  cancel-in-progress: false
+jobs:
+  compile-and-observe:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout original synthetic fixture
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Read pinned MIT native NT header source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: winsiderss/phnt
+          ref: 53fbbdc5b5d2b08761db1c7b26bfa8c820924356
+          path: upstream-phnt
+          persist-credentials: false
+      - name: Verify pinned source identity and expected definitions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = git -C upstream-phnt rev-parse HEAD
+          if ($sha.Trim() -cne '53fbbdc5b5d2b08761db1c7b26bfa8c820924356') { throw 'Wrong phnt source' }
+          foreach ($path in @('upstream-phnt/phnt.h','upstream-phnt/phnt_windows.h')) {
+            if (!(Test-Path $path)) { throw 'Missing phnt header' }
+          }
+          Write-Output 'PASS: pinned_phnt_source_identity'
+      - name: Compile Win32 + phnt APIs against Windows SDK
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cl /nologo /W3 /WX /EHsc /std:c++17 /Iupstream-phnt rdte\native-nt-phnt\probe.cpp /Fe:"%RUNNER_TEMP%\phnt-probe.exe" /link ntdll.lib
+          if errorlevel 1 exit /b 1
+          echo PASS: phnt_native_compilation
+      - name: Execute rights-cleared read-only NT object witness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:RUNNER_TEMP\phnt-probe.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Native NT witness failed with source-owned code $LASTEXITCODE" }
+          Write-Output 'PASS: actual_windows_nt_runtime'
+      - name: Safe closeout
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'No private Windows VM, production process, kernel driver, uploaded artifact, secrets or source promotion.'
