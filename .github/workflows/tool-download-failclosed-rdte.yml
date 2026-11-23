@@ -1,0 +1,30 @@
+name: Tool downloader fail-closed synthetic RDTE
+on:
+  push:
+    branches:
+      - fix/tool-download-failclosed-20261123
+    paths:
+      - windows-tools/download_tool.sh
+      - scripts/ci/test-download-tool.sh
+      - .github/workflows/tool-download-failclosed-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tool-download-failclosed-rdte
+  cancel-in-progress: false
+jobs:
+  offline-transport-and-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Source-owned synthetic positive and negative controls
+        run: |
+          set -euo pipefail
+          bash scripts/ci/test-download-tool.sh
+      - name: Scope
+        if: always()
+        run: echo 'Original offline ZIP only; no remote third-party payload, private minutes, uploaded artifact or production release.'

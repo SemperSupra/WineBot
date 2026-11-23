@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-TOOL_NAME="$1"
-TOOL_URL="$2"
-TOOL_SHA256="$3"
-DEST_DIR="$4"
+TOOL_NAME="${1:-}"
+TOOL_URL="${2:-}"
+TOOL_SHA256="${3:-}"
+DEST_DIR="${4:-}"
 
-if [ -z "$TOOL_NAME" ] || [ -z "$TOOL_URL" ] || [ -z "$TOOL_SHA256" ] || [ -z "$DEST_DIR" ]; then
+if [ "$#" -ne 4 ] || [ -z "$TOOL_NAME" ] || [ -z "$TOOL_URL" ] || [ -z "$DEST_DIR" ] ||
+   ! [[ "$TOOL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
     echo "Usage: $0 <name> <url> <sha256> <dest_dir>"
     exit 1
 fi
 
-mkdir -p "$DEST_DIR"
+temp_zip="$(mktemp /tmp/winebot-tool.XXXXXXXX.zip)"
+trap 'rm -f "$temp_zip"' EXIT
+
 echo "Downloading $TOOL_NAME..."
-curl -sL -o /tmp/tool.zip "$TOOL_URL"
+if ! curl --fail --show-error --silent --location --retry 2 \
+    --retry-delay 1 --connect-timeout 15 --max-time 120 \
+    --output "$temp_zip" "$TOOL_URL"; then
+    echo "ERROR: download failed for $TOOL_NAME" >&2
+    exit 1
+fi
 
 echo "Verifying integrity of $TOOL_NAME..."
-echo "$TOOL_SHA256  /tmp/tool.zip" | sha256sum -c - || {
+printf '%s  %s\n' "$TOOL_SHA256" "$temp_zip" | sha256sum --check --status || {
     echo "ERROR: Checksum mismatch for $TOOL_NAME" >&2
     exit 1
 }
 
-unzip -q -o /tmp/tool.zip -d "$DEST_DIR"
-rm /tmp/tool.zip
+mkdir -p "$DEST_DIR"
+unzip -q -o "$temp_zip" -d "$DEST_DIR"
 
 # Custom handling
 if [ "$TOOL_NAME" = "AutoIt" ] && [ -d "$DEST_DIR/install" ]; then
