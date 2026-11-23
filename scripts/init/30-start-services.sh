@@ -3,14 +3,18 @@
 
 echo "--> Pass 4: Service Startup (WINEBOT_INPUT_TRACE_WINDOWS=${WINEBOT_INPUT_TRACE_WINDOWS:-unset})"
 
+WINEBOT_STARTUP_STAGE="services/input-trace"
 # Post-Init Tracing (Ensures wineserver is stable)
 if [ "${WINEBOT_INPUT_TRACE_WINDOWS:-0}" = "1" ]; then
     echo "--> Post-Init Tracing: AHK hook enabled."
     sleep 2
     WIN_TRACE_MS="${WINEBOT_INPUT_TRACE_WINDOWS_SAMPLE_MS:-5}"
     mkdir -p "$SESSION_DIR/logs"
-    WINE_LOG_PATH=$(winepath -w "$SESSION_DIR/logs/input_events_windows.jsonl")
-    WINE_SCRIPT_PATH=$(winepath -w /automation/core/input_trace_windows.ahk)
+    WINEBOT_STARTUP_STAGE="services/trace-log-path"
+    WINE_LOG_PATH="$(/scripts/init/winepath-with-retry.sh "$SESSION_DIR/logs/input_events_windows.jsonl")"
+    WINEBOT_STARTUP_STAGE="services/trace-script-path"
+    WINE_SCRIPT_PATH="$(/scripts/init/winepath-with-retry.sh /automation/core/input_trace_windows.ahk)"
+    WINEBOT_STARTUP_STAGE="services/trace-launch"
     echo "--> Starting Windows Input Trace..."
     (
       TRACE_RESTART_WINDOW="${WINEBOT_TRACE_RESTART_WINDOW_SECONDS:-120}"

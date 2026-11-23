@@ -1,0 +1,44 @@
+name: Wine11 inherited trace-path startup recovery controls
+on:
+  push:
+    branches:
+      - rdte/wine11-experiment-source-retry-r1-20261123
+    paths:
+      - docker/entrypoint.sh
+      - scripts/init/30-start-services.sh
+      - scripts/init/winepath-with-retry.sh
+      - tests/test_winepath_startup_retry.py
+      - .github/workflows/wine11-experiment-source-retry-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-experiment-source-retry-r1
+  cancel-in-progress: false
+jobs:
+  offline-accepted-main-retry-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Validate shell syntax and known-stage retry wiring
+        run: |
+          set -euo pipefail
+          bash -n docker/entrypoint.sh scripts/init/30-start-services.sh scripts/init/winepath-with-retry.sh
+          grep -Fq 'WINEBOT_STARTUP_ERROR stage=' docker/entrypoint.sh
+          grep -Fq 'WINEBOT_STARTUP_STAGE="services/trace-log-path"' scripts/init/30-start-services.sh
+          grep -Fq 'WINEBOT_STARTUP_STAGE="services/trace-script-path"' scripts/init/30-start-services.sh
+          grep -Fq '/scripts/init/winepath-with-retry.sh' scripts/init/30-start-services.sh
+          echo 'PASS: wine11_experiment_startup_wiring'
+      - name: Execute original fail-closed bounded retry suite
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/wine11-venv"
+          "$RUNNER_TEMP/wine11-venv/bin/pip" install --disable-pip-version-check 'pytest==9.0.3'
+          "$RUNNER_TEMP/wine11-venv/bin/python" -m pytest -q tests/test_winepath_startup_retry.py
+          echo 'PASS: synthetic_trace_path_retry_controls'
+      - name: Scope
+        if: always()
+        run: echo 'Accepted-main source retry borrowed byte-exact; isolated fixture, no private artifacts, raw logs, policy bypass, production release or private Actions spend.'
