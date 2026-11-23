@@ -14,6 +14,17 @@ import (
 const maxRecordBytes = 8192
 
 var digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
+var buildFields = map[string]bool{
+    "variant":true, "wine_version":true, "upstream_tag":true,
+    "source_archive_digest":true, "toolchain_digest":true,
+    "dependencies_digest":true, "patch_queue_digest":true,
+    "image_digest":true, "sensor_mode":true,
+}
+var sessionFields = map[string]bool{
+    "variant":true, "session_id":true, "generation":true,
+    "fixture_digest":true, "prefix_origin":true, "prefix_clone_id":true,
+    "source_snapshot_digest":true, "state_mount_id":true, "writable":true,
+}
 
 // Build is a declaration, NOT a signature or verified build attestation.
 type Build struct {
@@ -43,7 +54,7 @@ type Session struct {
 
 // strictRecord rejects duplicate JSON object keys, added fields, truncated and
 // trailing records. Every admission document is a single flat object.
-func strictRecord(r io.Reader, target any) error {
+func strictRecord(r io.Reader, target any, allowed map[string]bool) error {
     payload, err := io.ReadAll(io.LimitReader(r, maxRecordBytes+1))
     if err != nil || len(payload) == 0 || len(payload) > maxRecordBytes {
         return errors.New("missing or oversized record")
@@ -60,7 +71,7 @@ func strictRecord(r io.Reader, target any) error {
             return errors.New("malformed object")
         }
         key, ok := token.(string)
-        if !ok || seen[key] {
+        if !ok || seen[key] || !allowed[key] {
             return errors.New("duplicate or invalid field")
         }
         seen[key] = true
@@ -72,6 +83,7 @@ func strictRecord(r io.Reader, target any) error {
             return errors.New("nested evidence not admitted")
         }
     }
+    if len(seen) != len(allowed) { return errors.New("missing required field") }
     end, err := d.Token()
     if err != nil || end != json.Delim('}') {
         return errors.New("malformed object end")
@@ -89,13 +101,13 @@ func strictRecord(r io.Reader, target any) error {
 
 func parseBuild(r io.Reader) (Build, error) {
     var b Build
-    err := strictRecord(r, &b)
+    err := strictRecord(r, &b, buildFields)
     return b, err
 }
 
 func parseSession(r io.Reader) (Session, error) {
     var s Session
-    err := strictRecord(r, &s)
+    err := strictRecord(r, &s, sessionFields)
     return s, err
 }
 
