@@ -41,6 +41,9 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --- USER CONTEXT (winebot) ---
+# Accepted-main-style fixed-code startup failure classification; no values/secrets.
+WINEBOT_STARTUP_STAGE="configuration"
+trap 'startup_rc=$?; if [ "$startup_rc" -ne 0 ]; then printf "WINEBOT_STARTUP_ERROR stage=%s rc=%s\\n" "$WINEBOT_STARTUP_STAGE" "$startup_rc" >&2; fi' EXIT
 write_instance_state() {
     local state="$1"
     local reason="${2:-}"
