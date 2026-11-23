@@ -1,0 +1,61 @@
+name: Wine introspection R1 synthetic RDTE
+on:
+  push:
+    branches:
+      - rdte/wine-introspection-r1-20261123
+    paths:
+      - rdte/wine-introspection/**
+      - .github/workflows/wine-introspection-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine-introspection-r1
+  cancel-in-progress: false
+jobs:
+  contract-negative-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Validate strict schema and negative controls
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 ./rdte/wine-introspection/verify.go ./rdte/wine-introspection/verify_test.go
+          printf '%s\n' 'PASS: synthetic_schema_negative_controls'
+  real-wine-enumeration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install public runner Wine and PE compiler
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends wine mingw-w64 xvfb xauth
+      - name: Compile original PE64 fixture
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/wric-fixture.exe" rdte/wine-introspection/introspection_fixture.c -lpsapi
+          file "$RUNNER_TEMP/wric-fixture.exe" | grep -F 'PE32+'
+          echo 'PASS: synthetic_pe64_compiled'
+      - name: Execute Wine and verify ephemeral current-state witness
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$RUNNER_TEMP/wric-prefix"
+          export WINEARCH=win64
+          export WINEDEBUG=-all
+          export WINEDLLOVERRIDES="mscoree,mshtml="
+          mkdir -p "$WINEPREFIX"
+          timeout 240s xvfb-run -a wine "$RUNNER_TEMP/wric-fixture.exe" >"$RUNNER_TEMP/wric-launcher.stdout" 2>"$RUNNER_TEMP/wric.stderr"
+          GO111MODULE=off go run ./rdte/wine-introspection/verify.go <"$WINEPREFIX/drive_c/wric-witness.jsonl"
+          rm -f "$WINEPREFIX/drive_c/wric-witness.jsonl" "$RUNNER_TEMP/wric-launcher.stdout" "$RUNNER_TEMP/wric.stderr"
+          echo 'PASS: actual_wine_no_patch_current_state'
+      - name: Scope note
+        if: always()
+        run: echo 'Synthetic distro Wine baseline only; no Wine source patch, private source, raw log, artifact upload, container push or production release.'
