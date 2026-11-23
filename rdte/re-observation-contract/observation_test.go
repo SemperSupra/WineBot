@@ -36,6 +36,7 @@ func TestRejectFabricatedEvidence(t *testing.T){
         "wrong backend":func(o *Observation){o.Backend="other"},
         "empty sha":func(o *Observation){o.SourceCommit=""},
         "wrong coverage":func(o *Observation){o.Coverage="complete"},
+        "legacy v0":func(o *Observation){o.Schema="winebot.research.observation/v0"},
         "zero process":func(o *Observation){o.ProcessID=0},
         "wrong kind":func(o *Observation){o.Kind="etw_transition"},
         "bad sensor":func(o *Observation){o.Sensor="static_tool"},

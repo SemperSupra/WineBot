@@ -2,7 +2,7 @@
 // Research observation metadata only, not an execution controller or private critic.
 package evidence
 import ("bytes";"encoding/json";"errors";"io";"regexp";"strconv")
-const Schema="winebot.research.observation/v0"
+const Schema="winebot.research.observation/v1"
 var hexAddress=regexp.MustCompile("^0x[0-9a-f]{1,16}$")
 var commitSHA=regexp.MustCompile("^[0-9a-f]{40}$")
 type Observation struct {

@@ -1,4 +1,4 @@
-# Cross-provider reverse-engineering observation metadata v0
+# Cross-provider reverse-engineering observation metadata v1
 
 An independent, public synthetic-only Go stdlib **adapter contract candidate**, not a new control plane, actual security attestor, runtime database, or Observatory critic replacement.
 
@@ -12,7 +12,7 @@ Future integration is only through the authorized WineBot/WinBot sensor owners a
 
 ## Exact-source one-sensor batch qualification
 
-The optional `ValidateOneSensorBatch` helper checks an **independently supplied source commit** against every individual synthetic observation; it rejects mixed process IDs, mixed sensors/backends, duplicate event kinds, unknown fields and unbounded record counts. It does **not** join native NT, ETW and Wine observations into one causal session. Different providers require an independently authenticated correlation/experiment ID and actual producer receipts before their identities can be reconciled. A matching 40-character SHA is not proof that GitHub emitted the record or that the underlying run was real.
+The v1 schema explicitly requires allocation extents for Win32 API records, so pre-v1 envelopes are rejected (draft research contract: no production consumer migration). The optional `ValidateOneSensorBatch` helper checks an **independently supplied source commit** against every individual synthetic observation; it rejects mixed process IDs, mixed sensors/backends, duplicate event kinds, unknown fields and unbounded record counts. It does **not** join native NT, ETW and Wine observations into one causal session. Different providers require an independently authenticated correlation/experiment ID and actual producer receipts before their identities can be reconciled. A matching 40-character SHA is not proof that GitHub emitted the record or that the underlying run was real.
 
 The offline negative tests deliberately attempt cross-sensor mixing, PID mixing, duplicate kinds, source-head mismatch, corrupt records, and oversize batches. Native/WinBot and Ghidra adapters remain separately gated.
 
