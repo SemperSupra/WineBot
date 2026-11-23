@@ -3,9 +3,9 @@
 A finite abstract state machine, NOT a proof of Linux flock, Docker
 health delivery, host mount identity, file permissions or hostile writers.
 """
+import unittest
 from collections import deque
 from dataclasses import dataclass, replace
-import unittest
 
 INITIAL = ("new", "new")
 
