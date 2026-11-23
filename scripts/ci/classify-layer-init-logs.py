@@ -16,7 +16,8 @@ STAGES = {
     },
     "state-init": {
         "invalid_identity", "mount_unavailable", "permissions_failed",
-        "ownership_failed", "ready",
+        "ownership_failed", "lock_unavailable", "lock_identity_invalid",
+        "lock_contended", "ready",
     },
 }
 PREFIX = {

@@ -191,6 +191,22 @@ docker compose -f compose/layered.yml exec -T winebot-interactive /bin/sh -ec '
   if touch /opt/winebot/unauthorized-root-write >/dev/null 2>&1; then exit 14; fi
 ' >/dev/null 2>&1 || fail state_write_or_readonly
 
+# Another Compose project using the same external volumes may NOT
+# initialize persistent state while an admitted WineBot runtime is alive.
+# Only fixed status/marker is published; raw Compose/container text stays
+# disposable and local to this synthetic public runner.
+competing_log="$(mktemp)"
+if docker compose -f compose/layered.yml run --rm --no-deps state-init >"$competing_log" 2>&1; then
+  rm -f "$competing_log"
+  fail state_init_competing_writer_admitted
+fi
+if ! grep -Fq 'STATE_LAYER_DIAGNOSTIC stage=lock_contended' "$competing_log"; then
+  rm -f "$competing_log"
+  fail state_init_conflict_unclassified
+fi
+rm -f "$competing_log"
+echo 'WINE11_LAYER_HIL stage=state_init_conflict_rejected'
+
 # Use the actual WineBot bounded trace/resource checker (90-second tier).
 docker compose -f compose/layered.yml exec -T --user 1000 \
   -e DURATION_SECONDS=90 -e INTERVAL_SECONDS=15 \
