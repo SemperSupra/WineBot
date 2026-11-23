@@ -2,7 +2,7 @@
 
 Owner: mark-e-deyoung/winebot-research#3. Candidate only; no production admission, release, hardware test or protected merge.
 
-This Go standard-library, offline contract checks the **declarations** for two variants, using four independent flat JSON records (stock build, instrumented build, stock session, instrumented session):
+This Go standard-library, offline contract uses explicit versioned build/session schemas (winebot/wine11-build/v1 and winebot/wine11-session/v1) and checks the **declarations** for two variants, using four independent flat JSON records (stock build, instrumented build, stock session, instrumented session):
 
 - Exact same Wine 11.0 upstream tag, source SHA-256, toolchain and dependency-lock digests.
 - Stock has no instrumentation patch queue or privileged sensor mode. Instrumented has an explicit, versioned nonempty patch digest and optional-native sensor designation.

@@ -15,19 +15,20 @@ const maxRecordBytes = 8192
 
 var digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
 var buildFields = map[string]bool{
-    "variant":true, "wine_version":true, "upstream_tag":true,
+    "schema":true, "variant":true, "wine_version":true, "upstream_tag":true,
     "source_archive_digest":true, "toolchain_digest":true,
     "dependencies_digest":true, "patch_queue_digest":true,
     "image_digest":true, "sensor_mode":true,
 }
 var sessionFields = map[string]bool{
-    "variant":true, "session_id":true, "generation":true,
+    "schema":true, "variant":true, "session_id":true, "generation":true,
     "fixture_digest":true, "prefix_origin":true, "prefix_clone_id":true,
     "source_snapshot_digest":true, "state_mount_id":true, "writable":true,
 }
 
 // Build is a declaration, NOT a signature or verified build attestation.
 type Build struct {
+    Schema string `json:"schema"`
     Variant string `json:"variant"`
     WineVersion string `json:"wine_version"`
     UpstreamTag string `json:"upstream_tag"`
@@ -41,6 +42,7 @@ type Build struct {
 
 // Session is a proposed isolated run, NOT proof of mount or lease custody.
 type Session struct {
+    Schema string `json:"schema"`
     Variant string `json:"variant"`
     SessionID string `json:"session_id"`
     Generation uint64 `json:"generation"`
@@ -114,7 +116,7 @@ func parseSession(r io.Reader) (Session, error) {
 func digest(v string) bool { return digestPattern.MatchString(v) }
 
 func validateBuild(b Build, variant string) error {
-    if b.Variant != variant || b.WineVersion != "11.0" ||
+    if b.Schema != "winebot/wine11-build/v1" || b.Variant != variant || b.WineVersion != "11.0" ||
         b.UpstreamTag != "wine-11.0" {
         return errors.New("wrong variant or Wine 11 source identity")
     }
@@ -133,7 +135,7 @@ func validateBuild(b Build, variant string) error {
 }
 
 func validateSession(s Session, variant string) error {
-    if s.Variant != variant || s.SessionID == "" || s.Generation == 0 ||
+    if s.Schema != "winebot/wine11-session/v1" || s.Variant != variant || s.SessionID == "" || s.Generation == 0 ||
         s.PrefixCloneID == "" || s.StateMountID == "" {
         return errors.New("incomplete session custody declaration")
     }
