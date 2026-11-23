@@ -6,8 +6,9 @@ FROM ${APP_PACK_BUILDER_IMAGE}
 COPY apps/ /opt/winebot/app-payload/
 COPY scripts/layers/seed-apps.sh /usr/local/bin/winebot-seed-apps
 COPY scripts/layers/prepare-state.sh /usr/local/bin/winebot-prepare-state
+COPY scripts/layers/deployment-gate.sh /usr/local/bin/winebot-deployment-gate
 RUN set -eu; \
-    chmod 0555 /usr/local/bin/winebot-seed-apps /usr/local/bin/winebot-prepare-state; \
+    chmod 0555 /usr/local/bin/winebot-seed-apps /usr/local/bin/winebot-prepare-state /usr/local/bin/winebot-deployment-gate; \
     command -v flock >/dev/null 2>&1; \
     test -d /opt/winebot/app-payload; \
     test -z "$(find /opt/winebot/app-payload -type l -print -quit)"; \

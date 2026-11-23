@@ -12,7 +12,11 @@ fail() {
   [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || fail invalid_identity
 prefix="winebot-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 volumes=()
+deployment_gate_cid=""
 cleanup() {
+  if [ -n "$deployment_gate_cid" ]; then
+    docker rm -f "$deployment_gate_cid" >/dev/null 2>&1 || true
+  fi
   for v in "${volumes[@]}"; do
     docker volume rm "$v" >/dev/null 2>&1 || true
   done
@@ -75,6 +79,34 @@ docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges -v "$WINEBOT_APP_VOLUME:/winebot-apps" \
   "$app_image" >/dev/null 2>&1 || fail reverified_app
 
+# Hold the cross-container deployment lease while first and replay state
+# initializers complete; the lock must reject a second independent process.
+deployment_gate_cid="$(docker run -d --network none --read-only --cap-drop ALL \
+  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
+  --entrypoint /bin/sh \
+  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  "$app_image" /usr/local/bin/winebot-deployment-gate 2>/dev/null)" ||
+  fail deployment_gate_start
+docker exec "$deployment_gate_cid" test -f /run/winebot-deployment-ready \
+  >/dev/null 2>&1 || fail deployment_gate_not_ready
+gate_log="$(mktemp)"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
+  --entrypoint /bin/sh \
+  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  "$app_image" /usr/local/bin/winebot-deployment-gate >"$gate_log" 2>&1; then
+  rm -f "$gate_log"
+  fail competing_gate_admitted
+fi
+if ! grep -Fxq 'DEPLOYMENT_GATE stage=lock_contended' "$gate_log"; then
+  rm -f "$gate_log"
+  fail competing_gate_unclassified
+fi
+rm -f "$gate_log"
+echo 'LAYER_RDTE stage=competing_gate_rejected'
+
 # One-shot root task prepares only volume root ownership, never user contents.
 docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
   --security-opt no-new-privileges --memory 256m --pids-limit 64 \
@@ -131,6 +163,20 @@ docker run --rm --network none --read-only --user 1000:1000 --cap-drop ALL \
     grep -qx durable-setting /config/proof.txt
     test ! -e /tmp/not-retained
   ' >/dev/null 2>&1 || fail state_replay
+
+# Prove the separate gate OFD is released when its holder exits. A new
+# identical gate must then successfully acquire it (synthetic volumes only).
+docker rm -f "$deployment_gate_cid" >/dev/null 2>&1 || fail gate_stop
+deployment_gate_cid="$(docker run -d --network none --read-only --cap-drop ALL \
+  --cap-add DAC_OVERRIDE --security-opt no-new-privileges \
+  --memory 128m --pids-limit 32 --tmpfs /run:rw,nosuid,nodev,mode=0700 \
+  --entrypoint /bin/sh \
+  -v "$WINEBOT_ARTIFACT_VOLUME:/state/artifacts" \
+  "$app_image" /usr/local/bin/winebot-deployment-gate 2>/dev/null)" ||
+  fail gate_restart
+docker exec "$deployment_gate_cid" test -f /run/winebot-deployment-ready \
+  >/dev/null 2>&1 || fail gate_restart_not_ready
+echo 'LAYER_RDTE stage=gate_release_reacquire_passed'
 
 # A different app pack must refuse the old versioned volume without mutation.
 printf 'app-fixture-v2\n' > apps/ci-fixture/version.txt
