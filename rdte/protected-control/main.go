@@ -117,7 +117,7 @@ func writeUnderLock(root string,dir *os.File,r Record) error {
  tmpName:=tmp.Name()
  defer os.Remove(tmpName)
  if err=tmp.Chmod(0600);err!=nil { tmp.Close();return errors.New("control temporary identity failed") }
- if _,err=tmp.Write(append(data,'\\n'));err!=nil {tmp.Close();return errors.New("control temporary write failed")}
+ if _,err=tmp.Write(append(data,'\n'));err!=nil {tmp.Close();return errors.New("control temporary write failed")}
  if err=tmp.Sync();err!=nil {tmp.Close();return errors.New("control temporary durability failed")}
  if err=tmp.Close();err!=nil {return errors.New("control temporary close failed")}
  if err=os.Rename(tmpName,filepath.Join(root,ownerName));err!=nil {return errors.New("control owner atomic rename failed")}
