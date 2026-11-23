@@ -1,0 +1,9 @@
+# Wine 11.0 no-patch allocation/free trace parser — R1
+
+Original Wine 11.0 source at wine-mirror/wine tag wine-11.0, file dlls/ntdll/heap.c, WINE_DEFAULT_DEBUG_CHANNEL(heap), includes actual TRACE calls in RtlAllocateHeap and RtlFreeHeap with heap handle, requested size / freed pointer, return pointer and NTSTATUS. Therefore one can first test the built-in **WINEDEBUG=+heap** path before altering Wine itself. The exact Wine source is LGPL-2.1-or-later; this standalone source-format verifier is an MIT original synthetic test utility.
+
+This code is intentionally narrow: given an isolated synthetic-only trace and a pointer/size obtained from the same synthetic fixture, it checks allocation then successful free of that pointer with a consistent heap. It returns only fixed refusal categories and accepts no arbitrary application or private memory. Test inputs are fake addresses and deliberately malformed event examples. Parser has an 8-MiB stream limit and 16-KiB line cap; oversized/partial logs FAIL rather than silently truncate.
+
+NOT QUALIFIED: actual Wine11 debug output formatting, Wine runtime capture, perfect event delivery, process attribution, stack/caller origin, object semantics, heap identity across processes, or zero observer effect. Debug traces can perturb applications and expose raw ASLR process addresses; keep actual trace, source fixtures, and data strictly in authorized ephemeral local custody. No public runner may print full WINEDEBUG heap logs. This is a source-only negative test in an independent free public workflow; subsequent actual Wine11 integration must use its pinned source digest and control against instrumentation-off mode.
+
+Owner DLE mark-e-deyoung/winebot-research#3; actual application behavior recovery and Ghidra/Observatory consumer remain private mark-e-deyoung/ghidra-tools#4 H0/source/critic gated.
