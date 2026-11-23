@@ -23,7 +23,7 @@ jobs:
       - name: Validate strict schema and negative controls
         run: |
           set -euo pipefail
-          GO111MODULE=off go test -count=1 ./rdte/wine-introspection
+          GO111MODULE=off go test -count=1 ./rdte/wine-introspection/verify.go ./rdte/wine-introspection/verify_test.go
           printf '%s\n' 'PASS: synthetic_schema_negative_controls'
   real-wine-enumeration:
     runs-on: ubuntu-24.04
@@ -53,7 +53,7 @@ jobs:
           export WINEDLLOVERRIDES="mscoree,mshtml="
           mkdir -p "$WINEPREFIX"
           timeout 240s xvfb-run -a wine "$RUNNER_TEMP/wric-fixture.exe" >"$RUNNER_TEMP/wric.jsonl" 2>"$RUNNER_TEMP/wric.stderr"
-          GO111MODULE=off go run ./rdte/wine-introspection <"$RUNNER_TEMP/wric.jsonl"
+          GO111MODULE=off go run ./rdte/wine-introspection/verify.go <"$RUNNER_TEMP/wric.jsonl"
           rm -f "$RUNNER_TEMP/wric.jsonl" "$RUNNER_TEMP/wric.stderr"
           echo 'PASS: actual_wine_no_patch_current_state'
       - name: Scope note
