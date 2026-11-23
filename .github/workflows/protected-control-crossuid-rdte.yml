@@ -1,0 +1,51 @@
+name: Real Cross-UID Protected Control Negative RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/cross_uid_test.go'
+      - '.github/workflows/protected-control-crossuid-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-linux-uid-negative:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact disposable public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Compile Linux Go test binary with no extra modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -c -o "$RUNNER_TEMP/winebot-control-crossuid.test" ./rdte/protected-control
+          test -x "$RUNNER_TEMP/winebot-control-crossuid.test"
+          echo 'CROSS_UID_RDTE stage=compiled'
+      - name: Deny numeric guest UID 1000 even when synthetic socket is readable
+        shell: bash
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        run: |
+          set -euo pipefail
+          # Root is only inside the unprivileged, networkless, disposable OCI
+          # test container. Capabilities are limited to SETUID/SETGID to create
+          # a distinct numeric-UID child; no host control mounts or secrets.
+          image='debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a'
+          if ! docker run --rm --network none --read-only \
+              --cap-drop ALL --cap-add SETUID --cap-add SETGID \
+              --security-opt no-new-privileges --pids-limit 128 \
+              --memory 512m --tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=32m \
+              -e GOMAXPROCS=2 \
+              -v "$RUNNER_TEMP/winebot-control-crossuid.test:/usr/local/bin/crossuid.test:ro" \
+              --entrypoint /usr/local/bin/crossuid.test "$image" \
+              -test.run '^TestRealCrossUIDGuestDeniedEvenWhenSocketDACPermissive$' \
+              >/dev/null 2>&1; then
+            echo 'CROSS_UID_RDTE stage=failed'
+            exit 1
+          fi
+          echo 'CROSS_UID_RDTE stage=real_numeric_uid_denied'
