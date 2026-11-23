@@ -80,6 +80,10 @@ func handleControlConn(c *net.UnixConn,root string,ownerUID,trustedUID,trustedGI
  _=c.SetDeadline(time.Now().Add(2*time.Second))
  cred,err:=controlPeer(c)
  if err!=nil||cred.Uid!=trustedUID||cred.Gid!=trustedGID{
+  // Consume no more than the fixed request budget after authenticating.
+  // Linux may reset a stream closed with pending unread bytes, otherwise
+  // discarding our fixed denial receipt. Never parse or act on this body.
+  _,_=io.Copy(io.Discard,io.LimitReader(c,maxRequest+1))
   _,_=io.WriteString(c,"CONTROL_IPC=DENIED\n")
   return
  }
