@@ -170,6 +170,8 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertIn("docker volume inspect", src)
         self.assertIn("docker volume create", src)
         self.assertIn("stage=unpinned_image", src)
+        self.assertIn("volume_alias_or_driver", src)
+        self.assertIn("seen_mount", src)
         self.assertNotIn("docker volume rm", src)
         self.assertNotIn("docker system prune", src)
 
