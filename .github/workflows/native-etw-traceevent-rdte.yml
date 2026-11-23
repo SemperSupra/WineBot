@@ -1,0 +1,50 @@
+name: Native Windows ETW TraceEvent synthetic RDTE
+on:
+  push:
+    branches:
+      - rdte/native-etw-traceevent-r1-20261123
+    paths:
+      - rdte/native-etw-traceevent/**
+      - .github/workflows/native-etw-traceevent-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-etw-traceevent-r1
+  cancel-in-progress: false
+jobs:
+  source-build:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build synthetic ETW collector with pinned TraceEvent package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet --info
+          dotnet restore rdte/native-etw-traceevent/TraceEventRDTE.csproj
+          if ($LASTEXITCODE -ne 0) { throw 'Restore failure' }
+          dotnet build rdte/native-etw-traceevent/TraceEventRDTE.csproj -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'Build failure' }
+          Write-Output 'PASS: traceevent_synthetic_compilation'
+      - name: Reject duplicate and reordered synthetic ETW sequences offline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project rdte/native-etw-traceevent/TraceEventRDTE.csproj -c Release --no-build -- --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'ETW source-owned negative control failure' }
+      - name: Real user-mode Windows ETW event producer/consumer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project rdte/native-etw-traceevent/TraceEventRDTE.csproj -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw "ETW fixture failed with source-owned code $LASTEXITCODE" }
+          Write-Output 'PASS: etw_real_capture'
+      - name: Scope note
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'Synthetic custom user-mode EventSource only. No kernel provider, private ETW, process targets, raw trace, uploaded artifact or production release.'
