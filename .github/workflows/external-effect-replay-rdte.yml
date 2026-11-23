@@ -1,0 +1,28 @@
+name: External Effect Replay Safety Model RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'formal/tests/test_external_effect_replay.py'
+      - 'formal/EXTERNAL_EFFECT_REPLAY_BOUNDARY.md'
+      - '.github/workflows/external-effect-replay-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-synthetic-state-space:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact public PR source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Enforce both safe and deliberately unsafe traces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest formal.tests.test_external_effect_replay -v
+          echo 'EXTERNAL_EFFECT_MODEL=SAFE_VARIANT_AND_COUNTEREXAMPLE_PASS'
