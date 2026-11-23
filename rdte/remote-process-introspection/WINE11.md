@@ -1,0 +1,9 @@
+# R3: Wine 11.0 source-specific parent/child remote introspection
+
+Wine 11.0 **only**. This experimental branch descends from the last independently **qualified** pinned Wine11 source candidate `18d7fc5d22ffaa13564abb04810a691a96c3b100` and appends one rights-cleared MinGW PE64 fixture. Parent compilation and SHA-verified upstream source remain unchanged. Never substitute Ubuntu's default Wine9 package for Wine11; Wine9 observations are non-authoritative historical exploration.
+
+The exact same source fixture runs independently on disposable Windows-2022 (native reference) and on a source-built Wine11.0 new-WoW64 image on ubuntu-24.04. Child is explicitly self-created, shares its own PID/base/length using inheritable handles, and parent queries live child memory-region and PE module with VirtualQueryEx, EnumProcessModules, GetModuleInformation. No arbitrary PID input, no privilege elevation, no injection, no raw memory bytes or third-party target. Strict fixed marker and bounded synthetic exit code; Wine launcher stdout is kept local, normalized only for CRLF, and never published.
+
+CI success of this fixture does not establish Wine private structures, full heap allocation provenance, private application semantics or an approved runtime query service. The source-build is expensive; do not blindly rebuild on unrelated schema/doc updates. Images, executable, and runtime data are ephemeral and never pushed. An independently verified run receipt is needed before asserting custom Wine11 success.
+
+WineBot research authority: mark-e-deyoung/winebot-research#3. WinBot Windows HIL authority: mark-e-deyoung/WinBot#55. Reverse engineering source/host admission and Observatory critic: mark-e-deyoung/ghidra-tools#4.
