@@ -35,7 +35,13 @@ func value(m map[string]json.RawMessage, key string) (string,error) {
 func decode(line []byte) (rec,error) {
     var out rec
     var m map[string]json.RawMessage
-    if len(line)>4096 || !json.Valid(line) { return out,errors.New("invalid JSON") }
+    if len(line)>4096 { return out,errors.New("oversized JSON record") }
+    if !json.Valid(line) {
+        if bytes.HasPrefix(line,[]byte("{\"schema\":")) {
+            return out,errors.New("malformed schema serialization")
+        }
+        return out,errors.New("non-schema output contamination")
+    }
     if err:=json.Unmarshal(line,&m); err!=nil || len(m)!=len(expectedKeys) {
         return out,errors.New("missing or added fields")
     }
