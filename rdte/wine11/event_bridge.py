@@ -7,10 +7,10 @@ Consumers must be authorized and session-bound by an independently reviewed
 WineBot transport. No screen-reader or UIA capability is implied.
 """
 
-from collections import deque
-from dataclasses import dataclass
 import json
 import threading
+from collections import deque
+from dataclasses import dataclass
 
 KINDS = frozenset({
     "create", "show", "hide", "destroy", "focus", "foreground", "location",

@@ -6,11 +6,11 @@ No real application data, paths, Win32 handles or runner details are printed.
 """
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "verify-wine-event-roundtrip.py"
