@@ -11,7 +11,10 @@
     "remote_branches": 191,
     "open_prs": 48,
     "open_standalone_winebot_issues": 0,
-    "branches_neither_open_pr_head_nor_base": 141
+    "branches_neither_open_pr_head_nor_base": 141,
+    "closed_prs_queried": 84,
+    "remote_branches_unreferenced_by_open_pr_but_head_of_closed_pr": 52,
+    "remote_branches_no_known_open_or_closed_pr_head": 89
   },
   "limitations": [
     "Remote GitHub refs are not a local worktree census",
@@ -24,1337 +27,1528 @@
       "sha": "c0ea638100cec10940b73deefae2a46eb2e9e4b3",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "ci/pin-external-contracts-baseline-20261121",
       "sha": "7e6597eb8e31b677ae60e6c04f3ab9e838eeba1c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "ci/provisional-vnext-conformance-evidence",
       "sha": "3acc219a1627a74bdcea6388144cc391ec2b57b4",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "docs/wbab-retirement-architecture",
       "sha": "1e72797e0e3bc37b6729f630f70b1b9d051c7eb2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "docs/wine11-status-and-disabled-issues-20261102",
       "sha": "d70acd3f6b26f9f1683e1d0ecbc77bdfc261356f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "experiment/wine11-ui-observer-20261024",
       "sha": "ab9a36bbddf4f29f4e4a556c4a91a05ae1df046f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "experiment/wine-11.0-source-20261023",
       "sha": "345b959650dd0bd4d1935c15261c069abaeb93d2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "experiment/wine-app-visual-ux-20261023",
       "sha": "89feed8837ff5820096c44620ab9a5b920634cdb",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "feat/compat-diff-comparator-v0-20261024",
       "sha": "63c3a38271225e11d7c23544ad29b17ae609a74c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "feat/compat-win32-roundtrip-fixture-20261025",
       "sha": "58c57a51bf514bb1715d87961fdcdaf230510cdd",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "feat/orthogonal-visual-profiles-20261023",
       "sha": "56cece9f51597081d0b943a9d935d6ce00ecb7db",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "feat/pandora-observe-admission-20261108",
       "sha": "647efc217c70ba9007aac680d922c04dc0535bb3",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "fix/ci-unit-isolation-startup-stage-20261106",
       "sha": "3b089c0c4c11a2d1ee753afb2fa2b18e4dfc9249",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/conformance-gaps",
       "sha": "09ff0e624f92994f19af19e8ba26805a75076e5a",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/conformance-gaps-phase2",
       "sha": "4050abe27e70e3c17d78a1108bcbe3d874f8a1d0",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/crash-handover-recovery-20261120",
       "sha": "720f1dbe73b51f3bad5b85caddf62f168f359e2a",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/health-system-memory-contract-20261114",
       "sha": "0c7c79bd15e6e6a24a2fe3904b5285d15ae8e79b",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/ic1-async-input-stop-cancel-20261119",
       "sha": "647c678c602c3a4a730f0e1b621582608192fdb8",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/ic1-input-pre-dispatch-fence-20261119",
       "sha": "71e787946c5861d6649be812c71ffb6bf24439a4",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/ic1-mouse-lease-fence-20261119",
       "sha": "bc053e9af14c962b21552f1a243e20eadb6c4731",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/ic1-shutdown-window-precision-20261120",
       "sha": "23add42dc3ab7181971d346d55e739fd6008f9b2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/main-trust-pack-source-attestation-20261105",
       "sha": "9d89c2aeff80ee4a3f027a31f8d8cb0c71869b7f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/mvp-durable-atomic-state-20261121",
       "sha": "1ad26d6ea66c44cc109baf99fed8ad2971c15eb9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/mvp-durable-session-commit-20261121",
       "sha": "720fd9c0630009818e7530be54df7a79b995af30",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/mvp-handover-recovery-reconciliation-20261121",
       "sha": "0e6b8d16f0ceee422853e77d26d20f26a1eef9b9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/nightly-health-redaction-20261114",
       "sha": "3c888c5543345163c078682055961f5685c9d41e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/nightly-trace-path-diagnostics-20261107",
       "sha": "8c5ed8019a3518cf534b158662755172bfce7c59",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "fix/tool-download-failclosed-20261123",
       "sha": "38c2d85b9b81fae1092dd6f9230de63144148cce",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "fix/trust-pack-dual-commit-provenance-20261023",
       "sha": "e5c3328d61a7ed51ff7e436e3e7ead3e79e5cfb9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/wininspect-daemon-loopback-20261023",
       "sha": "b3e9cc7ef5c0c4b79a94d5dd64586c20c8ff19d2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/wininspect-portable-044-checksum-20261022",
       "sha": "2ba703b0a500ab181680472acab8115ddbf24b84",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/wininspect-portable-path-resolution-20261023",
       "sha": "d7e5608c4b6f3f59dcb6a10632e9f25c0197fd3f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "fix/wininspect-rpc-protocol-030-20261024",
       "sha": "4cd84793bfa64efd3e157de0ef3325fcb4c4cb8e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "formal/cross-layer-atomicity-mvp-20261120",
       "sha": "d00d2110c5d40d7f8862063a3d7901f215da96bd",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "formal/mvp-control-reconciliation-20261121",
       "sha": "d254dd9a6912d0a37929710588aff76d08245aaa",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "formal/mvp-cross-layer-effect-replay-r1-20261123",
       "sha": "4ab3b09fd372e53de6b05a59c4b04f6bef392618",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "formal/mvp-gate-interleavings-r1-20261123",
       "sha": "2fda447a8fe8bd1abbd8a78767ec104e5f2be53a",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "hygiene/agents-wine11-dle-coldstart-r040-20261123",
       "sha": "b1d6f036b2817ae6ebdceb388dfcbcdacfa917e3",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "integration/ic1-input-lease-fences-20261119",
       "sha": "947a647771ba0da71f6cd93eace63c545005e0d9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "integration/mvp-control-reap-observer-20261121",
       "sha": "eda01696f297b930185546993a2f5184e340603c",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "integration/mvp-cross-layer-atomicity-20261121",
       "sha": "3cdfdc2299f732d2d2e23139b6a05a919e4106b5",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "integration/mvp-early-admission-and-owner-cas-20261122",
       "sha": "71412921868f1f52cdf459c33ead40ca23d3e47b",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "integration/mvp-early-owner-exact-union-r1-20261123",
       "sha": "158cf3d0e02990f0fb67acb3b1bcd43e6bc4dd09",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "integration/mvp-formal-handover-20261121",
       "sha": "4f7f9bd194198705216fe20c399586a9355474a2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "integration/mvp-observer-v0-consumer-20261121",
       "sha": "1c78994b334dc07ade047e2ecc2819003598cd5f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "integration/mvp-owner-stateinit-fence-r1-20261123",
       "sha": "b520f5c419d1199ff536d5c6f8260dcadd2bc5ed",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "integration/mvp-trusted-control-and-effect-model-r040-20261123",
       "sha": "6a1a2ec46321ddb2ac4fc5d52188299d52e3337a",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "integration/protected-control-cas-volume-custody-r1-20261123",
       "sha": "f61c5ed45ccff505fcabf69268fcf05585d44500",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "integration/wininspect-observer-readonly-v0-20261119",
       "sha": "fd439d3c35282589be0bfc14c496c87314551d1f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "main",
       "sha": "f5ba0256f330958dcf35710a822508cdb31fc40b",
       "protected": true,
       "open_pr_head": false,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "mvp/ic1-control-safety-20261117",
       "sha": "99de3d75b527868f0b362de4bc832173b9788e9f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "mvp/ic1-integration-20261117",
       "sha": "9809519b94b9074ed681b297237f6dec89d43186",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "mvp/ic1-prefix-recovery-20261117",
       "sha": "b48b5b43e9108464d1b6f97b06fb4d0f527ba67e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "mvp/ic1-windows-workloads-20261117",
       "sha": "03332cd95edf577d6b0b292ee7a345997a008bf6",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "plan/differential-compatibility-qualification-20261024",
       "sha": "e0fb25ca9bc54082de22b02ff1aa61de46ddd512",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/actual-broker-incarnation-batch-20261029",
       "sha": "d9af77995a0cfabd83fb8383a32065f9afe84e6a",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-broker-restart-negative-20261029",
       "sha": "ba7f8cc6e037e8f3b4d47df3d608e6795b77cede",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-eventbridge-20261029",
       "sha": "5e7626dbb0fc89f6861af245ae350f9a9f02a0d5",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-eventbridge-batch-20261029",
       "sha": "da21e2c92679b948dea615fdd43c0e980e5c23ab",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-observer-service-20261029",
       "sha": "da21e2c92679b948dea615fdd43c0e980e5c23ab",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-process-source-aba-batch-20261029",
       "sha": "da21e2c92679b948dea615fdd43c0e980e5c23ab",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-registry-20261029",
       "sha": "892366b081d8e04f7a0605159b88f8ad59241486",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-service-handover-batch-20261029",
       "sha": "5b3000219ab762d6d7cfc46ab233cf690157d1a7",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actual-service-hung-shutdown-20261029",
       "sha": "6aa6a15a0081702cafeb61570605d541a6f32830",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/actuator-authorization-oracle-20261031",
       "sha": "4f91a96d0343942bcc096dc2ccee888425dc11a5",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/asset-and-artifact-suppression-20261023",
       "sha": "cae00f90741c768a6cc59395f81e735c9960e2b7",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/batched-native-package-matrix-20261031",
       "sha": "afee615a446a0b3d9dd025dc17a23ae46be4b515",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/broker-incarnation-20261029",
       "sha": "13ae852dbbe1e99a893220dab30e55486e281d59",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/broker-interleaving-20261028",
       "sha": "d5935bc90e4be47b13d79a7baa7b7318bcc1a0fa",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/broker-snapshot-batch-20261029",
       "sha": "e13bb86fe4d4e4c2c131d5565dd26342b4d8a36d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/checksum-redaction-reconcile-20261028",
       "sha": "69889b454b457259f6b17773431b7216bed6e8c0",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/conformance-public-artifact-boundary-20261023",
       "sha": "54f9fcc5fc02216acb119e43e431912425bc1b70",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/epoch-persistence-sqlite-20261028",
       "sha": "9eb9b137fdc272ac4ab65010472a5a54c6917f99",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/epoch-restart-fencing-20261027",
       "sha": "689ecfcad0c19512cfcb2aaba18a1a4a5d7f2f0b",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/installer-manifest-custody-20261101",
       "sha": "249409ba4e4cc9c66ec6a428d7bb99fac325ee64",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/installer-uninstall-integrity-20261101",
       "sha": "38f5e688f6057fd1bb2a12a12fc5d7665ae3cdfb",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/integrated-incarnation-20261029",
       "sha": "fdb3b9445f275bea0f181510077660cfe1ef3ca5",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/integrated-legacy-regression-batch-20261029",
       "sha": "76a25c19978706a5d49ac190834a0a9c88e98af9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/integrated-observer-safety-slice-20261102",
       "sha": "8ca263d167c999ec0379160be6412c60f644cb8e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/integrated-regression-qualification-batch-20261029",
       "sha": "9a564b32cfcc22b40e01b56ba10250efe379e0be",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-class-spoof-proof-20261102",
       "sha": "e42863ca779aa2af889c46eca898911c19132f2f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-target-correlation-20261101",
       "sha": "bd339759bf0ba6d9a4f15acbec0680ecc141d698",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-win32-observer-fixture-20261031",
       "sha": "098792b602aad75d1ba750e4dd31fa6085ac70f4",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-win32-observer-overflow-20261031",
       "sha": "4f61463256059a907b7670f5fe1ea5d1b6a3d98d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-win32-observer-teardown-reps-20261031",
       "sha": "255f9f13979cdc859a5259e4da2f2c1f8c6e7102",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/native-winspect-bridge-joined-20261103",
       "sha": "1f7a760d9ee22c90b9d163dceda8f86ed23dce60",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/nightly-dependency-diagnostics-20261031",
       "sha": "1e6bf4a3dc045ab4610d3d98c12df1a420f47e66",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/nightly-rel-asset-and-artifact-preflight-20261102",
       "sha": "1f480ea83570cca43bf07cf0402300f5760069e4",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/observer-broker-contract-20261028",
       "sha": "e804acb82c1df5e80c16a5dfadb155bbef4919b9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/observer-cleanup-oracle-20261028",
       "sha": "438e8069e8e6c28b2afe449776a694246d8ac436",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/observer-fanout-contract-20261031",
       "sha": "8559d38c13ddfd7faa97a7a532aa0a77343bffb7",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/official-wininspect-044-in-winebot-20261102",
       "sha": "28afac2e1a3868abffbfa3a2f3771f130235699e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/owner-contract-20261029",
       "sha": "44ef98dd562ed933a73283c9337551838500ae43",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/parallel-contract-20261027",
       "sha": "deed91b9e65e8e51ba729675c6a37c0e2ad517e4",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/parallel-wine-20261027",
       "sha": "286ddd48567287402c7719715edd70b42462c6d2",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-installer-hardening-20261031",
       "sha": "c8a8da6361a5e88bbc64e932f8117cf434f9c118",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-observer-interface-20261031",
       "sha": "30d6484ff8ba8cdbc2facbe013ec8436a355c6b0",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-real-binary-install-20261031",
       "sha": "85b088d5a4bf5d3cbe39cdf623caef77f796d476",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-toolkit-packaging-20261031",
       "sha": "7627b9765a16eb24129ca5d4fd3c1217786bec9a",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-toolkit-user-install-20261031",
       "sha": "5b76d5035262ea3dbedb9f0eb5af9b73e1d3c9f9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/portable-win32-observer-build-20261031",
       "sha": "0e8721c55db8d761a81d2bb924260fd75d5b28f5",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/process-receipt-regression-20261029",
       "sha": "46e752dc69fc424c18662e1fd8da3f22cf7d5274",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/read-only-worktree-census-20261102",
       "sha": "3c7f59031cf9957029f9326a6b3241286adeb859",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/registry-same-name-read-review-20261029",
       "sha": "fdeebe7af7f0ea410ef8a3b05605327b69f963df",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/scoped-observer-relay-20261101",
       "sha": "f42a8cdaf22820995cd0559e097b7f4676885b64",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/service-authority-failure-witness-20261029",
       "sha": "0e6ea6aaf903cdedb32db64d13d3affd83fd5ecf",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/service-legacy-abi-witness-20261029",
       "sha": "b88ececc7c2fa80b8694504a4e2a4629ae985735",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/service-receipt-regression-batch-20261029",
       "sha": "71f765bebc01cd316ca1873c03285b69524803be",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/service-shutdown-batch-20261029",
       "sha": "bd7ba2ff11b22e8a528a4c21b00723d84832fc54",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/source-aba-witness-20261029",
       "sha": "bb98bf157e084b337d00c45dd2a4dd3a8bd5968b",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/source-incarnation-20261029",
       "sha": "ae51988d2f29467bfb99387d1c6790e4f62a0155",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/source-receipt-regression-20261029",
       "sha": "6f661d3bf9135e9415ed7379c2d66f3d7f19ab0d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/target-epoch-fencing-20261101",
       "sha": "0e5ad09d5a47c620f1e19b48c1d4210019d5648c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/target-issuer-spoof-negative-20261102",
       "sha": "d5fc33b469e6c311e803c31141344f27511efb3f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/trustpack-head-provenance-20261023",
       "sha": "8814b4995a73ff582a1500675943f2e559a6e117",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/wine10-event-null-20261024",
       "sha": "45556d5ed28ed058a3b7c235fbd603a0bd292487",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-current-observer-parity-20261031",
       "sha": "1c2481dd29485576e0f281b6cd01ce0640a09b8f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-installed-lifecycle-stress-20261101",
       "sha": "00cfdef75eadc0466b57837f39f5987e2d1978d9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-installed-package-20261101",
       "sha": "bcd8a8c69eda92b2c9d4f36b69b4a9959168bf04",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-observer-static-20261024",
       "sha": "2f1b91a21456283f061d496334298fdab832504d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-oracle-negatives-20261031",
       "sha": "f33c86b180c84c968357e6b4654e757fec770f7b",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-target-correlation-20261101",
       "sha": "e6e8c47e9f19f9c43af159a2093e0b6fdd2b9963",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine11-winspect-bridge-joined-20261103",
       "sha": "ee026f6db4ffd26e505c2e2c1e930f61ecf42973",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/wine-current-observer-fixture-20261031",
       "sha": "578f8da0d534dce6cb7c028652579210d56b6795",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-event-bridge-20261024",
       "sha": "0afb4df2989f195d602af052366bdc0719b07c38",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-generation-cursor-20261027",
       "sha": "fb6e93eec23424a8cbd9b2c868c69f9168eb228c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-generation-handover-20261027",
       "sha": "b0e1a27493a9cad1b59814f6e0d8c2ece8e1a519",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-lease-authority-20261027",
       "sha": "0ce6d71d73c771e6868d5aa239e4f600c485d2ae",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-long-lived-20261025",
       "sha": "0386d0e9e3b2cecefd7a4dd1693ff5c8fa4ba121",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-owned-process-20261025",
       "sha": "3b664899b265c097b8557d8772f8454655a25608",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-service-lifecycle-20261025",
       "sha": "cfcfbb96cb04b770420ca4abcb06fac63b95003c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-session-api-20261025",
       "sha": "3107a305821a87ea0edc79606e5d91468c9ee240",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-events-soak-20261026",
       "sha": "8aba752a2f70d27f4f0867104673fb78a4956780",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-observer-ownership-review-20261028",
       "sha": "2d86ff4f86245a6f811ccd15245939a4c49f0ef3",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wine-win32-event-source-diagnostic-20261031",
       "sha": "578f8da0d534dce6cb7c028652579210d56b6795",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-044-correlation-crossbuild-20261102",
       "sha": "b0bcdab3ffc5635f2f0ee75fd291a48fade8a3a6",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-correlated-source-wine-20261024",
       "sha": "5fa975bcffdf18509854b2f669497252b386e3b9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/wininspect-correlation-20261027",
       "sha": "fd1877c8fe9e0f04048b578ce95ee15ec71fed31",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-nested-daemon-wine-20261023",
       "sha": "f8d0635ec37a86046dfbbd3412d07e71fb45e43d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "qualification/wininspect-pr18-disposable-semantic-20261103",
       "sha": "05afbbb0db3dd25e1ab9808a4f5d142bc58e3bab",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-pr18-native-daemon-20261103",
       "sha": "756fd83a14a483e6a669cc53cf74b2a8f5d5dc7d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-pr18-public-projection-gate-20261103",
       "sha": "0f3d1103cc489b8d070a5163d312ad9ed07b1a17",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/wininspect-readonly-bridge-20261031",
       "sha": "77d66e97e39ffa0ee1624af3137c7c9086d7a916",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "qualification/winspect-typed-reinspection-hint-20261103",
       "sha": "6798c662b153f8b05aaec989171af036ae746443",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/bzflag-3d-qual-20261024",
       "sha": "97fa48a9831c6c58215ced8f44bf0bf6a287ea6b",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/cpu-software-renderers-20261023",
       "sha": "9630297b1344b432607e30e581a3b254f58823e3",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/freeciv-source-known-observatory-20261116",
       "sha": "ca8fd314a3cff04b6021cd1a291207532ee934a4",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/ic1-live-keyboard-wine-20261119",
       "sha": "c1efe69bdcce609232c7a457fd3e036bef1f1eb6",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/ic1-wininspect-live-observer-20261119",
       "sha": "1fc40fa93a1a979126e5950ee53817a5233c1806",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/installer-capture-roadmap-20261115",
       "sha": "6cc4b45a2652908344cb37cb469c66150c23abf2",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/layered-state-init-writer-fence-r1-20261123",
       "sha": "2159807b731ba757e2104be8cf1308665d3d426c",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/lock-inode-custody-negative-r1-20261123",
       "sha": "8a8a3b94147e45fdf9540f34d3e8a8876f42e1b4",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/mvp-async-subprocess-reap-20261121",
       "sha": "5271b6040d78de6cb3cf7a40e7ce612f70ebed7b",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/mvp-deployment-gate-r1-20261123",
       "sha": "702eb98ec07cc7b17c49ebc01ad2690b776b5a0e",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/mvp-early-entrypoint-writer-admission-20261122",
       "sha": "b76846de498f28f3a26ef4bfcf23d7fef3078746",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/mvp-persistent-owner-cas-storage-20261122",
       "sha": "017dcbd25fb24e21958cd83a1dcc5bc3823d1bc9",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/mvp-persistent-owner-pointer-model-20261122",
       "sha": "56d06dcbd1055fd0fe8c18abe6a85d722cb8aeb3",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/mvp-single-writer-admission-20261121",
       "sha": "04aa0061a008563d04dda5b4755b8bbe42d9a5c8",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/mvp-two-writer-fencing-20261121",
       "sha": "638f3cacd0451009fa39371af4d4451e2cdd5a02",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/native-etw-traceevent-r1-20261123",
       "sha": "eb7082287c2e748550afb4ab9dc83bec019c0c5f",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/native-nt-phnt-r1-20261123",
       "sha": "5db01cdd2024108ba7e3a74ecfe89f951092d297",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/openttd-win-cpu-20261023",
       "sha": "370e17b6099efde673d2e4a5208a1e583dc4825e",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/protected-control-peer-auth-r1-20261123",
       "sha": "eebbf13c6d787c269193544306b56c96f258ea2d",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/protected-control-real-crossuid-r1-20261123",
       "sha": "dd75b021d9d2ef859a32469278b2efd502c2e0a0",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/protected-owner-cas-go-r1-20261123",
       "sha": "01cf4c7d2b59a49d22563df56152b1c24455fc64",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/re-observation-contract-r1-20261123",
       "sha": "b9c20c784218bcbc8b247dded388cd4f806f6c74",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/remote-process-introspection-r1-20261123",
       "sha": "c5082415a3854ed0a6cc627a65a859e7c4ff6d05",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/supertux-win-cpu-20261023",
       "sha": "d9bc6658a57c7b5bc1d694965ce0411ab74fe098",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/supertuxkart15-win-cpu-20261025",
       "sha": "a39678ba79ea5d69f4320ae13c1cb32ffb192828",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/volume-restore-guard-fix-20261116",
       "sha": "2e2a4b7446c7e410bc05bd54d3b909fd8d9e7c6e",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "rdte/wine11-experiment-source-retry-r1-20261123",
       "sha": "9fc9620f29273d8ebb3708cb6ed3acf16a7231da",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-experiment-startup-classifier-r1-20261123",
       "sha": "5629458d9f664b577b53f4b44cf039f98a01cd26",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-heap-trace-live-r1-20261123",
       "sha": "858121cb3cb2bbf2196869b8befef302efd143dd",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-heap-trace-parser-r1-20261123",
       "sha": "a81498274d27f0c6cec903d141874b9aee0c3f15",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-introspection-r2-20261123",
       "sha": "39c40aba801417423cf6f7ddca1217da47b12038",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-live-typed-lifetime-join-r1-20261123",
       "sha": "fe2ac64de5e00bb9879ff26555b547bcf87da6f7",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-remote-introspection-r1-20261123",
       "sha": "bb8f662576c937c439443419787ee89036c257cc",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-source-lint-r1-20261123",
       "sha": "3bb8613495e06b791b70581bb34d401ec6370e35",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-synthetic-lifetime-join-r1-20261123",
       "sha": "fb06a15f940c5571a6e47cc633ae1c8db245f025",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-variant-pair-r1-20261123",
       "sha": "1af627a4988da0a2aeb0a2f7aa44eb5ff3d7fb54",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine11-wininspect-pin-repair-r2-20261123",
       "sha": "63b1b148f86e85c4912bd7b7493e84d09e702864",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "rdte/wine-introspection-r1-20261123",
       "sha": "92a31271cf7e4d1c0535b854591c6967f102e2cd",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "reconcile/ic1-observer-on-broker-20261119",
       "sha": "7104cfc6ea42c84070094cf24ee2729c1231b542",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "release/v0.9.0",
       "sha": "3aefaaf72d3ae499de3e7c3d8fa79d9b48789aff",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "research/upstream-wine-hooks-prior-art-20261029",
       "sha": "6afc187d97ba75fdd98b333bfec7c0709f994c83",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "security/disable-docker-build-record-artifacts-20261023",
       "sha": "548cd2401a9f0f6210ba06146dc52693591526bc",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "security/main-buildkit-record-gate-20261105",
       "sha": "a959a0f57544c342fdbc038d5ac3e1238f72d25d",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": false
     },
     {
       "name": "security/minimize-conformance-public-results-20261023",
       "sha": "629f54c88b8b28a9d0392474577e42a49ead8b47",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     },
     {
       "name": "security/mvp-protected-control-volume-r1-20261123",
       "sha": "55593c91b4bb5d0191f283130a891ba7d166b93b",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "security/mvp-volume-alias-preflight-r1-20261123",
       "sha": "2d73be45361be8fa379c39d0a77083f9379c79e9",
       "protected": false,
       "open_pr_head": true,
-      "open_pr_base": true
+      "open_pr_base": true,
+      "closed_pr_head": false
     },
     {
       "name": "security/wininspect-no-hello-identity-leak-20261024",
       "sha": "832d8399fb8d5eeb0e64bb1916dca494e8d6635f",
       "protected": false,
       "open_pr_head": false,
-      "open_pr_base": false
+      "open_pr_base": false,
+      "closed_pr_head": true
     }
   ],
   "open_prs": [
@@ -1763,5 +1957,595 @@
       "4ab3b09fd372e53de6b05a59c4b04f6bef392618"
     ],
     "protected_main_merged": false
-  }
+  },
+  "closed_prs": [
+    {
+      "number": 212,
+      "head": "rdte/protected-owner-cas-go-r1-20261123",
+      "head_sha": "01cf4c7d2b59a49d22563df56152b1c24455fc64",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 201,
+      "head": "rdte/layered-state-init-writer-fence-r1-20261123",
+      "head_sha": "2159807b731ba757e2104be8cf1308665d3d426c",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 193,
+      "head": "rdte/remote-process-introspection-r1-20261123",
+      "head_sha": "c5082415a3854ed0a6cc627a65a859e7c4ff6d05",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 186,
+      "head": "rdte/mvp-persistent-owner-cas-storage-20261122",
+      "head_sha": "017dcbd25fb24e21958cd83a1dcc5bc3823d1bc9",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 180,
+      "head": "integration/mvp-observer-v0-consumer-20261121",
+      "head_sha": "1c78994b334dc07ade047e2ecc2819003598cd5f",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 179,
+      "head": "rdte/mvp-async-subprocess-reap-20261121",
+      "head_sha": "5271b6040d78de6cb3cf7a40e7ce612f70ebed7b",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 178,
+      "head": "fix/mvp-durable-session-commit-20261121",
+      "head_sha": "720fd9c0630009818e7530be54df7a79b995af30",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 177,
+      "head": "fix/mvp-durable-atomic-state-20261121",
+      "head_sha": "1ad26d6ea66c44cc109baf99fed8ad2971c15eb9",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 176,
+      "head": "integration/mvp-cross-layer-atomicity-20261121",
+      "head_sha": "3cdfdc2299f732d2d2e23139b6a05a919e4106b5",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 175,
+      "head": "integration/mvp-formal-handover-20261121",
+      "head_sha": "4f7f9bd194198705216fe20c399586a9355474a2",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 174,
+      "head": "fix/mvp-handover-recovery-reconciliation-20261121",
+      "head_sha": "0e6b8d16f0ceee422853e77d26d20f26a1eef9b9",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 173,
+      "head": "formal/mvp-control-reconciliation-20261121",
+      "head_sha": "d254dd9a6912d0a37929710588aff76d08245aaa",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 172,
+      "head": "ci/pin-external-contracts-baseline-20261121",
+      "head_sha": "7e6597eb8e31b677ae60e6c04f3ab9e838eeba1c",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 171,
+      "head": "fix/crash-handover-recovery-20261120",
+      "head_sha": "720f1dbe73b51f3bad5b85caddf62f168f359e2a",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 170,
+      "head": "formal/cross-layer-atomicity-mvp-20261120",
+      "head_sha": "d00d2110c5d40d7f8862063a3d7901f215da96bd",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 169,
+      "head": "fix/ic1-shutdown-window-precision-20261120",
+      "head_sha": "23add42dc3ab7181971d346d55e739fd6008f9b2",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 168,
+      "head": "fix/ic1-async-input-stop-cancel-20261119",
+      "head_sha": "647c678c602c3a4a730f0e1b621582608192fdb8",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 167,
+      "head": "integration/wininspect-observer-readonly-v0-20261119",
+      "head_sha": "fd439d3c35282589be0bfc14c496c87314551d1f",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 165,
+      "head": "rdte/ic1-live-keyboard-wine-20261119",
+      "head_sha": "c1efe69bdcce609232c7a457fd3e036bef1f1eb6",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 164,
+      "head": "integration/ic1-input-lease-fences-20261119",
+      "head_sha": "947a647771ba0da71f6cd93eace63c545005e0d9",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 163,
+      "head": "fix/ic1-mouse-lease-fence-20261119",
+      "head_sha": "bc053e9af14c962b21552f1a243e20eadb6c4731",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 162,
+      "head": "fix/ic1-input-pre-dispatch-fence-20261119",
+      "head_sha": "71e787946c5861d6649be812c71ffb6bf24439a4",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 161,
+      "head": "mvp/ic1-prefix-recovery-20261117",
+      "head_sha": "b48b5b43e9108464d1b6f97b06fb4d0f527ba67e",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 160,
+      "head": "mvp/ic1-windows-workloads-20261117",
+      "head_sha": "03332cd95edf577d6b0b292ee7a345997a008bf6",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 159,
+      "head": "mvp/ic1-control-safety-20261117",
+      "head_sha": "99de3d75b527868f0b362de4bc832173b9788e9f",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 156,
+      "head": "rdte/volume-restore-guard-fix-20261116",
+      "head_sha": "2e2a4b7446c7e410bc05bd54d3b909fd8d9e7c6e",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 153,
+      "head": "fix/health-system-memory-contract-20261114",
+      "head_sha": "0c7c79bd15e6e6a24a2fe3904b5285d15ae8e79b",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 152,
+      "head": "fix/nightly-health-redaction-20261114",
+      "head_sha": "3c888c5543345163c078682055961f5685c9d41e",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 149,
+      "head": "fix/ci-unit-isolation-startup-stage-20261106",
+      "head_sha": "3b089c0c4c11a2d1ee753afb2fa2b18e4dfc9249",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 148,
+      "head": "fix/main-trust-pack-source-attestation-20261105",
+      "head_sha": "9d89c2aeff80ee4a3f027a31f8d8cb0c71869b7f",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 147,
+      "head": "qualification/wine11-winspect-bridge-joined-20261103",
+      "head_sha": "ee026f6db4ffd26e505c2e2c1e930f61ecf42973",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 146,
+      "head": "qualification/native-winspect-bridge-joined-20261103",
+      "head_sha": "1f7a760d9ee22c90b9d163dceda8f86ed23dce60",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 145,
+      "head": "qualification/winspect-typed-reinspection-hint-20261103",
+      "head_sha": "6798c662b153f8b05aaec989171af036ae746443",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 142,
+      "head": "plan/differential-compatibility-qualification-20261024",
+      "head_sha": "e0fb25ca9bc54082de22b02ff1aa61de46ddd512",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 141,
+      "head": "security/wininspect-no-hello-identity-leak-20261024",
+      "head_sha": "832d8399fb8d5eeb0e64bb1916dca494e8d6635f",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 140,
+      "head": "qualification/wininspect-correlated-source-wine-20261024",
+      "head_sha": "5fa975bcffdf18509854b2f669497252b386e3b9",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 139,
+      "head": "fix/wininspect-rpc-protocol-030-20261024",
+      "head_sha": "4cd84793bfa64efd3e157de0ef3325fcb4c4cb8e",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 138,
+      "head": "fix/wininspect-daemon-loopback-20261023",
+      "head_sha": "b3e9cc7ef5c0c4b79a94d5dd64586c20c8ff19d2",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 137,
+      "head": "feat/orthogonal-visual-profiles-20261023",
+      "head_sha": "56cece9f51597081d0b943a9d935d6ce00ecb7db",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 136,
+      "head": "qualification/wininspect-nested-daemon-wine-20261023",
+      "head_sha": "f8d0635ec37a86046dfbbd3412d07e71fb45e43d",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 134,
+      "head": "fix/wininspect-portable-path-resolution-20261023",
+      "head_sha": "d7e5608c4b6f3f59dcb6a10632e9f25c0197fd3f",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 131,
+      "head": "experiment/wine-app-visual-ux-20261023",
+      "head_sha": "89feed8837ff5820096c44620ab9a5b920634cdb",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 130,
+      "head": "qualification/trustpack-head-provenance-20261023",
+      "head_sha": "8814b4995a73ff582a1500675943f2e559a6e117",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 129,
+      "head": "fix/trust-pack-dual-commit-provenance-20261023",
+      "head_sha": "e5c3328d61a7ed51ff7e436e3e7ead3e79e5cfb9",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 128,
+      "head": "qualification/conformance-public-artifact-boundary-20261023",
+      "head_sha": "54f9fcc5fc02216acb119e43e431912425bc1b70",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 127,
+      "head": "security/minimize-conformance-public-results-20261023",
+      "head_sha": "629f54c88b8b28a9d0392474577e42a49ead8b47",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 126,
+      "head": "qualification/asset-and-artifact-suppression-20261023",
+      "head_sha": "cae00f90741c768a6cc59395f81e735c9960e2b7",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 125,
+      "head": "security/disable-docker-build-record-artifacts-20261023",
+      "head_sha": "548cd2401a9f0f6210ba06146dc52693591526bc",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 124,
+      "head": "fix/wininspect-portable-044-checksum-20261022",
+      "head_sha": "2ba703b0a500ab181680472acab8115ddbf24b84",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 122,
+      "head": "docs/wbab-retirement-architecture",
+      "head_sha": "1e72797e0e3bc37b6729f630f70b1b9d051c7eb2",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 120,
+      "head": "fix/conformance-gaps-phase2",
+      "head_sha": "4050abe27e70e3c17d78a1108bcbe3d874f8a1d0",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 119,
+      "head": "fix/conformance-gaps",
+      "head_sha": "09ff0e624f92994f19af19e8ba26805a75076e5a",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 116,
+      "head": "feat/wininspect-mutations",
+      "head_sha": "05ff4a0c00309a695d0ca042dfe559a98d5f032e",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 115,
+      "head": "feat/wininspect-listchildren",
+      "head_sha": "3b5139b1c4b673a76f410f46de4e83c26864d40f",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 113,
+      "head": "feat/wire-contracts-conformance",
+      "head_sha": "76e3d710a449d40cc8463b2ab9ae79748e491518",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 112,
+      "head": "feat/contracts-conformance-submodule",
+      "head_sha": "b907c013a7106482ccc3e8c5e005a86bccf7abb1",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 111,
+      "head": "feat/spdx-license-headers",
+      "head_sha": "dc5953cd10135fbc2f2773de97470d0034bfac1c",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 110,
+      "head": "fix/os-statvfs-windows-compat",
+      "head_sha": "2d46ea88aac9829cb0c70c9b377052a6a921252d",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 109,
+      "head": "feat/licensing-contact-page",
+      "head_sha": "c00ebf3895f9907eaf59d2396595ef748b56d51d",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 108,
+      "head": "fix/license-government-pays",
+      "head_sha": "e74b8dde5857ac9a925a838af820ecd9ddb47ff0",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 107,
+      "head": "fix/license-transition-polyform-shield",
+      "head_sha": "80d21458266c970f31d6895d27b550bb4d295cf1",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 99,
+      "head": "fix/remove-last-cv-scripts",
+      "head_sha": "69924b7d6955bd735924c9beb100a83991cfbfcf",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 98,
+      "head": "feat/strip-cv-from-winebot",
+      "head_sha": "49fa3b9a28b19e8896db168f6a911dd7bbfec5fc",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 96,
+      "head": "fix/migrate-legacy-imports",
+      "head_sha": "9e306fb54e90d3d614b1e71c7b9320407bd39eda",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 89,
+      "head": "fix/release-ci-lint-2026-07-03",
+      "head_sha": "9c8fde5fe6fe27b2d180b7eb4999681ab78b1d3b",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 82,
+      "head": "fix/stateless-architecture",
+      "head_sha": "dd4e2b905322ed934409eb6151ae1a4ad8c1b086",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 79,
+      "head": "fix/ruff-remaining-issues",
+      "head_sha": "6af46c1204794a7629ae8d1c7d4f0ff64c12835b",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 78,
+      "head": "fix/testing-infrastructure",
+      "head_sha": "541d85ba7df214688d2a333de686b9181a0517c9",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 76,
+      "head": "fix/annotation-server-errors",
+      "head_sha": "e571ff81667f1e8895f930bfbe1117a594c6e71e",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 73,
+      "head": "fix/analyze-binary-upload",
+      "head_sha": "1d3463714c2929ff7ac066f5cc008b82d0f66ba9",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 64,
+      "head": "feat/cv-package-extraction",
+      "head_sha": "355b4489736953b4654bc494e4e16ef73b931689",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 53,
+      "head": "fix/headless-vnc-input-passthrough",
+      "head_sha": "5fa96af678395f60328f41e91324d07c4d1450a7",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 52,
+      "head": "fix/allow-headless-hybrid-override",
+      "head_sha": "589b78f627448dce57a0876e7aa4d38a374774f1",
+      "merged": false,
+      "state": "closed"
+    },
+    {
+      "number": 51,
+      "head": "doc-base-image-decision-4997628729023652350",
+      "head_sha": "b689d9acee99f6ccfacf837a27b6600ade957f27",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 50,
+      "head": "input-trace-improvements-16151092667313884564",
+      "head_sha": "3f0c3f089e99aad45ef6e0e7f1800ed5fbaa3230",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 49,
+      "head": "issue-analysis-9012654001753441790",
+      "head_sha": "3c7aa3a7f123c1313a3f6f822b6146fb2021b014",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 48,
+      "head": "update-winebotctl-docs-13878570105089540832",
+      "head_sha": "e2424732ea72a89e46e9e1766835cc277cbf690d",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 37,
+      "head": "feat/recording-contract-hardening",
+      "head_sha": "c40d0727b213167b10ebe302898b693b81d90eaa",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 36,
+      "head": "feat/temporal-action-correctness-wave1",
+      "head_sha": "390f7a8db48733e8efd789293349f2fb57ce2724",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 33,
+      "head": "feat/resource-allocation-guardrails",
+      "head_sha": "a831322a2e5f55e7e1ea5c7bf0da14f917d6a456",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 30,
+      "head": "fix/state-machine-transition-contracts",
+      "head_sha": "6aabc195b608c0d833123d9e752a70e8864126a1",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 27,
+      "head": "feat/group-a-correctness-hardening",
+      "head_sha": "b40ed9d91c9716ce52879251787dcf4c0410466b",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 24,
+      "head": "feat/testing-trust-and-profiles",
+      "head_sha": "b5409e529cbdec1a12a91aba99a2a50a9b99b3e4",
+      "merged": true,
+      "state": "closed"
+    },
+    {
+      "number": 1,
+      "head": "feature/recording",
+      "head_sha": "02f1abf7d5464e816d9959165074a7596f842051",
+      "merged": true,
+      "state": "closed"
+    }
+  ]
 }

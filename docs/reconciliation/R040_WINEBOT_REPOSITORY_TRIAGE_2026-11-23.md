@@ -74,3 +74,7 @@ Run only in the actor's **known** WineBot workspace; `git fetch --prune` updates
 - **B — atomicity:** classify each guest action as read-only, target-proven-idempotent, or non-retryable UNKNOWN after ambiguous ACK; do not infer exactly-once from controller CAS.
 - **C — Wine11/observatory:** recover source-pinned stock/instrumented/native comparison, WinInspect and held-out semantic critic on rights-cleared synthetics; root-cause conformance red without unsafe log disclosure.
 - **D — housekeeping:** after local worktree census, close only source-exact superseded drafts with durable successor links; no blind pruning of the 141 remote unreferenced names; rescan heads before any state transition.
+
+## Secondary closed-PR provenance reconciliation
+
+The **complete available** first-page REST list contains **84 closed PRs** (the second page was empty). Of the 141 branches not used as the head/base of an open PR, **52** are still named heads of a closed PR, and **89** have no observed open-head/base or closed-PR-head relationship. The latter group is **NOT presumed disposable**: it includes experiment source authority, historical automated qualification, possible actor worktrees, and unregistered workflow references. See the machine-readable `closed_pr_head` field in the adjacent JSON snapshot. Neither category is cleared for deletion.
