@@ -7,7 +7,7 @@ Status: experimental public synthetic-only source; NOT a Wine source patch, runt
 Can a real PE64 program under unmodified distribution Wine enumerate its own executable module base, one live process heap allocation and the containing virtual memory region via supported Win32 APIs? This is a necessary but insufficient baseline for full Wine-native introspection.
 
 ## Test method
-- Original MinGW C fixture creates a 256-byte block, uses GetModuleInformation, HeapWalk and VirtualQuery, then writes three ephemeral JSONL records to a runner-local file.
+- Original MinGW C fixture creates a 256-byte block, uses GetModuleInformation, HeapWalk and VirtualQuery, then writes three ephemeral JSONL records to a dedicated file inside a disposable Wine prefix (not mixed with Wine launcher stdout).
 - Offline Go verifier requires precise provenance WIN32_API_ENUMERATED, windows_process_va address domain, same process identity, memory containment and unknown object ID, generation and semantic type. Strict negative tests reject fabricated class identity, host pointers, cross-process contamination, extra fields and bad regions.
 - Free public GHA Ubuntu worker compiles PE64, executes it inside a clean Wine prefix, runs Go verifier against bounded output and only publishes fixed PASS/FAIL markers. No binary or raw trace publication.
 - All observations are best-effort current-state snapshots. No historical allocation site, object type, source-known wineserver pointer, per-process remote attach or virtual machine support is claimed.

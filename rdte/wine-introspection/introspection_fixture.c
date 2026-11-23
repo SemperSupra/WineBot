@@ -7,8 +7,8 @@
 #include <psapi.h>
 #include <stdint.h>
 #include <stdio.h>
-static void record(const char *kind, DWORD pid, const void *address, SIZE_T size) {
-    printf("{\"schema\":\"wine-introspection-rdte/v0\","
+static void record(FILE *output, const char *kind, DWORD pid, const void *address, SIZE_T size) {
+    fprintf(output,"{\"schema\":\"wine-introspection-rdte/v0\","
            "\"source\":\"WIN32_API_ENUMERATED\",\"kind\":\"%s\","
            "\"process_id\":%lu,\"address_space\":\"windows_process_va\","
            "\"address\":\"0x%llx\",\"size_bytes\":%llu,"
@@ -25,6 +25,7 @@ int main(void) {
     PROCESS_HEAP_ENTRY entry={0};
     MEMORY_BASIC_INFORMATION region={0};
     void *p=NULL;
+    FILE *output=NULL;
     SIZE_T live_size=0;
     unsigned int scanned=0;
     if (!heap || !module || !pid) return 2;
@@ -44,10 +45,12 @@ int main(void) {
     if (VirtualQuery(p,&region,sizeof(region))!=sizeof(region) ||
         region.State!=MEM_COMMIT || !region.BaseAddress ||
         region.RegionSize<256) return 8;
-    record("module",pid,image.lpBaseOfDll,(SIZE_T)image.SizeOfImage);
-    record("heap_allocation",pid,p,live_size);
-    record("memory_region",pid,region.BaseAddress,region.RegionSize);
-    if (fflush(stdout)!=0) return 9;
+    output=fopen("C:\\wric-witness.jsonl","wb");
+    if (!output) return 9;
+    record(output,"module",pid,image.lpBaseOfDll,(SIZE_T)image.SizeOfImage);
+    record(output,"heap_allocation",pid,p,live_size);
+    record(output,"memory_region",pid,region.BaseAddress,region.RegionSize);
+    if (fclose(output)!=0) return 9;
     if (!HeapFree(heap,0,p)) return 10;
     return 0;
 }

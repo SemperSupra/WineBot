@@ -52,9 +52,9 @@ jobs:
           export WINEDEBUG=-all
           export WINEDLLOVERRIDES="mscoree,mshtml="
           mkdir -p "$WINEPREFIX"
-          timeout 240s xvfb-run -a wine "$RUNNER_TEMP/wric-fixture.exe" >"$RUNNER_TEMP/wric.jsonl" 2>"$RUNNER_TEMP/wric.stderr"
-          GO111MODULE=off go run ./rdte/wine-introspection/verify.go <"$RUNNER_TEMP/wric.jsonl"
-          rm -f "$RUNNER_TEMP/wric.jsonl" "$RUNNER_TEMP/wric.stderr"
+          timeout 240s xvfb-run -a wine "$RUNNER_TEMP/wric-fixture.exe" >"$RUNNER_TEMP/wric-launcher.stdout" 2>"$RUNNER_TEMP/wric.stderr"
+          GO111MODULE=off go run ./rdte/wine-introspection/verify.go <"$WINEPREFIX/drive_c/wric-witness.jsonl"
+          rm -f "$WINEPREFIX/drive_c/wric-witness.jsonl" "$RUNNER_TEMP/wric-launcher.stdout" "$RUNNER_TEMP/wric.stderr"
           echo 'PASS: actual_wine_no_patch_current_state'
       - name: Scope note
         if: always()
