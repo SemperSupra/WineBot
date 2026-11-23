@@ -23,7 +23,9 @@ services:
     network_mode: none
     read_only: true
     cap_drop: [ALL]
-    cap_add: [CHOWN]
+    # Required only by the isolated root initializer to reopen the
+    # mode-0600 runtime writer lock after its owner is uid 1000.
+    cap_add: [CHOWN, DAC_OVERRIDE]
     security_opt: [no-new-privileges:true]
     pids_limit: 64
     mem_limit: 256m
