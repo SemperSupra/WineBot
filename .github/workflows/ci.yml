@@ -39,7 +39,21 @@ jobs:
         run: docker compose -f compose/docker-compose.yml --profile lint run --rm lint-runner scripts/ci/lint.sh
 
       - name: Containerized Unit Tests
+        id: unit_tests
         run: docker compose -f compose/docker-compose.yml --profile test --profile interactive run --rm test-runner scripts/ci/test.sh
+
+      - name: Classify failed unit dependency startup with fixed codes only
+        if: ${{ failure() && steps.unit_tests.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+          # Never emit raw service logs to public Actions: classification is fixed vocabulary.
+          cid="$(docker compose -f compose/docker-compose.yml --profile interactive ps -aq winebot-interactive 2>/dev/null || true)"
+          if [ -z "$cid" ]; then
+            echo 'STARTUP_DIAGNOSTIC container=absent'
+          else
+            docker inspect --format='STARTUP_DIAGNOSTIC status={{.State.Status}} exit_code={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || echo 'STARTUP_DIAGNOSTIC status=inspect_failed'
+          fi
+          docker compose -f compose/docker-compose.yml --profile interactive logs --no-color --tail 200 winebot-interactive 2>/dev/null | python3 scripts/ci/classify-startup-logs.py
 
       - name: Deterministic E2E subset
         run: |
