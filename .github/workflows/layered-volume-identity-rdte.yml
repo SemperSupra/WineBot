@@ -1,0 +1,29 @@
+name: Layered Volume Identity Offline RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/layers/preflight.sh'
+      - 'tests/test_layered_volume_preflight.py'
+      - '.github/workflows/layered-volume-identity-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-identity-negative:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact public PR source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Validate offline local-driver alias refusal
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/layers/preflight.sh
+          python3 -m unittest discover -s tests -p 'test_layered_volume_preflight.py' -v
+          echo 'LAYERED_VOLUME_IDENTITY_RDTE=PASS'

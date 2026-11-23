@@ -45,4 +45,32 @@ for variable in "${variables[@]}"; do
     exit 1
   }
 done
+# Never treat distinct volume NAMES as proof of distinct backing state.
+# This conservative v1 profile admits ordinary local volumes only.
+# Reject driver options (including bind aliases) and duplicate Docker-
+# reported mountpoints before starting any state initializer or runtime.
+declare -A seen_mount=()
+for variable in "${variables[@]}"; do
+  volume="${!variable}"
+  driver="$(docker volume inspect --format '{{.Driver}}' "$volume" 2>/dev/null)" || {
+    echo 'LAYERED_PREFLIGHT stage=volume_identity_unavailable' >&2
+    exit 2
+  }
+  options="$(docker volume inspect --format '{{json .Options}}' "$volume" 2>/dev/null)" || {
+    echo 'LAYERED_PREFLIGHT stage=volume_identity_unavailable' >&2
+    exit 2
+  }
+  mountpoint="$(docker volume inspect --format '{{.Mountpoint}}' "$volume" 2>/dev/null)" || {
+    echo 'LAYERED_PREFLIGHT stage=volume_identity_unavailable' >&2
+    exit 2
+  }
+  if [ "$driver" != local ] ||
+     { [ "$options" != null ] && [ "$options" != '{}' ]; } ||
+     [[ "$mountpoint" != /* ]] || [ "$mountpoint" = / ] ||
+     [[ -n "${seen_mount[$mountpoint]:-}" ]]; then
+    echo 'LAYERED_PREFLIGHT stage=volume_alias_or_driver' >&2
+    exit 2
+  fi
+  seen_mount["$mountpoint"]=1
+done
 echo 'LAYERED_PREFLIGHT stage=ready'
