@@ -1,0 +1,76 @@
+name: Synthetic remote Windows-process introspection RDTE
+on:
+  push:
+    branches:
+      - rdte/remote-process-introspection-r1-20261123
+    paths:
+      - rdte/remote-process-introspection/**
+      - .github/workflows/remote-process-introspection-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: remote-process-introspection-r1
+  cancel-in-progress: false
+jobs:
+  native-windows-parent-child:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile original two-process Windows query fixture
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cl /nologo /W3 /WX /EHsc /std:c++17 rdte\remote-process-introspection\fixture.cpp /Fe:"%RUNNER_TEMP%\remote-fixture.exe" /link Psapi.lib
+          if errorlevel 1 exit /b 1
+          echo PASS: native_remote_fixture_compiled
+      - name: Execute actual out-of-process metadata-only queries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:RUNNER_TEMP\remote-fixture.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic child query failed: source-owned code $LASTEXITCODE" }
+          Write-Output 'PASS: native_windows_remote_readonly_query'
+      - name: Safe scope closeout
+        if: always()
+        shell: pwsh
+        run: Write-Output 'Synthetic self-launched child only; no privilege, driver, process injection, live user target, raw addresses or uploaded artifact.'
+  wine-current-state-parent-child:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Provision disposable Wine and MinGW from public packages
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends wine g++-mingw-w64-x86-64 xvfb xauth
+      - name: Compile exact original PE64 fixture
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/remote-fixture.exe" \
+            rdte/remote-process-introspection/fixture.cpp -lpsapi -municode
+          file "$RUNNER_TEMP/remote-fixture.exe" | grep -F 'PE32+'
+          echo 'PASS: wine_remote_fixture_compiled'
+      - name: Verify real Wine parent-child out-of-process visibility
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$RUNNER_TEMP/remote-query-prefix"
+          export WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml='
+          mkdir -p "$WINEPREFIX"
+          timeout 180s xvfb-run -a wine "$RUNNER_TEMP/remote-fixture.exe" \
+            >"$RUNNER_TEMP/synthetic-stdout.txt" 2>"$RUNNER_TEMP/synthetic-stderr.txt"
+          grep -Fqx 'PASS: metadata_only_remote_child_module_and_virtual_region' \
+            "$RUNNER_TEMP/synthetic-stdout.txt"
+          rm -f "$RUNNER_TEMP/synthetic-stdout.txt" "$RUNNER_TEMP/synthetic-stderr.txt"
+          echo 'PASS: real_wine_remote_readonly_query'
+      - name: Safe scope closeout
+        if: always()
+        run: echo 'Synthetic self-launched child only; no external application or raw memory, no uploads, image push, private GHA or production promotion.'
