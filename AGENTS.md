@@ -2,9 +2,20 @@
 
 This document is a navigation aid for autonomous agents working on the WineBot codebase.
 
+## 0. Durable authority and minimal cold-start protocol
+
+This map is a navigation aid, not the release authority. Resume by reading the latest GitHub DLE in `mark-e-deyoung/winebot-research#3`, relevant linked PR/issue batons, and the current exact-source Git heads and CI receipts. The official Way of Working and branch-specific invariants remain authoritative; do not infer green status from a parent commit.
+
+- **Discover/observe:** Sync local and remote Git refs (fetch before reading, and fetch again before final reporting), inspect open owner workcells and the DLE, and identify unrelated work which can run in independent parallel batches. Do not overwrite, rebase or cancel another actor's work without authority.
+- **Plan/apply:** Keep changes in isolated source-exact branches and draft PRs, with reproducible evidence tied to immutable commit SHAs. Prefer free public disposable GitHub Actions; no private Actions minutes or unapproved private hosts, real application targets, protected-main merges, image publication or releases.
+- **Verify/close:** Capture terminal run ID, commit SHA, specific green/red phase, and explicit UNKNOWN/BLOCKED claims. Reconcile DLE at the start and before stopping; preserve security release STOPs even when cooperative tests are green. No user-mediated copying of long batons.
+- **Three audiences:** Interfaces and evidence must be understandable by humans, executable by automation, and machine-readable for agents. Keep public logs bounded and classified, with no raw secrets, untrusted trace payloads or private paths.
+
+Minimal actor kickoff: **Read AGENTS.md and the authoritative WineBot GitHub DLE, sync local/remotes, execute the next independent READY batches on free public runners, verify exact-source CI, and reconcile DLE before ending.**
+
 ## 1. System Architecture
 
-WineBot is a containerized Windows application runtime (Wine 10.0) with an X11 display stack, controlled via a Python FastAPI.
+WineBot is a containerized Windows application runtime with an X11 display stack controlled through Python FastAPI. Current experimental qualification is **source-pinned Wine 11.0**; older Wine versions in historic source or tests must never be substituted for Wine 11 acceptance.
 
 ### Core Layers
 | Layer | Components | Description |
