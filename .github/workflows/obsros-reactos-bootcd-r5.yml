@@ -1,0 +1,76 @@
+name: OBS-ROS ReactOS BootCD Requalification (R5)
+on:
+  push:
+    branches:
+      - rdte/reactos-source-boot-20261123
+    paths:
+      - .github/workflows/obsros-reactos-bootcd-r5.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stock-bootcd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - name: Public-only bounded execution
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+      - name: Reuse exact ReactOS R4 public-source build artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271529806
+          github-token: ${{ github.token }}
+          name: obsros-reactos-stock-source-build
+          path: stock
+      - name: Verify actual boot medium rather than intermediate liveimg
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xorriso qemu-system-x86 socat
+          iso="$(find stock -type f -name bootcd.iso -print -quit)"
+          test -n "$iso" || { echo 'BOOTCD_NOT_FOUND'; exit 1; }
+          printf '%s\n' "$iso" > receipts/bootcd-path.txt
+          sha256sum "$iso" > receipts/bootcd-sha256.txt
+          stat -c '%s' "$iso" > receipts/bootcd-size.txt
+          xorriso -indev "$iso" -report_el_torito plain > receipts/eltorito.txt 2>&1
+          grep -qi 'El Torito' receipts/eltorito.txt || { echo 'NO_EL_TORITO'; exit 1; }
+          printf 'source_ref=%s\nsource_artifact_run=%s\n' '4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6' '45271529806' > receipts/provenance.txt
+          qemu-system-i386 --version > receipts/qemu-version.txt
+      - name: Boot real El Torito BootCD in isolated QEMU and capture independent evidence
+        run: |
+          set -euo pipefail
+          iso="$(cat receipts/bootcd-path.txt)"
+          printf '%s\n' memory_region_ops_write memory_region_ops_read > receipts/trace-events.txt
+          timeout 110s qemu-system-i386 -machine pc -cpu pentium3 -smp 1 -m 768 \
+            -boot order=d -cdrom "$iso" -nic none -display none -vga std \
+            -serial file:receipts/serial.log \
+            -monitor unix:obsros-monitor.sock,server,nowait -no-reboot \
+            -trace events=receipts/trace-events.txt,file=receipts/qemu-trace.log \
+            >receipts/qemu-stderr.log 2>&1 &
+          pid="$!"
+          for i in $(seq 1 30); do
+            test -S obsros-monitor.sock && break
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          sleep 75
+          if test -S obsros-monitor.sock; then
+            printf 'screendump receipts/screen.ppm\n' | socat - UNIX-CONNECT:obsros-monitor.sock >receipts/monitor.txt 2>&1 || true
+          fi
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          test -s receipts/screen.ppm || { echo 'SCREEN_CAPTURE_FAILED' >receipts/classification.txt; exit 1; }
+          printf '%s\n' 'QEMU_EXECUTED_ELTORITO_BOOTCD_SCREENSHOT_CAPTURED; GUEST_BOOT_MILESTONE_UNCLASSIFIED_REQUIRES_INDEPENDENT_VISUAL_REVIEW' >receipts/classification.txt
+      - name: Retain candidate evidence for offline classification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-reactos-r5-real-bootcd-boot-observation
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
