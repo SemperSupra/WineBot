@@ -93,3 +93,13 @@ RUN x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
     /tmp/wric-introspection-fixture.c -lpsapi \
     && rm -f /tmp/wric-introspection-fixture.c
 USER winebot
+
+# R3 controlled source-Wine11 parent/child observation; source is original synthetic PE64.
+# R2's pinned upstream source, digest, toolchain and runtime remain unchanged.
+USER root
+COPY rdte/remote-process-introspection/fixture.cpp /tmp/wric-remote-fixture.cpp
+RUN x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -municode \
+    -o /opt/winebot-wine/rdte/wric-remote-fixture.exe \
+    /tmp/wric-remote-fixture.cpp -lpsapi \
+    && rm -f /tmp/wric-remote-fixture.cpp
+USER winebot

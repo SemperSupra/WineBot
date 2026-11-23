@@ -1,0 +1,89 @@
+name: Pinned Wine11 versus native Windows remote process metadata RDTE
+on:
+  push:
+    branches:
+      - rdte/wine11-remote-introspection-r1-20261123
+    paths:
+      - rdte/remote-process-introspection/**
+      - docker/wine11-source.Dockerfile
+      - .github/workflows/wine11-remote-introspection-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-remote-introspection-r1
+  cancel-in-progress: false
+jobs:
+  native-windows-reference:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Compile original rights-cleared PE64 parent and child
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cl /nologo /W3 /WX /EHsc /std:c++17 rdte\remote-process-introspection\fixture.cpp /Fe:"%RUNNER_TEMP%\wine11-remote-ref.exe" /link Psapi.lib
+          if errorlevel 1 exit /b 1
+          echo PASS: native_reference_compiled
+      - name: Observe an explicitly self-launched synthetic child
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:RUNNER_TEMP\wine11-remote-ref.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic Windows reference failed source-owned code $LASTEXITCODE" }
+          Write-Output 'PASS: native_reference_child_region_module'
+      - name: Scope closeout
+        if: always()
+        shell: pwsh
+        run: Write-Output 'Only original synthetic self-launched child. No privileged process, payload logging, driver, original target or private state.'
+  pinned-wine11-source-and-child:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disposable public runner disk capacity
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Compile upstream-digest-pinned Wine11 and original parent-child PE64
+        run: |
+          set -euo pipefail
+          docker build --progress=plain -f docker/wine11-source.Dockerfile \
+            -t wine11-remote-introspection-r1:source .
+          echo 'PASS: exact_wine11_source_and_remote_fixture_compiled'
+      - name: Observe synthetic child from source-built Wine 11 in bounded isolated runtime
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            wine11-remote-introspection-r1:source \
+            /bin/bash -euo pipefail -c '
+              wine --version | grep -Fx "wine-11.0";
+              export WINEPREFIX=/tmp/wric-remote-prefix WINEARCH=wow64 WINEDEBUG=-all;
+              mkdir -p "$WINEPREFIX";
+              trap "rm -f /tmp/wric-remote.stdout /tmp/wric-remote.stderr" EXIT;
+              set +e;
+              timeout 180s xvfb-run -a wine /opt/winebot-wine/rdte/wric-remote-fixture.exe \
+                >/tmp/wric-remote.stdout 2>/tmp/wric-remote.stderr;
+              code=$?;
+              set -e;
+              if [ "$code" -ne 0 ]; then
+                printf "FAIL: wine11_remote_fixture_exit=%s\n" "$code";
+                exit 1;
+              fi;
+              if ! tr -d "\r" </tmp/wric-remote.stdout |
+                grep -Fqx "PASS: metadata_only_remote_child_module_and_virtual_region"; then
+                echo "FAIL: wine11_remote_missing_exact_marker";
+                exit 1;
+              fi;
+              echo "PASS: wine11_remote_child_region_module"
+            '
+      - name: Safe closeout
+        if: always()
+        run: echo 'Pinned source Wine 11.0 only. No distribution Wine 9, private runner, kernel driver, raw addresses, published image or artifacts.'
