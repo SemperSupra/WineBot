@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-// Synthetic user-mode ETW producer and TraceEvent consumer. No target data.
+// Synthetic ETW user provider, ETL collection and TraceEvent decoding.
+// No third-party target, kernel providers, or raw trace publication.
 using System;
 using System.Diagnostics.Tracing;
+using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
 
@@ -21,51 +22,60 @@ static class Program
     private static int Main()
     {
         if (!OperatingSystem.IsWindows()) return 2;
-        // Unique per disposable run, never reusing or stopping another session.
+        var file = Path.Combine(Path.GetTempPath(),
+            "winebot-etw-" + Guid.NewGuid().ToString("N") + ".etl");
         var sessionName = "WineBotRDTE-" + Guid.NewGuid().ToString("N");
         var providerGuid = EventSource.GetGuid(typeof(SyntheticTransitionEvents));
-        using var emitter = new SyntheticTransitionEvents();
-        using var session = new TraceEventSession(sessionName);
-        session.StopOnDispose = true;
 
-        int count = 0;
-        int unexpected = 0;
-        session.Source.Dynamic.All += ev =>
+        try
         {
-            if (ev.ProviderGuid != providerGuid || ev.ProcessID != Environment.ProcessId) return;
-            try
+            // No shared ETW session and no kernel provider. Dispose/stop prior
+            // to decoding; an ETL file has a finite, reproducible end of stream.
+            using (var emitter = new SyntheticTransitionEvents())
+            using (var session = new TraceEventSession(sessionName, file))
             {
-                var state = Convert.ToInt32(ev.PayloadByName("state"));
-                if (state < 1 || state > Expected) Interlocked.Increment(ref unexpected);
-                Interlocked.Increment(ref count);
+                session.StopOnDispose = true;
+                session.EnableProvider(providerGuid);
+                Thread.Sleep(500);
+                for (int i = 1; i <= Expected; i++)
+                {
+                    emitter.Transition(i);
+                    Thread.Sleep(100);
+                }
+                Thread.Sleep(1000); // bounded ETW buffer flush allowance
             }
-            catch
-            {
-                Interlocked.Increment(ref unexpected);
-            }
-        };
-        session.EnableProvider(providerGuid);
-        var reader = Task.Run(() => session.Source.Process());
 
-        // Allow live listener startup. This is fixture synchronization, not a
-        // claim that ETW gives perfect event completeness or total ordering.
-        Thread.Sleep(500);
-        for (int i = 1; i <= Expected; i++)
-        {
-            emitter.Transition(i);
-            Thread.Sleep(100);
+            int count = 0;
+            int unexpected = 0;
+            using (var source = new ETWTraceEventSource(file))
+            {
+                source.Dynamic.All += ev =>
+                {
+                    if (ev.ProviderGuid != providerGuid ||
+                        ev.ProcessID != Environment.ProcessId) return;
+                    try
+                    {
+                        int state = Convert.ToInt32(ev.PayloadByName("state"));
+                        if (state < 1 || state > Expected)
+                            Interlocked.Increment(ref unexpected);
+                        Interlocked.Increment(ref count);
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref unexpected);
+                    }
+                };
+                source.Process(); // finite file, never a live infinite reader
+            }
+
+            if (count != Expected || unexpected != 0) return 4;
+            Console.WriteLine("PASS: native_etw_file_capture_decode");
+            return 0;
         }
-
-        var cutoff = DateTime.UtcNow.AddSeconds(12);
-        while (Volatile.Read(ref count) < Expected && DateTime.UtcNow < cutoff)
-            Thread.Sleep(50);
-        session.Source.StopProcessing();
-        if (!reader.Wait(TimeSpan.FromSeconds(8))) return 3;
-        if (Volatile.Read(ref count) != Expected || Volatile.Read(ref unexpected) != 0)
-            return 4;
-
-        // Only fixed markers: no provider payloads, session IDs or raw trace.
-        Console.WriteLine("PASS: native_etw_source_capture_and_decode");
-        return 0;
+        finally
+        {
+            // No raw ETW buffers leave the disposable runner.
+            if (File.Exists(file)) File.Delete(file);
+        }
     }
 }
