@@ -83,3 +83,13 @@ RUN chmod 0755 /usr/local/bin/verify-wine-event-roundtrip \
 ENV PYTHONPATH=/usr/local/lib/winebot-rdte
 USER winebot
 CMD ["/usr/local/bin/wine11-event-smoke"]
+
+# R2 synthetic-only, no source patch: exact Wine11 CLI read-only census probe.
+# Compiled after Wine11 from the same rights-cleared fixture as R1.
+USER root
+COPY rdte/wine-introspection/introspection_fixture.c /tmp/wric-introspection-fixture.c
+RUN x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+    -o /opt/winebot-wine/rdte/wric-introspection-fixture.exe \
+    /tmp/wric-introspection-fixture.c -lpsapi \
+    && rm -f /tmp/wric-introspection-fixture.c
+USER winebot

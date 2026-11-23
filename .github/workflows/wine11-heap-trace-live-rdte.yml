@@ -1,0 +1,76 @@
+name: Pinned Wine11 real +heap allocation lifecycle RDTE
+on:
+  push:
+    branches:
+      - rdte/wine11-heap-trace-live-r1-20261123
+    paths:
+      - rdte/wine11-heap-trace/**
+      - .github/workflows/wine11-heap-trace-live-rdte.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wine11-heap-trace-live-r1
+  cancel-in-progress: false
+jobs:
+  source-derived-negative-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Run strictly bounded Go heap-trace negative suite
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 -race ./rdte/wine11-heap-trace
+          echo 'PASS: wine11_heap_offline_controls'
+  pinned-source-wine11-live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Prepare disposable standard public runner space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build unmodified upstream digest-pinned Wine 11.0 source
+        run: |
+          set -euo pipefail
+          docker build --progress=plain -f docker/wine11-source.Dockerfile \
+            -t wine11-heap-trace-live:source .
+          echo 'PASS: pinned_wine11_source_for_heap_telemetry'
+      - name: Execute synthetic Wine11 256-byte heap fixture and collect bounded trace locally
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wine11-heap"
+          chmod 0777 "$RUNNER_TEMP/wine11-heap"
+          trap 'rm -f "$RUNNER_TEMP/wine11-heap/"*' EXIT
+          docker run --rm --network=none --cpus=2 --memory=4g --pids-limit=256 \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,src=$RUNNER_TEMP/wine11-heap,dst=/output" \
+            wine11-heap-trace-live:source \
+            /bin/bash -euo pipefail -c '
+              wine --version | grep -Fx wine-11.0;
+              export WINEPREFIX=/tmp/wric-heap-prefix WINEARCH=wow64 WINEDEBUG=-all;
+              mkdir -p "$WINEPREFIX";
+              timeout 90s xvfb-run -a wineboot --init >/tmp/wric-boot.out 2>/tmp/wric-boot.err;
+              export WINEDEBUG=+heap;
+              timeout 240s xvfb-run -a wine /opt/winebot-wine/rdte/wric-introspection-fixture.exe \
+                >/tmp/wric-heap.out 2>/output/wric-raw.heap;
+              cp "$WINEPREFIX/drive_c/wric-witness.jsonl" /output/wric-witness.jsonl;
+              rm -f /tmp/wric-boot.out /tmp/wric-boot.err /tmp/wric-heap.out
+            '
+          python3 rdte/wine11-heap-trace/select_fixture_events.py \
+            --witness "$RUNNER_TEMP/wine11-heap/wric-witness.jsonl" \
+            --trace "$RUNNER_TEMP/wine11-heap/wric-raw.heap" \
+            --output "$RUNNER_TEMP/wine11-heap/wric-target.heap"
+          export WINE11_RDTE_WITNESS="$RUNNER_TEMP/wine11-heap/wric-witness.jsonl"
+          export WINE11_RDTE_TRACE="$RUNNER_TEMP/wine11-heap/wric-target.heap"
+          GO111MODULE=off go test -count=1 ./rdte/wine11-heap-trace
+          echo 'PASS: pinned_source_wine11_actual_heap_lifetime'
+      - name: Safe closeout
+        if: always()
+        run: echo 'Original synthetic self-process only, source Wine11.0 only, no raw trace in logs or uploads, no Wine patch, private data, image publishing or protected promotion.'

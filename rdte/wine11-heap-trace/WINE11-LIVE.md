@@ -1,0 +1,9 @@
+# Wine 11.0 real no-source-patch heap lifecycle qualification
+
+Source authority: exact R2 independently qualified upstream Wine11.0 new-WoW64 source candidate 18d7fc5d22ffaa13564abb04810a691a96c3b100; Dockerfile unchanged, official WineHQ tar digest still pinned. This independent public free-tier workcell exercises WINEDEBUG=+heap RtlAllocateHeap and RtlFreeHeap from the actual Wine 11 source with the already qualified 256-byte synthetic Win32 heap allocation fixture.
+
+Raw Wine heap trace and fixture address remain ephemeral in a private runner-local temporary mount (not committed, printed, uploaded, cached or published as an OCI image). Python metadata filter selects exact pointer-matched trace lines from a size-bounded log and writes another runner-local file. Go source-owned test reads the dedicated Wine fixture witness and filtered Wine11 trace, requires successful allocation, same-heap successful free, exact size and no duplicated or reversed events; publishes fixed PASS/FAIL only.
+
+This is NOT full application allocation capture or production query. Wine's debug channel may perturb timing, saturate I/O, miss user custom allocators, interleave process logs or change platform behavior. It does not guarantee originating call stack, true process identity, app semantic class type, all allocation lifetimes, or reliable trace delivery. Failure remains FAIL; no fallback to distro Wine9 or relaxation of semantic controls. Reuse no-patch evidence before requesting any native Wine heap patch.
+
+Owning DLE mark-e-deyoung/winebot-research issue #3; Ghidra/reversing consumer mark-e-deyoung/ghidra-tools issue #4 still has separate source/H0/critic admission and WinBot native Windows baseline remains independent.
