@@ -1,0 +1,75 @@
+name: OBS-ROS R21 stock media namespace census
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/obsros-stock-media-r21.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  media-census:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check public execution scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+      - name: Retrieve existing public source-built ISO
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271529806
+          github-token: ${{ github.token }}
+          name: obsros-reactos-stock-source-build
+          path: stock
+      - name: Verify and inventory immutable stock ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xorriso genisoimage
+          iso="$(find stock -type f -name bootcd.iso -print -quit)"
+          test -n "$iso"
+          printf '%s  %s\n' cce7389f10018a81d0cfd075e1c0391d255288717e0bc19453572f0d5ce0f0ef "$iso" | sha256sum -c -
+          sha256sum "$iso" > receipts/original-iso.sha256
+          xorriso -version > receipts/xorriso-version.txt 2>&1
+          xorriso -indev "$iso" -report_el_torito plain > receipts/eltorito.txt 2>&1
+          xorriso -indev "$iso" -find / -type f -exec echo -- > receipts/xorriso-files.txt 2>receipts/xorriso-diagnostics.txt
+          for mode in primary rock-ridge joliet; do
+            case "$mode" in primary) opt=();; rock-ridge) opt=(-R);; joliet) opt=(-J);; esac
+            if isoinfo -i "$iso" "${opt[@]}" -f >"receipts/$mode.txt" 2>"receipts/$mode.stderr"; then
+              echo PASS >"receipts/$mode.status"
+            else
+              echo UNAVAILABLE >"receipts/$mode.status"
+            fi
+          done
+          python - "$iso" <<'PY'
+          import pathlib, shlex, subprocess, hashlib, json, sys
+          p=pathlib.Path("receipts")
+          targets={"txtsetup.sif","unattend.inf","freeldr.ini"}
+          results=[]
+          for line in (p/"xorriso-files.txt").read_text().splitlines():
+              parts=shlex.split(line)
+              if len(parts)!=1 or not parts[0].startswith("/"): continue
+              path=parts[0]
+              if pathlib.PurePosixPath(path).name.lower() not in targets: continue
+              out=p/f"candidate-{len(results):03d}.bin"
+              r=subprocess.run(["xorriso","-osirrox","on","-indev",sys.argv[1],"-extract",path,str(out)],capture_output=True,text=True,timeout=30)
+              (p/f"candidate-{len(results):03d}.log").write_text(r.stdout+r.stderr)
+              entry={"path":path,"exit":r.returncode}
+              if r.returncode==0 and out.is_file():
+                  entry.update(size=out.stat().st_size,sha256=hashlib.sha256(out.read_bytes()).hexdigest())
+              results.append(entry)
+          (p/"candidates.json").write_text(json.dumps(results,indent=2))
+          assert all(any(pathlib.PurePosixPath(x["path"]).name.lower()==t and x.get("exit")==0 and "sha256" in x for x in results) for t in targets),results
+          PY
+      - name: Retain stock media inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r21-stock-media-inventory
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
