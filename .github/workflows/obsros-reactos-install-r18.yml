@@ -1,0 +1,176 @@
+name: OBS-ROS R18 source-relative installer correction
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/obsros-reactos-install-r18.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reactos-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check public execution scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+      - name: Retrieve existing public source-built ISO
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271529806
+          github-token: ${{ github.token }}
+          name: obsros-reactos-stock-source-build
+          path: stock
+      - name: Derive unattended installer configuration and test persistent guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils xorriso mtools
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          iso="$(find stock -type f -name bootcd.iso -print -quit)"
+          test -n "$iso"
+          printf '%s  %s\n' cce7389f10018a81d0cfd075e1c0391d255288717e0bc19453572f0d5ce0f0ef "$iso" | sha256sum -c -
+          sha256sum "$iso" > receipts/original-iso.sha256
+          printf '%s\n' 'reactos/reactos@4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6' 'public artifact 14866900023' > receipts/provenance.txt
+          xorriso -osirrox on -indev "$iso" -extract /freeldr.ini original.ini -extract /reactos/unattend.inf original.inf >receipts/extract.txt 2>&1
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          b=Path("original.ini").read_bytes()
+          assert b.count(b"DefaultOS=LiveImg_Debug")==1
+          assert b.count(b"TimeOut=10")==1
+          derived=b.replace(b"DefaultOS=LiveImg_Debug",b"DefaultOS=Setup_Debug").replace(b"TimeOut=10",b"TimeOut=1")
+          fields=[
+              '[Unattend]',
+              'Signature = "$ReactOS$"',
+              'UnattendSetupEnabled = yes',
+              'DestinationDiskNumber = 0',
+              'DestinationPartitionNumber = 1',
+              'InstallationDirectory = ReactOS',
+              'BootLoaderLocation = 2',
+              'FullName = "Synthetic"',
+              'ComputerName = "OBSROS"',
+              'TimeZoneIndex = 85',
+              'FormatPartition = 1',
+              'AutoPartition = 1',
+              'FsType = 0',
+              'RappsDownload = no',
+              'LocaleID = 409',
+              'InstallationType = 0',
+          ]
+          inf=("\r\n".join(fields)+"\r\n").encode("ascii")
+          assert hashlib.sha256(derived).hexdigest()=="6ccfbe578171d52a83deab1ccf8a2712ceceb8d06d595612fd8d49c20ba77751"
+          assert hashlib.sha256(inf).hexdigest()=="a8c6b8a60988511b611c65154e483e23b80589e4cceb0de9c6a505020d852ec7"
+          for name,data in [("freeldr.ini",derived),("unattend.inf",inf)]:
+              with open(name,"xb") as f: f.write(data)
+          PY
+          cp freeldr.ini unattend.inf receipts/
+          xorriso -indev "$iso" -outdev install.iso -boot_image any replay -map freeldr.ini /freeldr.ini -map unattend.inf /reactos/unattend.inf -map unattend.inf /I386/unattend.inf -commit -end > receipts/remaster.txt 2>&1
+          sha256sum install.iso > receipts/derived-iso.sha256
+          xorriso -indev install.iso -report_el_torito plain >receipts/eltorito.txt 2>&1
+          grep -qi 'El Torito boot img' receipts/eltorito.txt
+          xorriso -osirrox on -indev install.iso -extract /freeldr.ini check.ini -extract /reactos/unattend.inf check.inf -extract /I386/unattend.inf check-source.inf >receipts/roundtrip.txt 2>&1
+          cmp freeldr.ini check.ini
+          cmp unattend.inf check.inf
+          cmp unattend.inf check-source.inf
+          sha256sum unattend.inf check.inf check-source.inf > receipts/inf-roundtrip.sha256
+          qemu-img create -f qcow2 guest.qcow2 2G
+          cat > install.py <<'PY'
+          import json, pathlib, socket, subprocess, time
+          P=pathlib.Path
+          receipts=P("receipts")
+          def phase(name,cd,boot,seconds):
+              sock=P(name+".sock")
+              serial=receipts/(name+".serial")
+              args=["qemu-system-i386","-accel","tcg","-machine","pc","-cpu","pentium3","-smp","1","-m","768","-nic","none","-display","none","-vga","std","-serial","file:"+str(serial),"-monitor","none","-qmp",f"unix:{sock},server=on,wait=off","-drive","file=guest.qcow2,format=qcow2,if=ide","-boot",boot,"-no-reboot"]
+              if cd: args+=["-cdrom","install.iso"]
+              with (receipts/(name+".stderr")).open("wb") as err,(receipts/(name+".qmp.ndjson")).open("w",buffering=1) as log:
+                  p=subprocess.Popen(args,stdout=err,stderr=err)
+                  s=socket.socket(socket.AF_UNIX); s.settimeout(4)
+                  outcome="UNKNOWN"
+                  try:
+                      end=time.monotonic()+20
+                      while not sock.exists() and p.poll() is None and time.monotonic()<end: time.sleep(.1)
+                      if p.poll() is not None: raise RuntimeError("early exit")
+                      s.connect(str(sock)); f=s.makefile("rb"); i=0
+                      def recv():
+                          b=f.readline(262145)
+                          if not b or len(b)>262144: raise EOFError()
+                          obj=json.loads(b); log.write(json.dumps(obj)+"\n"); return obj
+                      assert "QMP" in recv()
+                      def call(cmd,args=None):
+                          nonlocal i
+                          i+=1; m={"execute":cmd,"id":i}
+                          if args: m["arguments"]=args
+                          s.sendall(json.dumps(m).encode()+b"\r\n")
+                          for _ in range(128):
+                              r=recv()
+                              if "event" in r: continue
+                              assert r.get("id")==i and "return" in r,r
+                              return r["return"]
+                          raise RuntimeError("event budget")
+                      call("qmp_capabilities")
+                      start=time.monotonic(); next_capture=start; n=0
+                      while p.poll() is None and time.monotonic()-start<seconds:
+                          if serial.exists() and serial.stat().st_size>16*1024*1024: raise RuntimeError("serial budget exceeded")
+                          if time.monotonic()>=next_capture:
+                              try: call("screendump",{"filename":str(receipts/(f"{name}-{n:02d}.ppm"))})
+                              except (EOFError,OSError): break
+                              n+=1; next_capture=time.monotonic()+30
+                          time.sleep(1)
+                      if p.poll() is not None:
+                          outcome=f"VM_EXIT_{p.returncode}"
+                          assert p.returncode==0,p.returncode
+                      else:
+                          outcome="TIME_BOUND_OR_QMP_END"
+                          try: call("screendump",{"filename":str(receipts/(name+"-final.ppm"))}); call("quit")
+                          except (EOFError,OSError): pass
+                  finally:
+                      s.close()
+                      if p.poll() is None:
+                          p.terminate()
+                          try: p.wait(timeout=10)
+                          except subprocess.TimeoutExpired: p.kill(); p.wait()
+                      (receipts/(name+".status")).write_text(outcome+"\n")
+              return outcome
+          def disk_probe(name):
+              subprocess.run(["qemu-img","convert","-f","qcow2","-O","raw","guest.qcow2","probe.raw"],check=True)
+              with open("probe.raw","rb") as f: m=f.read(512)
+              (receipts/(name+"-mbr.hex")).write_text(m.hex()+"\n")
+              assert m[-2:]==b"\x55\xaa","no MBR signature"
+              part=[]
+              for i in range(4):
+                  e=m[446+i*16:462+i*16]; start=int.from_bytes(e[8:12],"little"); count=int.from_bytes(e[12:16],"little")
+                  if e[4] and start and count: part.append((e[4],start,count))
+              (receipts/(name+"-partitions.json")).write_text(json.dumps(part))
+              assert part,"no disk partition"
+              for typ,start,count in part:
+                  r=subprocess.run(["mdir","-i",f"probe.raw@@{start*512}","::/ReactOS/system32/ntoskrnl.exe"],capture_output=True,text=True,timeout=15)
+                  (receipts/(name+f"-kernel-{start}.txt")).write_text(r.stdout+r.stderr)
+                  if r.returncode==0:
+                      P("probe.raw").unlink()
+                      return
+              P("probe.raw").unlink()
+              raise RuntimeError("installed kernel not independently located")
+          first=phase("stage1",True,"order=c,once=d",360)
+          disk_probe("stage1")
+          second=phase("stage2",True,"order=c",300)
+          disk_probe("stage2")
+          third=phase("diskonly",False,"order=c",100)
+          disk_probe("diskonly")
+          (receipts/"classification.txt").write_text("PERSISTENT_DISK_KERNEL_PRESENT; DISK_ONLY_BOOT_ATTEMPT_CAPTURED; DESKTOP_AND_REBOOT_REQUIRE_INDEPENDENT_SCREEN_SERIAL_CLASSIFICATION\n")
+          PY
+          cp install.py receipts/
+          timeout 850s python install.py
+      - name: Retain bounded installation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r18-reactos-persistent-install
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
