@@ -1,0 +1,209 @@
+name: OBS-ROS R19 synthetic counterfactual replay
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/obsros-counterfactual-r19.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  qmp-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Native QMP checkpoint, mutation, rollback and independent guest output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils binutils
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          cat > boot.S <<'ASM'
+          .code16
+          .global _start
+          _start:
+              cli
+              xorw %ax,%ax
+              movw %ax,%ds
+              movw %ax,%es
+              movw %ax,%ss
+              movw $0x7c00,%sp
+              sti
+              movb %dl,drive
+              movb $'R',%al
+              outb %al,$0xe9
+          loop:
+              xorw %ax,%ax
+              int $0x16
+              movb $1,step
+              cmpb $'b',%al
+              jne read_sector
+              movb $2,step
+          read_sector:
+              movw $0x8000,%bx
+              movw $0x0201,%ax
+              movw $0x0002,%cx
+              xorb %dh,%dh
+              movb drive,%dl
+              int $0x13
+              jc fail
+              movb 0x8000,%al
+              addb $'0',%al
+              outb %al,$0xe9
+              movb step,%al
+              addb %al,counter
+              movb counter,%al
+              movb %al,0x8000
+              movw $0x8000,%bx
+              movw $0x0301,%ax
+              movw $0x0002,%cx
+              xorb %dh,%dh
+              movb drive,%dl
+              int $0x13
+              jc fail
+              movb counter,%al
+              addb $'0',%al
+              outb %al,$0xe9
+              jmp loop
+          fail:
+              movb $'E',%al
+              outb %al,$0xe9
+              cli
+              hlt
+              jmp fail
+          step: .byte 0
+          counter: .byte 0
+          drive: .byte 0
+          .org 510
+          .word 0xaa55
+          ASM
+          as --32 boot.S -o boot.o
+          ld -m elf_i386 -Ttext 0x7c00 --oformat binary boot.o -o boot.bin
+          sha256sum boot.bin > receipts/fixture.sha256
+          cp boot.S receipts/
+          python -c 'from pathlib import Path; b=Path("boot.bin").read_bytes(); assert len(b)==512 and b[-2:]==bytes.fromhex("55aa")'
+          truncate -s 16M disk.raw
+          dd if=boot.bin of=disk.raw conv=notrunc status=none
+          qemu-img convert -f raw -O qcow2 disk.raw disk.qcow2
+          cat > lifecycle.py <<'PY'
+          import json, pathlib, socket, subprocess, time
+          from contextlib import ExitStack
+          P=pathlib.Path
+          receipts=P("receipts")
+          log=(receipts/"qmp.ndjson").open("w", buffering=1)
+          def record(direction,obj):
+              log.write(json.dumps({"direction":direction,"monotonic_ns":time.monotonic_ns(),"message":obj})+"\n")
+          def wait_file(path,expected,seconds=20):
+              end=time.monotonic()+seconds
+              while time.monotonic()<end:
+                  if path.exists():
+                      b=path.read_bytes()
+                      if b==expected: return
+                      if not expected.startswith(b): raise RuntimeError(repr(b))
+                  time.sleep(.1)
+              raise TimeoutError(f"expected {expected!r}")
+          class QMP:
+              def __init__(self):
+                  self.s=socket.socket(socket.AF_UNIX)
+                  self.s.settimeout(5)
+                  end=time.monotonic()+15
+                  while True:
+                      try: self.s.connect("qmp.sock"); break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if time.monotonic()>end: raise
+                          time.sleep(.1)
+                  self.f=self.s.makefile("rb")
+                  self.i=0
+                  assert "QMP" in self.recv()
+                  self.call("qmp_capabilities")
+              def recv(self):
+                  b=self.f.readline(262145)
+                  if not b or len(b)>262144 or not b.endswith(b"\n"): raise ValueError("invalid frame")
+                  m=json.loads(b); record("recv",m); return m
+              def call(self,cmd,args=None,expect_error=False):
+                  self.i+=1
+                  m={"execute":cmd,"id":self.i}
+                  if args is not None: m["arguments"]=args
+                  record("send",m)
+                  self.s.sendall(json.dumps(m).encode()+b"\r\n")
+                  for _ in range(128):
+                      r=self.recv()
+                      if "event" in r: continue
+                      assert r.get("id")==self.i,r
+                      if expect_error:
+                          assert "error" in r,r
+                          return r["error"]
+                      if "error" in r: raise RuntimeError(r)
+                      assert "return" in r,r
+                      return r["return"]
+                  raise RuntimeError("event budget exceeded")
+              def job(self,cmd,job_id,tag,expect_error=False):
+                  args={"job-id":job_id,"tag":tag,"devices":["fixture-disk"]}
+                  if cmd!="snapshot-delete": args["vmstate"]="fixture-disk"
+                  self.call(cmd,args)
+                  end=time.monotonic()+45
+                  while time.monotonic()<end:
+                      jobs=self.call("query-jobs")
+                      matching=[j for j in jobs if j["id"]==job_id]
+                      if len(matching)==1 and matching[0]["status"]=="concluded":
+                          j=matching[0]; assert j["type"]==cmd,j
+                          (receipts/(job_id+".json")).write_text(json.dumps(j,indent=2))
+                          assert ("error" in j)==expect_error,j
+                          self.call("job-dismiss",{"id":job_id})
+                          return
+                      time.sleep(.1)
+                  raise TimeoutError(job_id)
+          debug=receipts/"guest-debug.bin"
+          args=["qemu-system-i386","-accel","tcg","-machine","pc","-m","64","-smp","1","-nic","none","-display","none","-serial","none","-monitor","none","-qmp","unix:qmp.sock,server=on,wait=off","-debugcon","file:"+str(debug),"-global","isa-debugcon.iobase=0xe9","-blockdev","driver=file,node-name=fixture-file,filename=disk.qcow2","-blockdev","driver=qcow2,node-name=fixture-disk,file=fixture-file","-device","ide-hd,drive=fixture-disk","-boot","order=c"]
+          with (receipts/"qemu-stderr.txt").open("wb") as err:
+              p=subprocess.Popen(args,stdout=err,stderr=err)
+              try:
+                  q=QMP()
+                  wait_file(debug,b"R")
+                  blocks=q.call("query-block")
+                  writable=[b["inserted"]["node-name"] for b in blocks if b.get("inserted") and not b["inserted"]["ro"]]
+                  assert writable==["fixture-disk"],blocks
+                  q.call("stop")
+                  assert not q.call("query-status")["running"]
+                  q.job("snapshot-save","save0","base")
+                  q.call("cont")
+                  def key(k): q.call("send-key",{"keys":[{"type":"qcode","data":k}],"hold-time":50})
+                  branches=[]
+                  expected=b"R"
+                  for idx,k,delta in [(0,"a",b"01"),(1,"a",b"01"),(2,"b",b"02")]:
+                      if idx:
+                          q.call("stop")
+                          assert not q.call("query-status")["running"]
+                          q.job("snapshot-load",f"load{idx}","base")
+                          q.call("cont")
+                      key(k); expected+=delta; wait_file(debug,expected)
+                      branches.append({"branch":idx,"key":k,"output":delta.decode()})
+                  assert branches[0]["output"]==branches[1]["output"]!=branches[2]["output"]
+                  key("a"); expected+=b"23"; wait_file(debug,expected)
+                  (receipts/"branches.json").write_text(json.dumps(branches,indent=2))
+                  q.call("stop")
+                  assert not q.call("query-status")["running"]
+                  q.job("snapshot-delete","delete0","base")
+                  q.call("quit")
+                  p.wait(timeout=10)
+                  assert p.returncode==0,p.returncode
+              finally:
+                  if p.poll() is None: p.terminate(); p.wait(timeout=10)
+          subprocess.run(["qemu-img","convert","-f","qcow2","-O","raw","disk.qcow2","after.raw"],check=True)
+          with open("after.raw","rb") as f:
+              f.seek(512); final=f.read(1); (receipts/"final-disk-byte.hex").write_text(final.hex()+"\n"); assert final==b"\x03"
+          (receipts/"classification.txt").write_text("QMP_CONCLUDED_SAVE_LOAD_DELETE_PASS; SAME_CHECKPOINT_AA_EQUAL_AB_DIFFERENT; POST_B_A_STATE_CARRY_PASS; OFFLINE_DISK_BYTE_PASS; SYNTHETIC_ONLY\n")
+          PY
+          cp lifecycle.py receipts/
+          timeout 240s python lifecycle.py
+      - name: Retain bounded lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r19-counterfactual-replay
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
