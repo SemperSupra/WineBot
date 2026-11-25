@@ -1,0 +1,153 @@
+name: FDR SVC3 transactional receiver recovery
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-receiver-svc3.yml]
+permissions: {}
+jobs:
+  receiver:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Exercise disposable HTTP receiver with actual lost replies
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          cd "$tmp"
+          cat > fixture.py <<'PY'
+          import concurrent.futures, contextlib, hashlib, http.client, json, os
+          import select, sqlite3, subprocess, sys, tempfile
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          from pathlib import Path
+
+          def db(path):
+              c = sqlite3.connect(path, timeout=5, isolation_level=None)
+              c.execute("PRAGMA synchronous=FULL")
+              return c
+
+          def initialize(path):
+              with contextlib.closing(db(path)) as c:
+                  c.executescript("CREATE TABLE meta(epoch INTEGER NOT NULL); INSERT INTO meta VALUES(1); CREATE TABLE effects(op TEXT PRIMARY KEY, payload TEXT NOT NULL, epoch INTEGER NOT NULL);")
+
+          def serve(path, cut):
+              class Handler(BaseHTTPRequestHandler):
+                  def log_message(self, *args): pass
+                  def do_POST(self):
+                      if self.path != "/effect":
+                          self.send_error(404); return
+                      n = int(self.headers.get("Content-Length", "0"))
+                      if not 1 <= n <= 4096:
+                          self.send_error(400); return
+                      r = json.loads(self.rfile.read(n))
+                      op, payload, epoch = r["op"], r["payload"], r["epoch"]
+                      digest = hashlib.sha256(payload.encode()).hexdigest()
+                      with contextlib.closing(db(path)) as c:
+                          c.execute("BEGIN IMMEDIATE")
+                          cur = c.execute("SELECT epoch FROM meta").fetchone()[0]
+                          if epoch != cur:
+                              code, result = 409, "STALE_EPOCH"
+                          else:
+                              old = c.execute("SELECT payload,epoch FROM effects WHERE op=?", (op,)).fetchone()
+                              if old:
+                                  code, result = (200, "DEDUP") if old == (digest, epoch) else (409, "CONFLICT")
+                              else:
+                                  c.execute("INSERT INTO effects VALUES(?,?,?)", (op, digest, epoch))
+                                  if cut == "before":
+                                      os._exit(77)
+                                  code, result = 201, "APPLIED"
+                          c.execute("COMMIT")
+                          if cut == "after" and result == "APPLIED":
+                              os._exit(78)
+                      body = result.encode()
+                      self.send_response(code)
+                      self.send_header("Content-Length", str(len(body)))
+                      self.end_headers()
+                      self.wfile.write(body)
+              s = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+              print(s.server_port, flush=True)
+              s.serve_forever()
+
+          @contextlib.contextmanager
+          def receiver(path, cut="none"):
+              p = subprocess.Popen([sys.executable, __file__, "serve", str(path), cut], stdout=subprocess.PIPE, text=True)
+              try:
+                  assert select.select([p.stdout], [], [], 5)[0], "receiver start timeout"
+                  port = int(p.stdout.readline())
+                  yield p, port
+              finally:
+                  if p.poll() is None:
+                      p.terminate()
+                      try: p.wait(timeout=3)
+                      except subprocess.TimeoutExpired: p.kill(); p.wait(timeout=3)
+                  p.stdout.close()
+
+          def send(port, op="op1", payload="alpha", epoch=1):
+              c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+              try:
+                  c.request("POST", "/effect", json.dumps(dict(op=op,payload=payload,epoch=epoch)), {"Content-Type":"application/json"})
+                  r = c.getresponse()
+                  return r.status, r.read().decode()
+              finally: c.close()
+
+          def observe(path):
+              # Separate connection, no receiver API or inferred result.
+              with contextlib.closing(db(path)) as c:
+                  assert c.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+                  return c.execute("SELECT op,payload,epoch FROM effects ORDER BY op").fetchall()
+
+          def check(path, expected):
+              got = observe(path)
+              want = sorted((op,hashlib.sha256(payload.encode()).hexdigest(),epoch) for op,payload,epoch in expected)
+              assert got == want, (got,want)
+              return len(got)
+
+          def run():
+              print("runtime",sys.version.split()[0],sqlite3.sqlite_version,flush=True)
+              with tempfile.TemporaryDirectory() as root:
+                  for rep in range(3):
+                      for cut, exitcode, before, retry in [("before",77,0,(201,"APPLIED")),("after",78,1,(200,"DEDUP"))]:
+                          path = Path(root)/f"{rep}-{cut}.db"
+                          initialize(path)
+                          with receiver(path,cut) as (p,port):
+                              try: send(port)
+                              except http.client.RemoteDisconnected: pass
+                              else: raise AssertionError("expected lost reply")
+                              assert p.wait(timeout=5) == exitcode
+                          count0 = check(path,[("op1","alpha",1)] if before else [])
+                          with receiver(path) as (_,port):
+                              assert send(port) == retry
+                              assert send(port) == (200,"DEDUP")
+                              assert send(port,payload="beta") == (409,"CONFLICT")
+                          count1 = check(path,[("op1","alpha",1)])
+                          print(json.dumps(dict(rep=rep,case=cut,exit=exitcode,before=count0,after=count1,retry=retry[1],conflict="REFUSED")),flush=True)
+                      path = Path(root)/f"{rep}-concurrent.db"
+                      initialize(path)
+                      with receiver(path) as (_,port):
+                          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                              out = list(pool.map(lambda _: send(port),range(4)))
+                          assert sorted(out)==[(200,"DEDUP")]*3+[(201,"APPLIED")]
+                          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                              race = list(pool.map(lambda payload: send(port,"op2",payload),["x","y"]))
+                          assert sorted(race)==[(201,"APPLIED"),(409,"CONFLICT")]
+                          winner = ["x","y"][race.index((201,"APPLIED"))]
+                      assert check(path,[("op1","alpha",1),("op2",winner,1)])==2
+                      with contextlib.closing(db(path)) as c:
+                          c.execute("UPDATE meta SET epoch=2")
+                      with receiver(path) as (_,port):
+                          assert send(port,"op3","z",1)==(409,"STALE_EPOCH")
+                          assert send(port,"op1","alpha",1)==(409,"STALE_EPOCH")
+                          assert send(port,"op1","alpha",2)==(409,"CONFLICT")
+                          assert send(port,"op3","z",2)==(201,"APPLIED")
+                          assert send(port,"op3","z",2)==(200,"DEDUP")
+                      count = check(path,[("op1","alpha",1),("op2",winner,1),("op3","z",2)])
+                      print(json.dumps(dict(rep=rep,case="concurrent_epoch",applied=1,dedup=3,race_winner=winner,race_conflicts=1,stale_refused=2,epoch_conflict=1,after=count)),flush=True)
+              print("SVC3_SCOPED_PASS",flush=True)
+
+          if __name__ == "__main__":
+              if len(sys.argv)>1: serve(sys.argv[2],sys.argv[3])
+              else: run()
+          PY
+          sha256sum fixture.py
+          python3 -u fixture.py
