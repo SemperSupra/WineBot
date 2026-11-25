@@ -45,6 +45,10 @@ func reserveWriterGate(root string,uid uint32,expected int64,observe func()(bool
  if err!=nil || p{return nil,errors.New("scope not empty")}
  var token [16]byte
  if _,err=rand.Read(token[:]);err!=nil{return nil,err}
+ sd,sl,err:=acquireStop(root,uid)
+ if err!=nil{return nil,err}
+ defer sd.Close();defer sl.Close()
+ if err=requireNoDurableStop(root,uid);err!=nil{return nil,err}
  s.Generation++;s.Scope=hex.EncodeToString(token[:]);s.Phase="RESERVED"
  if err=lifecycleWrite(root,d,s,nil);err!=nil{return nil,err}
  return &writerGate{root:root,uid:uid,generation:s.Generation,scope:s.Scope,observe:observe},nil
@@ -66,10 +70,16 @@ func(g *writerGate) launch(dispatch func()error)error{
  s,err:=lifecycleRead(g.root,g.uid)
  if err!=nil{return err}
  if !g.bound(s) || s.Phase!="RESERVED"{return errors.New("launch refused")}
- s.Phase="RUNNING"
- if err=lifecycleWrite(g.root,d,s,nil);err!=nil{
-  g.uncertain=true;return err
- }
+ // Serialize the durable intent against STOP; release before dispatch.
+ sd,sl,err:=acquireStop(g.root,g.uid)
+ if err!=nil{return err}
+ err=func()error{
+  defer sd.Close();defer sl.Close()
+  if err:=requireNoDurableStop(g.root,g.uid);err!=nil{return err}
+  s.Phase="RUNNING"
+  return lifecycleWrite(g.root,d,s,nil)
+ }()
+ if err!=nil{g.uncertain=true;return err}
  g.uncertain=true
  if err=dispatch();err!=nil{return err}
  g.uncertain=false
@@ -97,6 +107,12 @@ func(g *writerGate) stopAndReconcile()error{
  if g.uncertain{return errors.New("dispatch completion unknown")}
  p,err:=g.observe()
  if err!=nil || p{return errors.New("scope not proven empty")}
+ // Observe before taking the independent STOP lock, then serialize the
+ // final release against any STOP latched during observation.
+ sd,sl,err:=acquireStop(g.root,g.uid)
+ if err!=nil{return err}
+ defer sd.Close();defer sl.Close()
+ if err=requireNoDurableStop(g.root,g.uid);err!=nil{return err}
  s.Phase="IDLE";s.Scope=""
  if err=lifecycleWrite(g.root,d,s,nil);err!=nil{
   g.retired=true;return err
