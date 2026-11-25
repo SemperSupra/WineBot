@@ -1,0 +1,83 @@
+name: FDR external effect reconciliation
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-external-effect.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Bind execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=fdr/external-effect -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Run exact native external effect witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          cat > fdr-external.py <<'PY'
+          import json, os, pathlib, sqlite3, subprocess, sys, tempfile
+          
+          OP = 'FDR-A:alpha'
+          def git(repo,*args):
+              env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_AUTHOR_NAME='FDR', GIT_AUTHOR_EMAIL='fdr@example.invalid', GIT_COMMITTER_NAME='FDR', GIT_COMMITTER_EMAIL='fdr@example.invalid')
+              return subprocess.check_output(['git','-C',str(repo),*args],env=env,text=True,stderr=subprocess.DEVNULL,timeout=5).strip()
+          def db(p):
+              c=sqlite3.connect(p); c.execute('PRAGMA synchronous=FULL'); return c
+          def phase(p):
+              with db(p) as c: return c.execute('SELECT state FROM journal WHERE id=?',(OP,)).fetchone()[0]
+          def mark(p,state):
+              with db(p) as c: c.execute('UPDATE journal SET state=? WHERE id=?',(state,OP))
+          def witness(repo):
+              return git(repo,'log','--format=%s','HEAD').splitlines().count(OP)
+          def worker(p,repo,cut):
+              mark(p,'INTENT')
+              if cut=='before': os._exit(77)
+              git(repo,'commit','--allow-empty','-m',OP)
+              if cut=='after': os._exit(77)
+              mark(p,'DONE')
+          def recover(p,repo,proof):
+              if phase(p)!='INTENT': return 'DONE'
+              # Only fixture-owned, quiesced, exact repository HEAD is an admitted witness.
+              if proof!='current': return 'QUARANTINE'
+              n=witness(repo)
+              if n==1: mark(p,'DONE'); return 'RECONCILED'
+              if n!=0: return 'QUARANTINE'
+              worker(p,repo,'none'); return 'RETRIED'
+          def main():
+              print('runtime',sys.version.split()[0],sqlite3.sqlite_version,git('.','--version'))
+              cases=[('before','current','RETRIED',1),('after','current','RECONCILED',1),('before','missing','QUARANTINE',0),('after','missing','QUARANTINE',1),('after','stale','QUARANTINE',1),('after','naive','RETRIED',2)]
+              for rep in range(3):
+                  for cut,proof,expected,count in cases:
+                      with tempfile.TemporaryDirectory() as td:
+                          root=pathlib.Path(td); repo=root/'effect'; repo.mkdir(); p=root/'journal.db'
+                          git(repo,'init','-q'); git(repo,'commit','--allow-empty','-m','baseline')
+                          with db(p) as c: c.execute('CREATE TABLE journal(id TEXT PRIMARY KEY,state TEXT)'); c.execute('INSERT INTO journal VALUES (?,?)',(OP,'NEW'))
+                          child=subprocess.run([sys.executable,__file__,'worker',str(p),str(repo),cut],timeout=10)
+                          assert child.returncode==77 and phase(p)=='INTENT'
+                          before=witness(repo); assert before==int(cut=='after')
+                          if proof=='naive': worker(p,repo,'none'); result='RETRIED'
+                          else: result=recover(p,repo,proof)
+                          after=witness(repo); state=phase(p)
+                          assert (result,after,state)==(expected,count,'INTENT' if expected=='QUARANTINE' else 'DONE')
+                          print(json.dumps(dict(rep=rep,cut=cut,proof=proof,before=before,after=after,result=result,state=state)),flush=True)
+          if __name__=='__main__':
+              if len(sys.argv)>1: worker(*sys.argv[2:])
+              else: main()
+          PY
+          echo '404696e0f88ce442921932ed3d7901cea021ee80a91a4c125ca6a1684eb5d144  fdr-external.py' | sha256sum -c -
+          timeout 90s python3 fdr-external.py
+      - name: Record terminal state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$JOB_STATUS" = success ]; then state=success; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=fdr/external-effect -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
