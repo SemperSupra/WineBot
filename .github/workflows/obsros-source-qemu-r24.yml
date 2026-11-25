@@ -1,0 +1,149 @@
+name: OBS-ROS R24 source-built QEMU ReactOS OFF ON smoke
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/obsros-source-qemu-r24.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Public-only scope and prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils seabios libglib2.0-0t64 libpixman-1-0 libfdt1 libzstd1
+      - name: Retrieve qualified public installed disk
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45550202697
+          github-token: ${{ github.token }}
+          name: obsros-r23-stock-installed-baseline
+          path: base
+      - name: Retrieve exact source-built QEMU
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271561618
+          github-token: ${{ github.token }}
+          name: obsros-qemu-source-sensor-pio
+          path: source-qemu
+      - name: Hash pinned baseline and binary; paired source-QEMU boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 base/guest.qcow2 11564d4433b411c0a31e3398953c6d174129d18c53e22c040ba39e1befe4d1ed source-qemu/build/qemu-system-i386 | sha256sum -c -
+          chmod a-w base/guest.qcow2
+          chmod u+x source-qemu/build/qemu-system-i386
+          sha256sum base/guest.qcow2 source-qemu/build/qemu-system-i386 > receipts/input.sha256
+          ldd source-qemu/build/qemu-system-i386 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          source-qemu/build/qemu-system-i386 --version > receipts/qemu-version.txt
+          source-qemu/build/qemu-system-i386 -trace help > receipts/trace-events.txt 2>&1
+          grep -qw cpu_in receipts/trace-events.txt
+          grep -qw cpu_out receipts/trace-events.txt
+          test -r /usr/share/seabios/bios-256k.bin
+          test -r /usr/share/seabios/vgabios-stdvga.bin
+          sha256sum /usr/share/seabios/bios-256k.bin /usr/share/seabios/vgabios-stdvga.bin > receipts/firmware.sha256
+          qemu-img check base/guest.qcow2 > receipts/base-check.txt
+          cat > run.py <<'PY'
+          import hashlib,json,pathlib,resource,socket,subprocess,time,re
+          P=pathlib.Path
+          R=P("receipts")
+          base=P("base/guest.qcow2").resolve()
+          qemu=P("source-qemu/build/qemu-system-i386").resolve()
+          def digest(p):
+              with p.open("rb") as f: return hashlib.file_digest(f,"sha256").hexdigest()
+          expected=digest(base)
+          events=("cpu_in","cpu_out")
+          def phase(mode):
+              disk=P(mode+".qcow2").resolve()
+              subprocess.run(["qemu-img","create","-f","qcow2","-F","qcow2","-b",str(base),str(disk)],check=True)
+              sock=P(mode+".sock").resolve()
+              trace=R/(mode+".trace")
+              err=R/(mode+".stderr")
+              serial=R/(mode+".serial")
+              args=[str(qemu),"-accel","tcg","-machine","pc","-cpu","pentium3","-smp","1","-m","768","-nic","none","-display","none","-vga","std","-L","/usr/share/seabios","-bios","/usr/share/seabios/bios-256k.bin","-serial","file:"+str(serial),"-monitor","none","-qmp",f"unix:{sock},server=on,wait=off","-drive",f"file={disk},format=qcow2,if=ide","-boot","order=c","-no-reboot","-trace","file="+str(trace)]
+              (R/(mode+"-argv.json")).write_text(json.dumps(args))
+              before=resource.getrusage(resource.RUSAGE_CHILDREN)
+              t0=time.monotonic()
+              with err.open("wb") as e,(R/(mode+".qmp.ndjson")).open("w",buffering=1) as log:
+                  p=subprocess.Popen(args,stdout=e,stderr=e)
+                  s=socket.socket(socket.AF_UNIX); s.settimeout(5)
+                  try:
+                      end=time.monotonic()+20
+                      while not sock.exists() and p.poll() is None and time.monotonic()<end: time.sleep(.1)
+                      assert p.poll() is None,"early QEMU exit"
+                      s.connect(str(sock)); f=s.makefile("rb"); i=0
+                      def recv():
+                          b=f.readline(262145)
+                          assert b and len(b)<=262144 and b.endswith(b"\n"),"invalid QMP frame"
+                          m=json.loads(b); log.write(json.dumps({"recv":m})+"\n"); return m
+                      assert "QMP" in recv()
+                      def call(cmd,args=None):
+                          nonlocal i
+                          i+=1; m={"execute":cmd,"id":i}
+                          if args is not None: m["arguments"]=args
+                          log.write(json.dumps({"send":m})+"\n"); s.sendall(json.dumps(m).encode()+b"\r\n")
+                          for _ in range(128):
+                              r=recv()
+                              if "event" in r: continue
+                              assert r.get("id")==i and "return" in r,r
+                              return r["return"]
+                          raise RuntimeError("event budget")
+                      call("qmp_capabilities")
+                      def state(enable):
+                          for event in events:
+                              call("trace-event-set-state",{"name":event,"enable":enable})
+                              result=call("trace-event-get-state",{"name":event})
+                              assert len(result)==1 and result[0]["state"]==("enabled" if enable else "disabled"),result
+                      state(False)
+                      start=time.monotonic(); marks=[0,25,50,75]; enabled=False; pulse_done=False
+                      while time.monotonic()-start<80:
+                          assert p.poll() is None,"guest exited before observation window"
+                          elapsed=time.monotonic()-start
+                          if marks and elapsed>=marks[0]:
+                              mark=marks.pop(0); call("screendump",{"filename":str(R/(mode+f"-{mark:02d}.ppm"))})
+                          if mode=="on" and not enabled and not pulse_done and elapsed>=55:
+                              state(True); enabled=True
+                          if enabled and (elapsed>=60 or any(x.exists() and x.stat().st_size>8*1024*1024 for x in (trace,err))):
+                              state(False); enabled=False; pulse_done=True
+                          if any(x.exists() and x.stat().st_size>32*1024*1024 for x in (trace,err,serial)):
+                              raise RuntimeError("trace/serial artifact budget exceeded")
+                          time.sleep(.1)
+                      assert mode=="off" or pulse_done
+                      state(False)
+                      call("screendump",{"filename":str(R/(mode+"-final.ppm"))})
+                      call("quit"); p.wait(timeout=15); assert p.returncode==0
+                  finally:
+                      s.close()
+                      if p.poll() is None:
+                          p.terminate()
+                          try: p.wait(timeout=10)
+                          except subprocess.TimeoutExpired: p.kill(); p.wait()
+              after=resource.getrusage(resource.RUSAGE_CHILDREN)
+              metrics={"mode":mode,"wall_seconds":time.monotonic()-t0,"child_user_seconds":after.ru_utime-before.ru_utime,"child_system_seconds":after.ru_stime-before.ru_stime,"trace_bytes":trace.stat().st_size if trace.exists() else 0,"stderr_bytes":err.stat().st_size,"pio_log_count":len(re.findall(rb"(?m)^.*\bcpu_(?:in|out)\b.*$",err.read_bytes()))}
+              (R/(mode+"-metrics.json")).write_text(json.dumps(metrics,indent=2))
+              with (R/(mode+"-disk-check.txt")).open("w") as f: subprocess.run(["qemu-img","check",str(disk)],check=True,stdout=f)
+              assert digest(base)==expected,"base mutated"
+              return metrics
+          off=phase("off"); on=phase("on")
+          assert off["pio_log_count"]==0 and on["pio_log_count"]>0,(off,on)
+          (R/"classification.txt").write_text("SOURCE_QEMU_PAIRED_BOOT_ATTEMPTS; QMP_TRACE_STATE_AND_PIO_LOG_DIFFERENTIAL_PASS; OVERLAY_CHECK_AND_BASE_HASH_PASS; DESKTOP_PARITY_REQUIRES_INDEPENDENT_VISUAL_CLASSIFICATION; SINGLE_PAIR_NOT_STATISTICAL_OVERHEAD\n")
+          PY
+          cp run.py receipts/
+          timeout 260s python run.py
+      - name: Retain bounded paired evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsros-r24-source-qemu-paired-evidence
+          path: receipts/
+          retention-days: 3
+          if-no-files-found: warn
