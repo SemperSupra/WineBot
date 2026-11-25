@@ -1,0 +1,272 @@
+name: VirtIO build-first candidate and targeted regression
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-descriptor-v17b.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  upstream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-descriptor-v17b -f description='Public QEMU upstream regression' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Obtain exact public upstream source and build
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends build-essential ninja-build pkg-config python3-venv python3-pip python3-setuptools libglib2.0-dev libpixman-1-dev libfdt-dev libslirp-dev zlib1g-dev libcap-ng-dev libattr1-dev liburing-dev libaio-dev libzstd-dev libgnutls28-dev libgcrypt20-dev libtasn1-6-dev libnuma-dev flex bison git meson
+          git init qemu
+          git -C qemu remote add origin https://github.com/qemu/qemu.git
+          git -C qemu fetch --depth=1 origin 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu checkout --detach FETCH_HEAD
+          test "$(git -C qemu rev-parse HEAD)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu rev-parse HEAD > receipts/upstream-sha.txt
+          mkdir build
+          cd build
+          ../qemu/configure --target-list=x86_64-softmmu --enable-tcg --disable-kvm --disable-docs --disable-werror --enable-trace-backends=log --disable-gtk --disable-sdl > ../receipts/configure.log 2>&1 || { tail -80 ../receipts/configure.log; exit 1; }
+          make -j"$(nproc)" > ../receipts/build.log 2>&1 || { tail -100 ../receipts/build.log; exit 1; }
+          ./qemu-system-x86_64 --version > ../receipts/qemu-version.txt
+          sha256sum qemu-system-x86_64 qemu-img > ../receipts/binaries.sha256
+          cp config-host.mak ../receipts/
+          git -C ../qemu status --porcelain > ../receipts/source-status.txt
+          git -C ../qemu submodule status > ../receipts/submodules.txt
+          ./run meson test --list > ../receipts/test-list.txt
+          make check-help > ../receipts/check-help.txt
+      - name: Preserve stock executable
+        run: |
+          set -euo pipefail
+          cp build/qemu-system-x86_64 stock-qemu
+          sha256sum stock-qemu > receipts/stock-binary.sha256
+      - name: Apply minimal candidate to exact source and rebuild
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("qemu/hw/virtio/virtio.c")
+          s=p.read_text()
+          old="""void virtqueue_flush(VirtQueue *vq, unsigned int count)
+          {
+              if (virtio_device_disabled(vq->vdev)) {
+                  vq->inuse -= count;
+                  return;
+              }
+
+              if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_IN_ORDER)) {
+                  virtqueue_ordered_flush(vq);
+              } else if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED)) {
+                  virtqueue_packed_flush(vq, count);
+              } else {
+                  virtqueue_split_flush(vq, count);
+              }
+          }"""
+          new="""void virtqueue_flush(VirtQueue *vq, unsigned int count)
+          {
+              bool observe;
+              uint16_t old_used = 0;
+              bool old_wrap = false;
+              unsigned int old_inuse = 0;
+
+              if (virtio_device_disabled(vq->vdev)) {
+                  vq->inuse -= count;
+                  return;
+              }
+
+              observe = trace_event_get_state_backends(TRACE_VIRTQUEUE_HOST_ADVANCE);
+              if (observe) {
+                  old_used = vq->used_idx;
+                  old_wrap = vq->used_wrap_counter;
+                  old_inuse = vq->inuse;
+              }
+
+              if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_IN_ORDER)) {
+                  virtqueue_ordered_flush(vq);
+              } else if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED)) {
+                  virtqueue_packed_flush(vq, count);
+              } else {
+                  virtqueue_split_flush(vq, count);
+              }
+
+              /* Host bookkeeping is not a witness of guest-visible completion. */
+              if (observe && (old_used != vq->used_idx ||
+                              old_wrap != vq->used_wrap_counter ||
+                              old_inuse != vq->inuse)) {
+                  trace_virtqueue_host_advance(vq->queue_index,
+                      virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED),
+                      virtio_vdev_has_feature(vq->vdev, VIRTIO_F_IN_ORDER),
+                      old_used, vq->used_idx, old_wrap, vq->used_wrap_counter,
+                      old_inuse, vq->inuse);
+              }
+          }"""
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new))
+          p=Path("qemu/hw/virtio/trace-events")
+          s=p.read_text()
+          anchor='virtqueue_flush(void *vq, unsigned int count) "vq %p count %u"\n'
+          assert s.count(anchor)==1
+          event='virtqueue_host_advance(uint16_t queue, bool packed, bool ordered, uint16_t old_used, uint16_t new_used, bool old_wrap, bool new_wrap, unsigned int old_inuse, unsigned int new_inuse) "queue %u packed %d ordered %d used %u->%u wrap %d->%d inuse %u->%u"\n'
+          p.write_text(s.replace(anchor,anchor+event))
+          p=Path("qemu/hw/virtio/virtio.c")
+          s=p.read_text()
+          old="    trace_virtqueue_pop(vq, elem, elem->in_num, elem->out_num);"
+          assert s.count(old)==2
+          s=s.replace(old,old+"""
+              trace_virtqueue_buffer_pop(vq->vdev, vq->queue_index,
+                  elem, elem->index, elem->ndescs,
+                  virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED));""")
+          old="    trace_virtqueue_fill(vq, elem, len, idx);"
+          assert s.count(old)==1
+          s=s.replace(old,old+"""
+              trace_virtqueue_buffer_fill_attempt(vq->vdev, vq->queue_index,
+                  elem, elem->index, elem->ndescs,
+                  virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED));""")
+          p.write_text(s)
+          p=Path("qemu/hw/virtio/trace-events")
+          with p.open("a") as f:
+              for name in ("pop","fill_attempt"):
+                  f.write('\nvirtqueue_buffer_'+name+'(void *dev, uint16_t queue, const void *elem, unsigned int id, unsigned int ndescs, bool packed) "dev %p queue %u elem %p id %u ndescs %u packed %d"\n')
+          PY
+          git -C qemu diff --check
+          git -C qemu diff -- hw/virtio/virtio.c hw/virtio/trace-events > receipts/candidate.patch
+          git -C qemu diff --stat > receipts/candidate-stat.txt
+          cd build
+          make -j"$(nproc)" > ../receipts/candidate-build.log 2>&1 || { tail -100 ../receipts/candidate-build.log; exit 1; }
+          ./qemu-system-x86_64 -trace help > ../receipts/candidate-trace-help.txt 2>&1
+          grep -E '^virtqueue_host_advance([[:space:]]|$)' ../receipts/candidate-trace-help.txt
+          sha256sum qemu-system-x86_64 > ../receipts/candidate-binary.sha256
+      - name: Retain reusable source build executables before regression
+        run: |
+          set -euo pipefail
+          mkdir -p binaries
+          cp stock-qemu binaries/stock-qemu-system-x86_64
+          cp build/qemu-system-x86_64 binaries/candidate-qemu-system-x86_64
+          strip --strip-debug binaries/*qemu-system-x86_64
+          sha256sum binaries/*qemu-system-x86_64 > binaries/SHA256SUMS
+          ldd binaries/stock-qemu-system-x86_64 > receipts/stock-ldd.txt
+          ldd binaries/candidate-qemu-system-x86_64 > receipts/candidate-ldd.txt
+          cp receipts/upstream-sha.txt receipts/candidate.patch binaries/
+          mkdir -p binaries/pc-bios
+          cp -L qemu/pc-bios/bios-256k.bin qemu/pc-bios/kvmvapic.bin qemu/pc-bios/linuxboot_dma.bin binaries/pc-bios/
+          sha256sum binaries/pc-bios/* >> binaries/SHA256SUMS
+          test "$(du -sb binaries | cut -f1)" -lt 300000000
+      - name: Retain candidate binaries for real-workload comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-source-binaries-v17b
+          path: binaries/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Execute exact native block tests against retained binaries
+        run: |
+          set -euo pipefail
+          cat > receipts/qualify.py <<'PY'
+          import os,re,json,pathlib,signal,subprocess,sys,shlex
+          P=pathlib.Path; root=P.cwd(); r=root/"receipts"; b=root/"build"
+          q=b/"tests/qtest/qos-test"
+          names=("stock","candidate-off","candidate-on")
+          env0={k:os.environ[k] for k in ("PATH","HOME","LANG","LC_ALL","TMPDIR") if k in os.environ}
+          env0.update(QTEST_QEMU_IMG=str(b/"qemu-img"),G_TEST_DBUS_DAEMON=str(root/"qemu/tests/dbus-daemon.sh"),PYTHON=str(b/"pyvenv/bin/python3"),MALLOC_PERTURB_="173")
+          for key,path in (("QTEST_QEMU_STORAGE_DAEMON_BINARY","storage-daemon/qemu-storage-daemon"),("QTEST_QEMU_VNC_BINARY","tools/qemu-vnc/qemu-vnc")):
+              if (b/path).is_file(): env0[key]=str(b/path)
+          def execute(args,env,log,timeout):
+              with log.open("wb") as f:
+                  p=subprocess.Popen(args,env=env,cwd=b,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
+                  try: rc=p.wait(timeout=timeout)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(p.pid,signal.SIGKILL);p.wait();rc=124
+              return rc,log.read_text(errors="replace")
+          def environment(mode,trace=None):
+              env=env0.copy()
+              name="stock" if mode=="stock" else "candidate"
+              env["QTEST_QEMU_BINARY"]=str(root/"binaries"/(name+"-qemu-system-x86_64"))
+              args=["-L",str(root/"qemu/pc-bios")]
+              if trace is not None:
+                  args+=["-trace","events="+str(r/"sensor.events"),"-D",str(trace)]
+              env["QTEST_QEMU_ARGS"]=shlex.join(args)
+              return env
+          (r/"sensor.events").write_text("virtqueue_host_advance\nvirtqueue_buffer_pop\nvirtqueue_buffer_fill_attempt\n")
+          inventory=[]
+          for mode in ("stock","candidate-off"):
+              rc,txt=execute([str(q),"-l"],environment(mode),r/(mode+"-inventory.log"),60)
+              assert rc==0,(mode,rc,txt[-2000:])
+              paths=sorted(set(m.group(1) for l in txt.splitlines() if (m:=re.fullmatch(r"(?:#\s+)?(/\S+)",l.strip())) and "/virtio-blk-tests/" in m.group(1) and m.group(1).rsplit("/",1)[-1] in {"basic","config","indirect","resize"}))
+              assert len(paths)==4,(mode,paths)
+              inventory.append(paths)
+          assert inventory[0]==inventory[1],inventory
+          selected=inventory[0]
+          (r/"qos-selected.json").write_text(json.dumps(selected,indent=2))
+          results={}
+          for mode in names:
+              rows=[]
+              for i,path in enumerate(selected):
+                  trace=r/f"{mode}-{i}.trace"
+                  env=environment(mode,trace if mode=="candidate-on" else None)
+                  rc,txt=execute([str(q),"--tap","-p",path],env,r/f"{mode}-{i}.tap",45)
+                  tap=[l for l in txt.splitlines() if re.match(r"^(?:not )?ok \d+(?:\s|$)",l)]
+                  ok=len(tap)==1 and tap[0].startswith("ok 1")
+                  skip=any(re.search(r"#\s*SKIP",l,re.I) for l in tap)
+                  seen=sum("virtqueue_host_advance" in l for l in trace.open(errors="replace")) if trace.exists() else 0
+                  if mode=="candidate-on" and trace.exists():
+                      active={}; pops=0; fills=0
+                      for line in trace.open(errors="replace"):
+                          m=re.search(r"virtqueue_buffer_(pop|fill_attempt)\s+dev (\S+) queue (\d+) elem (\S+) id (\d+) ndescs (\d+) packed ([01])",line)
+                          if not m:continue
+                          kind,dev,queue,elem,bid,ndescs,packed=m.groups(); key=(dev,queue,bid)
+                          if kind=="pop":
+                              assert key not in active; active[key]=(elem,ndescs,packed); pops+=1
+                          else:
+                              assert active.pop(key)==(elem,ndescs,packed); fills+=1
+                      assert not active and pops==fills
+                      if seen:assert pops>0
+                  rows.append({"path":path,"exit":rc,"tap_ok":ok,"skip":skip,"trace_events":seen,"tap":tap})
+              results[mode]=rows
+              (r/f"{mode}-results.json").write_text(json.dumps(rows,indent=2))
+          allpass=all(len(rows)==4 and all(x["exit"]==0 and x["tap_ok"] and not x["skip"] for x in rows) for rows in results.values())
+          positive=sum(x["trace_events"] for x in results["candidate-on"])
+          report={"selected":selected,"all_selected_pass":allpass,"positive_host_advance_events":positive,"results":results}
+          (r/"qualification.json").write_text(json.dumps(report,indent=2))
+          assert allpass and positive>0,report
+          PY
+          python3 receipts/qualify.py
+      - name: Retain bounded public results
+        if: always()
+        run: |
+          mkdir -p receipts
+          du -ah receipts | sort -h | tail -20
+          python3 - <<'PY'
+          import pathlib
+          for p in pathlib.Path("receipts").rglob("*"):
+              if p.is_file() and p.stat().st_size>8*1024*1024:
+                  n=p.stat().st_size
+                  with p.open("rb") as f:
+                      head=f.read(1024*1024)
+                      f.seek(-6*1024*1024,2); tail=f.read()
+                  p.write_bytes(head+b"\nTRUNCATED ORIGINAL_BYTES="+str(n).encode()+b"\n"+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-descriptor-v17b
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-descriptor-v17b -f description='Public QEMU upstream wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
