@@ -1,0 +1,138 @@
+name: FDR SVC4 external effect witness fencing
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-external-fence-svc4.yml]
+permissions: {}
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Exercise actual external-effect race and quarantine controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          cd "$tmp"
+          cat > fixture.py <<'PY'
+          import contextlib, fcntl, json, os, select, sqlite3, subprocess, sys, tempfile
+          from pathlib import Path
+
+          @contextlib.contextmanager
+          def fence(root):
+              with (root/"fence").open("a+b") as lock:
+                  fcntl.flock(lock,fcntl.LOCK_EX)
+                  try: yield
+                  finally: fcntl.flock(lock,fcntl.LOCK_UN)
+
+          def effect(root):
+              with (root/"external.log").open("ab",buffering=0) as f:
+                  assert f.write(b"fixture-op\n")==11
+                  os.fsync(f.fileno())
+
+          def witness(root):
+              data=(root/"external.log").read_bytes()
+              rows=data.splitlines(keepends=True)
+              assert all(row==b"fixture-op\n" for row in rows),data
+              return len(rows)
+
+          def journal(root,state=None):
+              with sqlite3.connect(root/"intent.db") as c:
+                  if state is not None:
+                      c.execute("UPDATE intent SET state=?",(state,))
+                  return c.execute("SELECT state FROM intent").fetchone()[0]
+
+          def writer(root,mode):
+              if mode=="cooperate":
+                  with fence(root):
+                      if witness(root)==0: effect(root)
+              elif mode=="bypass":
+                  effect(root)
+              else: raise AssertionError(mode)
+              print("DONE",flush=True)
+
+          def child(root,mode):
+              p=subprocess.run([sys.executable,__file__,"writer",str(root),mode],capture_output=True,text=True,timeout=5)
+              assert p.returncode==0 and p.stdout.strip()=="DONE",(p.returncode,p.stdout,p.stderr)
+
+          def setup(root):
+              root.mkdir()
+              (root/"external.log").touch()
+              with sqlite3.connect(root/"intent.db") as c:
+                  c.execute("CREATE TABLE intent(state TEXT NOT NULL)")
+                  c.execute("INSERT INTO intent VALUES('INTENT')")
+
+          def run():
+              print("runtime",sys.version.split()[0],sqlite3.sqlite_version,flush=True)
+              with tempfile.TemporaryDirectory() as tmp:
+                  for rep in range(3):
+                      for case in ("naive_stale","guarded_stale","guarded_present","guarded_absent","missing","bypass"):
+                          root=Path(tmp)/f"{rep}-{case}"
+                          setup(root)
+                          initial=witness(root)
+                          decision="QUARANTINE"
+                          observed=None
+                          if case=="naive_stale":
+                              child(root,"cooperate")
+                              assert initial==0
+                              effect(root)
+                              decision="UNSAFE_DUPLICATE"
+                              journal(root,"DONE")
+                          elif case=="guarded_stale":
+                              child(root,"cooperate")
+                              with fence(root):
+                                  observed=witness(root)
+                                  assert observed!=initial
+                                  decision="QUARANTINE_STALE"
+                          elif case=="guarded_present":
+                              child(root,"cooperate")
+                              with fence(root):
+                                  observed=witness(root)
+                                  assert observed==1
+                                  decision="RECONCILED"
+                                  journal(root,"DONE")
+                          elif case=="guarded_absent":
+                              with fence(root):
+                                  observed=witness(root)
+                                  assert observed==0
+                                  effect(root)
+                                  decision="APPLIED"
+                                  journal(root,"DONE")
+                              # Independent cooperating process must observe the existing effect.
+                              child(root,"cooperate")
+                          elif case=="missing":
+                              # Withhold the observation; the effect may or may not exist.
+                              if rep%2: child(root,"cooperate")
+                              decision="QUARANTINE_MISSING"
+                          elif case=="bypass":
+                              with fence(root):
+                                  observed=witness(root)
+                                  assert observed==0
+                                  # Actual noncooperating writer bypasses advisory lock.
+                                  child(root,"bypass")
+                                  effect(root)
+                                  decision="UNSAFE_FENCE_BYPASS"
+                                  journal(root,"DONE")
+                          # Separate final witness, not inferred from the recovery decision.
+                          after=witness(root)
+                          state=journal(root)
+                          expected={
+                              "naive_stale":(2,"DONE","UNSAFE_DUPLICATE"),
+                              "guarded_stale":(1,"INTENT","QUARANTINE_STALE"),
+                              "guarded_present":(1,"DONE","RECONCILED"),
+                              "guarded_absent":(1,"DONE","APPLIED"),
+                              "missing":(rep%2,"INTENT","QUARANTINE_MISSING"),
+                              "bypass":(2,"DONE","UNSAFE_FENCE_BYPASS"),
+                          }[case]
+                          assert (after,state,decision)==expected,(case,after,state,decision)
+                          print(json.dumps(dict(rep=rep,case=case,initial=initial,observed=observed,after=after,state=state,decision=decision,authority="NONE")),flush=True)
+              print("SVC4_SCOPED_PASS",flush=True)
+
+          if __name__=="__main__":
+              if len(sys.argv)>1: writer(Path(sys.argv[2]),sys.argv[3])
+              else: run()
+          PY
+          sha256sum fixture.py
+          python3 -u fixture.py
