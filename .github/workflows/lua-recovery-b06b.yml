@@ -1,0 +1,234 @@
+name: Public Lua binary recovery comparison
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/lua-recovery-b06b.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir -p receipts lab
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/lua-recovery-b06b -f description='Synthetic experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build unmodified public Lua and collect runtime observations
+        run: |
+          set -euo pipefail
+          command -v gdb || { sudo apt-get update -qq; sudo apt-get install -y -qq gdb; }
+          curl -fsSL --max-time 60 https://www.lua.org/ftp/lua-5.4.9.tar.gz -o lab/lua.tar.gz
+          echo '2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6  lab/lua.tar.gz' | sha256sum -c -
+          tar -xzf lab/lua.tar.gz -C lab
+          make -C lab/lua-5.4.9 -j2 linux MYCFLAGS='-g -fno-pie' MYLDFLAGS=-no-pie > receipts/build.log 2>&1
+          cp lab/lua-5.4.9/src/lua lab/oracle
+          cp lab/oracle lab/subject
+          strip --strip-all lab/subject
+          readelf -h lab/subject > receipts/elf.txt
+          grep -q 'Type:.*EXEC' receipts/elf.txt
+          sha256sum lab/lua.tar.gz lab/oracle lab/subject > receipts/build.sha256
+          cc --version > receipts/compiler.txt
+          gdb --version > receipts/gdb-version.txt
+          objdump -d -j .text lab/subject > receipts/static.txt
+          cat > lab/train1.lua <<'LUA'
+          local rows={}
+          for k,v in ("pear=4;apple=2;plum=3"):gmatch("(%a+)=(%d+)") do rows[#rows+1]={k,tonumber(v)} end
+          table.sort(rows,function(a,b) return a[2]<b[2] end)
+          assert(rows[1][1]=="apple" and rows[3][1]=="pear")
+          print("WORKLOAD_OK",string.upper(rows[2][1]))
+          LUA
+          cat > lab/train2.lua <<'LUA'
+          local co=coroutine.create(function() coroutine.yield(11); return 22 end)
+          local a,b=coroutine.resume(co); assert(a and b==11)
+          a,b=coroutine.resume(co); assert(a and b==22)
+          local ok=pcall(function() error("expected") end); assert(not ok)
+          print("WORKLOAD_OK",math.floor(math.sqrt(81)))
+          LUA
+          cat > lab/hold1.lua <<'LUA'
+          local t=assert(io.tmpfile()); assert(t:write("sample\n")); assert(t:seek("set",0))
+          assert(t:read("*l")=="sample"); assert(t:close())
+          print("WORKLOAD_OK",utf8.len("hello"))
+          LUA
+          cat > lab/hold2.lua <<'LUA'
+          local x=string.pack("<I4",1234); assert(string.unpack("<I4",x)==1234)
+          local a=table.concat({"a","b","c"},":"); assert(a=="a:b:c")
+          print("WORKLOAD_OK",math.max(1,4,2))
+          LUA
+          sha256sum lab/*.lua > receipts/workloads.sha256
+          cat > lab/witness.py <<'PY'
+          import gdb,json,re
+          seen=set()
+          count=0
+          class Witness(gdb.Breakpoint):
+              def __init__(self,pc,reg):
+                  super().__init__("*"+hex(pc),internal=True)
+                  self.reg=reg
+              def stop(self):
+                  global count
+                  count+=1
+                  pair=(int(gdb.parse_and_eval("$pc")),int(gdb.parse_and_eval("$"+self.reg)))
+                  if pair not in seen:
+                      seen.add(pair)
+                      print("WITNESS "+json.dumps(pair))
+                  if count>20000:
+                      raise gdb.GdbError("observation budget exceeded")
+                  return False
+          for line in open("receipts/static.txt"):
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m: Witness(int(m.group(1),16),m.group(2))
+          gdb.execute("set disable-randomization off")
+          gdb.execute("run")
+          print("WITNESS_COUNT "+str(count))
+          PY
+          for n in train1 train2; do
+            timeout 60 gdb -nx -q -batch -x lab/witness.py --args lab/subject "lab/$n.lua" > "receipts/$n.log" 2>&1
+          done
+          python3 - <<'PY'
+          import json,pathlib,hashlib,re,subprocess
+          r=pathlib.Path("receipts")
+          m=re.search(r"^\s*\d+\s+\.text\s+([0-9a-f]+)\s+([0-9a-f]+)",subprocess.check_output(["objdump","-h","lab/subject"],text=True),re.M)
+          assert m
+          size,start=map(lambda x:int(x,16),m.groups())
+          def edges(name):
+              log=(r/(name+".log")).read_text()
+              assert "exited normally" in log and "WORKLOAD_OK" in log and "observation budget exceeded" not in log,log
+              return {tuple(json.loads(x.split(" ",1)[1])) for x in log.splitlines() if x.startswith("WITNESS ")}
+          all_edges=edges("train1")|edges("train2")
+          scoped=sorted((a,b) for a,b in all_edges if start<=a<start+size and start<=b<start+size)
+          assert scoped
+          assert len(scoped)<=1000
+          (r/"observed.json").write_text(json.dumps({"sha256":hashlib.sha256(pathlib.Path("lab/subject").read_bytes()).hexdigest(),"edges":scoped,"text":[start,start+size],"excluded_external":len(all_edges)-len(scoped)},indent=2))
+          PY
+      - name: Retrieve pinned public Ghidra release
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          "$JAVA_HOME/bin/java" -version 2> receipts/java-version.txt
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          url=https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.4.2_build/ghidra_11.4.2_PUBLIC_20250826.zip
+          printf '%s\n' "$url" > receipts/ghidra-url.txt
+          curl --fail --silent --show-error --location --max-time 240 "$url" -o lab/ghidra.zip
+          echo '795a02076af16257bd6f3f4736c4fc152ce9ff1f95df35cd47e2adc086e037a6  lab/ghidra.zip' | sha256sum -c -
+          sha256sum lab/ghidra.zip > receipts/ghidra.sha256
+          unzip -q lab/ghidra.zip -d lab
+      - name: Compare stock Ghidra and evidence-enriched references
+        run: |
+          set -euo pipefail
+          mkdir -p lab/scripts lab/project
+          cat > lab/scripts/ObserveCalls.py <<'PY'
+          #@category Analysis
+          import json
+          from ghidra.program.model.symbol import RefType, SourceType
+          args=getScriptArgs()
+          data=json.load(open(args[0]))
+          assert currentProgram.getExecutableSHA256().lower()==data["sha256"]
+          rm=currentProgram.getReferenceManager()
+          def refs(pc):
+              return sorted([(int(x.getToAddress().getOffset()),str(x.getReferenceType()),int(x.getOperandIndex()),bool(x.getReferenceType().isCall())) for x in rm.getReferencesFrom(pc)])
+          sites={}
+          for p,t in data["edges"]: sites.setdefault(p,[]).append(t)
+          # Baseline for every statically identified indirect register callsite,
+          # including sites not visited during training.
+          baseline={}
+          for line in open(args[2]):
+              import re
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m:
+                  p=int(m.group(1),16); baseline[str(p)]=refs(toAddr(p))
+          rows=[]
+          for p,targets in sorted(sites.items()):
+              pc=toAddr(p); ins=getInstructionAt(pc)
+              before=baseline[str(p)]
+              added=[]; skipped=[]
+              if ins is None or not ins.getFlowType().isCall() or not ins.getFlowType().isComputed():
+                  skipped=targets
+              else:
+                  for target in targets:
+                      addr=toAddr(target)
+                      if not currentProgram.getMemory().contains(addr) or getInstructionAt(addr) is None:
+                          skipped.append(target);continue
+                      if not any(x[0]==target and x[3] for x in refs(pc)):
+                          rm.addMemoryReference(pc,addr,RefType.COMPUTED_CALL,SourceType.ANALYSIS,0)
+                          added.append(target)
+              after=refs(pc)
+              assert all(x in after for x in before),"existing reference removed"
+              assert all(any(x[0]==t and x[3] for x in after) for t in added)
+              rows.append({"pc":p,"before":before,"after":after,"added":added,"skipped":skipped})
+          with open(args[1],"w") as f: json.dump({"sites":rows,"baseline":baseline},f)
+          PY
+          timeout 300 lab/ghidra_11.4.2_PUBLIC/support/analyzeHeadless lab/project lua -import lab/subject -scriptPath lab/scripts -postScript ObserveCalls.py "$PWD/receipts/observed.json" "$PWD/receipts/ghidra-refs.json" "$PWD/receipts/static.txt" -deleteProject > receipts/ghidra.log 2>&1
+          test -s receipts/ghidra-refs.json
+      - name: Score training and held-out observations against symbol oracle
+        run: |
+          set -euo pipefail
+          for n in hold1 hold2; do
+            timeout 60 gdb -nx -q -batch -x lab/witness.py --args lab/subject "lab/$n.lua" > "receipts/$n.log" 2>&1
+          done
+          nm -S --defined-only lab/oracle > receipts/oracle-symbols.txt
+          python3 - <<'PY'
+          import pathlib,json
+          r=pathlib.Path("receipts")
+          obs=json.loads((r/"observed.json").read_text())
+          a=json.loads((r/"ghidra-refs.json").read_text())
+          lo,hi=obs["text"]
+          def edges(name):
+              log=(r/(name+".log")).read_text()
+              assert "exited normally" in log and "WORKLOAD_OK" in log and "observation budget exceeded" not in log,log
+              return {tuple(json.loads(x.split(" ",1)[1])) for x in log.splitlines() if x.startswith("WITNESS ")}
+          held={(p,t) for p,t in edges("hold1")|edges("hold2") if lo<=p<hi and lo<=t<hi}
+          train=set(map(tuple,obs["edges"]))
+          truth=set()
+          for line in (r/"oracle-symbols.txt").read_text().splitlines():
+              f=line.split()
+              if len(f)==4 and f[2] in ("T","t","W","w"): truth.add(int(f[0],16))
+          before={(int(p),x[0]) for p,refs in a["baseline"].items() for x in refs if x[3]}
+          after=before|{(row["pc"],x[0]) for row in a["sites"] for x in row["after"] if x[3]}
+          added={(row["pc"],t) for row in a["sites"] for t in row["added"]}
+          skipped={(row["pc"],t) for row in a["sites"] for t in row["skipped"]}
+          assert added<=train
+          assert added<=after-before
+          novel=held-train
+          result={"train_edges":len(train),"heldout_edges":len(held),"heldout_novel_edges":len(novel),"train_stock_hits":len(train&before),"train_enriched_hits":len(train&after),"heldout_stock_hits":len(held&before),"heldout_enriched_hits":len(held&after),"novel_stock_hits":len(novel&before),"novel_enriched_hits":len(novel&after),"new_references":len(added),"new_refs_symbol_entry":sum(t in truth for p,t in added),"new_refs_not_symbol_entry":sum(t not in truth for p,t in added),"skipped":len(skipped),"classification":"unmodified upstream Lua; original bounded workloads; dynamic observed-edge coverage, not exhaustive CFG truth; source/symbols used for scoring, not actor-blinded"}
+          (r/"summary.json").write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+          du -sh receipts
+          test "$(du -sb receipts | cut -f1)" -lt 10485760
+      - name: Bound retained evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -d receipts && test "$(du -sb receipts | cut -f1)" -gt 10485760; then
+            printf 'Artifact size exceeded 10 MiB; original evidence not retained\n' > receipts-size-failure.txt
+            find receipts -type f -printf '%s %P\n' >> receipts-size-failure.txt
+            rm -rf receipts
+            mkdir receipts
+            mv receipts-size-failure.txt receipts/
+            exit 1
+          fi
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lua-recovery-b06b
+          path: receipts/
+          retention-days: 7
+      - name: Report terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/lua-recovery-b06b -f description='Synthetic analysis wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
