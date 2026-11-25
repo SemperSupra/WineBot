@@ -1,0 +1,49 @@
+name: Trusted Writer Supervisor Custody RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/writer-supervisor-custody/**'
+      - '.github/workflows/writer-supervisor-custody-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  custody-and-survivor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build disposable Python fixture image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/custody-build"
+          cat > "$RUNNER_TEMP/custody-build/Dockerfile" <<'EOF'
+          FROM debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a
+          RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+          EOF
+          docker build -t winebot-custody-test:local "$RUNNER_TEMP/custody-build"
+      - name: Run bounded numeric-UID custody and crash witnesses
+        shell: bash
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        run: |
+          set -euo pipefail
+          if ! docker run --rm --network none --read-only \
+            --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add KILL \
+            --security-opt no-new-privileges --pids-limit 32 --memory 256m \
+            --tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=16m \
+            -v "$PWD/rdte/writer-supervisor-custody/test_custody.py:/fixture.py:ro" \
+            --entrypoint python3 winebot-custody-test:local -I /fixture.py \
+            >/dev/null 2>&1; then
+            echo 'WRITER_SUPERVISOR_CUSTODY=FAIL'
+            exit 1
+          fi
+          echo 'WRITER_SUPERVISOR_CUSTODY=PASS'
+          echo 'SUPERVISOR_DEATH_SURVIVOR_NEGATIVE=CONFIRMED'
