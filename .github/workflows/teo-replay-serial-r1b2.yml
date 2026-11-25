@@ -1,0 +1,128 @@
+name: Linux TCG external serial replay R1b2
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-replay-serial-r1b2.yml]
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare public kernel and original guest fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts root/bin
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 busybox-static cpio
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-system-x86 busybox-static cpio > receipts/packages.txt
+          sha256sum "$(command -v qemu-system-x86_64)" > receipts/qemu.sha256
+          curl -fL --retry 2 --max-time 90 https://storage.tuxboot.com/buildroot/20241119/x86_64/bzImage -o kernel
+          echo 'f57bfc6553bcd6e0a54aab86095bf642b33b5571d14e3af1731b18c87ed5aef8  kernel' | sha256sum -c -
+          cp "$(command -v busybox)" root/bin/busybox
+          cp /dev/null receipts/init
+          cat > receipts/init <<'SH'
+          #!/bin/busybox sh
+          set -e
+          export PATH=/bin
+          test -c /dev/ttyS0
+          exec 3</dev/ttyS0
+          /bin/busybox stty -F /dev/ttyS0 -echo
+          echo TEO_READY
+          IFS= read -r line <&3 || exit 1
+          echo TEO_BEGIN
+          /bin/busybox printf '%s\n' "$line" | /bin/busybox sha256sum
+          echo TEO_END
+          /bin/busybox poweroff -f
+          SH
+          cp receipts/init root/init
+          chmod 755 root/init
+          mkdir -p root/dev root/proc root/sys
+          sudo mknod root/dev/console c 5 1
+          sudo mknod root/dev/null c 1 3
+          sudo mknod root/dev/ttyS0 c 4 64
+          (cd root && find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --owner=0:0 --reproducible) > initramfs
+          sha256sum kernel initramfs receipts/init root/bin/busybox > receipts/inputs.sha256
+      - name: Exercise two external inputs and replay each without new input
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/serial.py <<'PY'
+          import hashlib,json,os,pathlib,socket,subprocess,time
+          p=pathlib.Path("receipts")
+          base=["qemu-system-x86_64","-machine","q35","-cpu","Nehalem","-accel","tcg,thread=single","-smp","1","-m","256","-display","none","-monitor","none","-nic","none","-no-reboot","-kernel","kernel","-initrd","initramfs","-append","console=ttyS0 rdinit=/init panic=-1 nokaslr"]
+          tokens={"a":b"public-input-alpha\n","b":b"public-input-bravo\n"}
+          results={}
+          for arm,token in tokens.items():
+              rr=p/f"{arm}.rr"; sockpath=f"{arm}.sock"
+              start=time.monotonic()
+              with (p/f"{arm}.record.stderr").open("wb") as err, (p/f"{arm}.record.serial").open("wb") as out:
+                  proc=subprocess.Popen(base+["-serial",f"unix:{sockpath},server=on,wait=on","-icount",f"shift=5,rr=record,rrfile={rr}"],stdout=subprocess.DEVNULL,stderr=err)
+                  try:
+                      deadline=time.monotonic()+120
+                      with socket.socket(socket.AF_UNIX) as s:
+                          while True:
+                              if proc.poll() is not None: raise RuntimeError("qemu exited before connection")
+                              try: s.connect(sockpath); break
+                              except (FileNotFoundError,ConnectionRefusedError):
+                                  if time.monotonic()>deadline: raise TimeoutError("connect")
+                                  time.sleep(.05)
+                          s.settimeout(1)
+                          seen=b""; sent=False
+                          while time.monotonic()<deadline:
+                              try: b=s.recv(65536)
+                              except socket.timeout: continue
+                              if not b: break
+                              out.write(b); out.flush()
+                              seen=(seen+b)[-65536:]
+                              if not sent and b"TEO_READY\r\n" in seen:
+                                  s.sendall(token); sent=True
+                          if not sent: raise RuntimeError("input not sent")
+                      assert proc.wait(timeout=10)==0
+                  finally:
+                      if proc.poll() is None: proc.kill(); proc.wait()
+              record_seconds=time.monotonic()-start
+              assert rr.stat().st_size>0
+              before=hashlib.sha256(rr.read_bytes()).hexdigest()
+              start=time.monotonic()
+              with (p/f"{arm}.replay.stderr").open("wb") as err:
+                  subprocess.run(base+["-serial",f"file:{p}/{arm}.replay.serial","-icount",f"shift=5,rr=replay,rrfile={rr}"],stdout=subprocess.DEVNULL,stderr=err,timeout=120,check=True)
+              assert hashlib.sha256(rr.read_bytes()).hexdigest()==before
+              results[arm]={"input_hex":token.hex(),"record_seconds":record_seconds,"replay_seconds":time.monotonic()-start,"rr_sha256":before}
+          (p/"host.json").write_text(json.dumps(results,indent=2))
+          PY
+          python3 receipts/serial.py
+      - name: Score retained output using a separate parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/score.py <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("receipts")
+          expected={a:hashlib.sha256(t).hexdigest().encode() for a,t in {"a":b"public-input-alpha\n","b":b"public-input-bravo\n"}.items()}
+          def check(data, exp):
+              lines=data.splitlines()
+              if lines.count(b"TEO_READY")!=1 or lines.count(b"TEO_BEGIN")!=1 or lines.count(b"TEO_END")!=1: return False
+              i=lines.index(b"TEO_BEGIN")
+              return lines.index(b"TEO_READY")<i and lines.index(b"TEO_END")==i+2 and lines[i+1].split()==[exp,b"-"] and b"reboot: Power down" in data
+          scores={}
+          for a in ("a","b"):
+              rec=(p/f"{a}.record.serial").read_bytes(); rep=(p/f"{a}.replay.serial").read_bytes()
+              other="b" if a=="a" else "a"
+              scores[a]={"record":check(rec,expected[a]),"replay":check(rep,expected[a]),"wrong_input_refused":not check(rep,expected[other]),"exact_serial_equal":rec==rep}
+              assert all(scores[a][k] for k in ("record","replay","wrong_input_refused"))
+          assert (p/"a.rr").read_bytes()!=(p/"b.rr").read_bytes()
+          (p/"score.json").write_text(json.dumps(scores,indent=2))
+          print(json.dumps(scores,indent=2))
+          PY
+          python3 receipts/score.py
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tcg-serial-replay-r1b2
+          path: receipts/
+          retention-days: 7
