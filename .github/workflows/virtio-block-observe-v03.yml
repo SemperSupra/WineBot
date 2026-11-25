@@ -1,0 +1,196 @@
+name: VirtIO block passive observation baseline
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-block-observe-v03.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Public-only prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq seabios qemu-system-x86 qemu-utils libglib2.0-0t64 libpixman-1-0 libfdt1 libzstd1 binutils
+      - name: Retrieve previously built public QEMU
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271561618
+          github-token: ${{ github.token }}
+          name: obsros-qemu-source-sensor-pio
+          path: source-qemu
+      - name: Synthetic BIOS disk read write readback and paired passive tracing
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 11564d4433b411c0a31e3398953c6d174129d18c53e22c040ba39e1befe4d1ed source-qemu/build/qemu-system-i386 | sha256sum -c -
+          chmod u+x source-qemu/build/qemu-system-i386
+          source-qemu/build/qemu-system-i386 --version > receipts/qemu-version.txt
+          sha256sum source-qemu/build/qemu-system-i386 /usr/share/seabios/bios-256k.bin > receipts/inputs.sha256
+          cat > receipts/boot.S <<'EOF'
+          .code16
+          .global _start
+          _start:
+            cli
+            xorw %ax,%ax
+            movw %ax,%ds
+            movw %ax,%es
+            movw %ax,%ss
+            movw $0x7c00,%sp
+            sti
+            movb %dl,drive
+            movw $dap,%si
+            movb $0x42,%ah
+            int $0x13
+            jc fail
+            cmpl $0x11223344,0x8000
+            jne fail
+            movl $0x55667788,0x8000
+            movl $2,dap+8
+            movw $1,dap+2
+            movw $dap,%si
+            movb drive,%dl
+            movw $0x4300,%ax
+            int $0x13
+            jc fail
+            movl $0,0x8000
+            movw $1,dap+2
+            movw $dap,%si
+            movb drive,%dl
+            movb $0x42,%ah
+            int $0x13
+            jc fail
+            cmpl $0x55667788,0x8000
+            jne fail
+            movb $0x50,%al
+            jmp done
+          fail:
+            movb $0x46,%al
+          done:
+            outb %al,$0xe9
+            cli
+          halt:
+            hlt
+            jmp halt
+          .balign 4
+          dap:
+            .byte 16,0
+            .word 1,0x8000,0
+            .quad 1
+          drive:
+            .byte 0
+          .org 510
+          .word 0xaa55
+          EOF
+          as --32 receipts/boot.S -o boot.o
+          ld -m elf_i386 -Ttext 0x7c00 --oformat binary boot.o -o receipts/boot.bin
+          test "$(wc -c < receipts/boot.bin)" = 512
+          printf '%s  %s\n' c2275398ddd58a3d930acced396bcf00d7c1ff696d0cd841e9fab0db675749b6 receipts/boot.S be7c719965c6ff56356cef188fe0905f5d437ba25999ea79c1910ee21b11c55f receipts/boot.bin | sha256sum -c -
+          cat > receipts/run.py <<'PY'
+          import collections,hashlib,json,pathlib,socket,struct,subprocess,time
+          P=pathlib.Path
+          R=P("receipts")
+          qemu=P("source-qemu/build/qemu-system-i386").resolve()
+          events=("virtqueue_pop","virtqueue_fill","virtqueue_flush")
+          boot=(R/"boot.bin").read_bytes()
+          assert len(boot)==512 and boot[-2:]==b"\x55\xaa"
+          original=bytearray(2*1024*1024)
+          original[:512]=boot
+          struct.pack_into("<I",original,512,0x11223344)
+          expected=bytearray(original)
+          struct.pack_into("<I",expected,1024,0x55667788)
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          def decode(path):
+              b=path.read_bytes()
+              assert len(b)<=4*1024*1024
+              p=0; ids={}; names=set(); counts=collections.Counter(); drops=0
+              def take(n):
+                  nonlocal p
+                  assert 0<=n<=len(b)-p,"truncated"
+                  v=b[p:p+n]; p+=n; return v
+              def u(f): return struct.unpack("<"+f,take(struct.calcsize("<"+f)))
+              assert u("QQQ")==((1<<64)-1,0xf2b177cb0aa429b4,4)
+              while p<len(b):
+                  typ,=u("Q")
+                  if typ==0:
+                      i,n=u("QI"); assert 0<n<=256
+                      name=take(n).decode("ascii")
+                      assert i not in ids and name not in names
+                      ids[i]=name; names.add(name); continue
+                  assert typ==1
+                  i,t,n,pid=u("QQII"); assert 24<=n<=4096
+                  payload=take(n-24)
+                  if i==(1<<64)-2:
+                      assert len(payload)==8
+                      drops+=struct.unpack("<Q",payload)[0]; continue
+                  assert i in ids and ids[i] in events
+                  assert len(payload)==(12 if ids[i]=="virtqueue_flush" else 24)
+                  counts[ids[i]]+=1
+              return {"counts":dict(counts),"reported_drops":drops,"bytes":len(b),"sha256":sha(b),"mappings":len(ids)}
+          def phase(mode):
+              disk=P(mode+".raw").resolve()
+              sock=P(mode+".sock").resolve()
+              trace=R/(mode+".trace")
+              marker=R/(mode+".debug")
+              eventfile=R/(mode+".events")
+              eventfile.write_text("\n".join(events)+"\n" if mode=="on" else "")
+              args=[str(qemu),"-accel","tcg","-machine","pc","-smp","1","-m","128","-nic","none","-display","none","-L","/usr/share/seabios","-bios","/usr/share/seabios/bios-256k.bin","-serial","none","-monitor","none","-qmp",f"unix:{sock},server=on,wait=off","-drive",f"file={disk},format=raw,if=none,id=d","-device","virtio-blk-pci,drive=d,disable-modern=on,bootindex=1","-boot","order=c","-no-reboot","-debugcon","file:"+str(marker),"-trace","events="+str(eventfile)+",file="+str(trace)]
+              (R/(mode+"-argv.json")).write_text(json.dumps(args))
+              disk.write_bytes(original)
+              t0=time.monotonic()
+              with (R/(mode+".stderr")).open("wb") as err:
+                  proc=subprocess.Popen(args,stdout=err,stderr=err)
+                  try:
+                      while time.monotonic()-t0<45:
+                          assert proc.poll() is None,"QEMU exited early"
+                          if marker.exists() and marker.stat().st_size:
+                              break
+                          if trace.exists(): assert trace.stat().st_size<=4*1024*1024
+                          time.sleep(.05)
+                      assert marker.read_bytes()==b"P","guest status failure"
+                      with socket.socket(socket.AF_UNIX) as s:
+                          s.settimeout(5); s.connect(str(sock))
+                          with s.makefile("rb") as f:
+                              def recv():
+                                  b=f.readline(262145); assert b and len(b)<=262144
+                                  return json.loads(b)
+                              assert "QMP" in recv()
+                              for cmd in ("qmp_capabilities","quit"):
+                                  s.sendall(json.dumps({"execute":cmd}).encode()+b"\r\n")
+                                  for _ in range(32):
+                                      msg=recv()
+                                      if "event" in msg: continue
+                                      assert "return" in msg,msg
+                                      break
+                                  else: raise AssertionError("QMP event budget")
+                      assert proc.wait(timeout=10)==0
+                  finally:
+                      if proc.poll() is None:
+                          proc.kill(); proc.wait()
+              actual=disk.read_bytes()
+              (R/(mode+"-disk.json")).write_text(json.dumps({"initial":sha(original),"actual":sha(actual),"expected":sha(expected),"whole_disk_match":actual==expected,"elapsed_seconds":time.monotonic()-t0},indent=2))
+              assert actual==expected,"host disk oracle mismatch"
+              disk.unlink()
+              return decode(trace)
+          a,b=phase("off"),phase("on")
+          (R/"summary.json").write_text(json.dumps({"off":a,"on":b},indent=2))
+          assert not a["counts"] and a["reported_drops"]==0
+          assert all(b["counts"].get(e,0)>0 for e in events) and b["reported_drops"]==0
+          (R/"classification.txt").write_text("SYNTHETIC LEGACY PCI SPLIT BIOS READ WRITE READBACK; PAIRED SAME BINARY PASSIVE TRACE OFF ON; WHOLE DISK ORACLE; NOT DURABILITY, PACKED, OS DRIVER, FULL PARITY OR OVERHEAD QUALIFICATION\n")
+          PY
+          python3 receipts/run.py
+      - name: Retain bounded public evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-block-observe-v03
+          path: receipts/
+          retention-days: 7
