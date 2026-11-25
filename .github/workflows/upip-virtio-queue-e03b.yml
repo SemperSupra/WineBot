@@ -1,0 +1,233 @@
+name: VirtIO measured queue E03b
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-virtio-queue-e03b.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Recover exact public recording
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upip-e03b"
+          cd "$RUNNER_TEMP/upip-e03b"
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15005235158/zip > v12.zip
+          echo '63c3d6282b08c66b857d68df76d54925d4a4c5d8da7d889e2ba796356c2832fd  v12.zip' | sha256sum -c -
+      - name: Build and compare pinned runtime on recorded device events
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upip-e03b"
+          trap 'cd /; rm -rf "$RUNNER_TEMP/upip-e03b"' EXIT
+          pin=5755157bf4341be69af2afcd5175997f02303669
+          git init -q ubpf
+          git -C ubpf fetch --depth=1 https://github.com/iovisor/ubpf.git "$pin"
+          git -C ubpf checkout -q --detach FETCH_HEAD
+          test "$(git -C ubpf rev-parse HEAD)" = "$pin"
+          test "$(git -C ubpf hash-object vm/inc/ubpf.h)" = ab8b94657772edae6515a813d5a12654f2992822
+          test "$(git -C ubpf hash-object LICENSE.txt)" = d645695673349e3947e8e5ae42332d0ac3164cd7
+          cmake -S ubpf -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DUBPF_SKIP_EXTERNAL=ON -DUBPF_ENABLE_TESTS=OFF -DUBPF_INSTALL_GIT_HOOKS=OFF
+          cmake --build build --target ubpf -j 2
+          cat > extract.py <<'PY'
+          import hashlib,re,zipfile,pathlib
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          pat=re.compile(rb'virtqueue_host_advance queue (0|1) packed (0|1) ordered (0) used (0|[1-9][0-9]*)->(0|[1-9][0-9]*) wrap (0|1)->(0|1) inuse (0|[1-9][0-9]*)->(0|[1-9][0-9]*)\n')
+          pins=[
+            ('split',0,'b7ea805ee869d9a872bc0338497e328de5f65bca7dfeece716c62be2dc44fc3c','d50c73fe1218d37ad66138199b740e2d2d1bb742e62649f7abd1d1c86106f243','e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',0),
+            ('packed',1,'b6719c122336e5eb641c6f8b50b1654fe6c50415c93375429f3b598983ec7267','96ab1791d1be9d60a843cd544ea8c2ed6de296b16ac13a9fd7fa70c068bea1fb','aca386a3acc93907874390b8f1118233969a4fd885b9f69238fb2a83a7b512a7',31)]
+          assert all(re.fullmatch(r'[0-9a-f]{64}', h) for pin in pins for h in pin[2:5])
+          with zipfile.ZipFile('v12.zip') as z:
+            assert len(z.namelist())==87 and z.testzip() is None
+            for name,mode,rawhash,scopehash,outhash,count in pins:
+              raw=z.read(f'candidate-{name}-on.trace')
+              assert sha(raw)==rawhash
+              rows=[]; scoped=[]; selected=[]
+              for line in raw.splitlines(keepends=True):
+                if not line.startswith(b'virtqueue_host_advance'):continue
+                m=pat.fullmatch(line)
+                assert m
+                q,p,o,a,b,c,d,e,g=map(int,m.groups())
+                assert p==mode and a<=65535 and b<=65535 and e<2**32 and g<2**32 and (p or c==d) and (a,c,e)!=(b,d,g)
+                scoped.append(line)
+                rows.append(f'{q} {a} {b} {c} {d}\n')
+                if c!=d:selected.append(f'{len(rows)} {q} {a} {b} {c} {d}\n')
+              assert len(rows)==8268 and len(selected)==count
+              assert sha(b''.join(scoped))==scopehash
+              out=''.join(selected).encode()
+              assert sha(out)==outhash
+              pathlib.Path(name+'.rows').write_text(''.join(rows))
+              pathlib.Path(name+'.expected').write_bytes(out)
+              print(f'INPUT {name} rows={len(rows)} selected={count} expected_sha={outhash}')
+          PY
+          python3 extract.py
+          cat > programs.py <<'PY'
+          import hashlib, pathlib, struct
+          P=pathlib.Path
+          pins={1:'a35bf2d505ed1bab49bc494fa2989c7ea80ab8bf3b8453536c18e4203e0a672b',8:'194b298fb0c9b599e14d9ffe714072bbb74bafa2b2e46e857bb66d77853e42c4',32:'2c3a89e564d6b1b8cda97fe57a3ea28db46c1d2bee623e5d8528b2d222434333'}
+          def ins(op,d=0,s=0,off=0,imm=0):return struct.pack('<BBhI',op,(s<<4)|d,off,imm&0xffffffff)
+          for n,pin in pins.items():
+              code=[ins(0xb7)]
+              for i in range(n):code.extend([ins(0x79,2,1,16*i),ins(0x79,3,1,16*i+8),ins(0x1d,2,3,1),ins(0x44,0,0,0,1<<i)])
+              raw=b''.join(code)+ins(0x95)
+              assert len(raw)==8*(4*n+2) and hashlib.sha256(raw).hexdigest()==pin
+              P(f'batch-{n}.bin').write_bytes(raw)
+              print(f'PROGRAM width={n} instructions={len(raw)//8} sha={pin}')
+          PY
+          python3 programs.py
+          cat > bench.c <<'EOF'
+          #define _POSIX_C_SOURCE 200809L
+          #include <ubpf.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <time.h>
+          #include <inttypes.h>
+          #define CHECK(x) do {if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
+          enum {N=8268, LOOPS=100};
+          struct pair {uint64_t a,b;};
+          struct chunk {struct pair p[32];unsigned valid;};
+          static unsigned width;
+          static uint64_t allowed(unsigned n){return (UINT64_C(1)<<n)-1;}
+          #include <pthread.h>
+          #include <errno.h>
+          static uint64_t now(clockid_t id){struct timespec t;CHECK(clock_gettime(id,&t)==0);return (uint64_t)t.tv_sec*1000000000u+t.tv_nsec;}
+          typedef uint64_t (*fn)(struct ubpf_vm*,struct pair*);
+          __attribute__((noinline)) static uint64_t native(struct ubpf_vm *v,struct pair*p){
+              (void)v;uint64_t m=0;for(unsigned i=0;i<width;i++)if(p[i].a!=p[i].b)m|=UINT64_C(1)<<i;return m;
+          }
+          __attribute__((noinline)) static uint64_t vmrun(struct ubpf_vm*v,struct pair*p){uint64_t out=UINT64_MAX;CHECK(ubpf_exec(v,p,width*sizeof(*p),&out)==0);return out;}
+          __attribute__((noinline)) static uint64_t guarded(fn f,struct ubpf_vm*v,const struct chunk*c){
+              struct pair copy[32];CHECK(c->valid>0 && c->valid<=width);
+              memcpy(copy,c->p,width*sizeof(*copy));
+              for(unsigned i=0;i<width;i++){CHECK(copy[i].a<=1 && copy[i].b<=1);if(i>=c->valid)CHECK(copy[i].a==0 && copy[i].b==0);}
+              uint64_t m=f(v,copy);CHECK((m&~allowed(c->valid))==0 && memcmp(copy,c->p,width*sizeof(*copy))==0);return m;
+          }
+          enum {CAP=128};
+          struct item {unsigned id;uint64_t stamp;};
+          struct result {uint64_t offered,finished;unsigned state,selected;};
+          static struct pair input[N];
+          static struct result ledger[N];
+          static struct item queue[CAP];
+          static unsigned head,count,high,done,drops,batches,partial,processed,selected;
+          static int burst,safe;
+          static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+          static pthread_cond_t cond;
+          static struct ubpf_vm *vm;
+          static uint64_t producer_cpu,consumer_cpu;
+          static void *producer(void *arg){
+              (void)arg;uint64_t start=now(CLOCK_THREAD_CPUTIME_ID);
+              struct timespec pause={0,50000};
+              for(unsigned i=0;i<N;i++){
+                  CHECK(pthread_mutex_lock(&lock)==0);
+                  uint64_t t=now(CLOCK_MONOTONIC);ledger[i].offered=t;
+                  if(count==CAP){drops++;ledger[i].state=2;}
+                  else{queue[(head+count)%CAP]=(struct item){i,t};count++;if(count>high)high=count;CHECK(pthread_cond_signal(&cond)==0);}
+                  CHECK(pthread_mutex_unlock(&lock)==0);
+                  if(!burst && i+1<N){while(nanosleep(&pause,&pause)!=0)CHECK(errno==EINTR);pause=(struct timespec){0,50000};}
+              }
+              CHECK(pthread_mutex_lock(&lock)==0);done=1;CHECK(pthread_cond_broadcast(&cond)==0);CHECK(pthread_mutex_unlock(&lock)==0);
+              producer_cpu=now(CLOCK_THREAD_CPUTIME_ID)-start;return NULL;
+          }
+          static void *consumer(void *arg){
+              (void)arg;uint64_t start=now(CLOCK_THREAD_CPUTIME_ID);unsigned previous=0;int have=0;
+              for(;;){
+                  struct chunk c={0};unsigned ids[32];
+                  CHECK(pthread_mutex_lock(&lock)==0);
+                  while((!count||(burst&&!done))&&!done)CHECK(pthread_cond_wait(&cond,&lock)==0);
+                  if(!count&&done){CHECK(pthread_mutex_unlock(&lock)==0);break;}
+                  uint64_t deadline=queue[head].stamp+100000;
+                  struct timespec ts={(time_t)(deadline/1000000000u),(long)(deadline%1000000000u)};
+                  while(count<width&&!done&&now(CLOCK_MONOTONIC)<deadline){
+                      int rc=pthread_cond_timedwait(&cond,&lock,&ts);CHECK(rc==0||rc==ETIMEDOUT);
+                  }
+                  c.valid=count<width?count:width;
+                  for(unsigned k=0;k<c.valid;k++){ids[k]=queue[head].id;c.p[k]=input[ids[k]];head=(head+1)%CAP;count--;}
+                  CHECK(pthread_mutex_unlock(&lock)==0);
+                  uint64_t m=guarded(safe?vmrun:native,vm,&c),finish=now(CLOCK_MONOTONIC);
+                  batches++;partial+=c.valid<width;
+                  for(unsigned k=0;k<c.valid;k++){
+                      unsigned id=ids[k];CHECK(!have||id>previous);previous=id;have=1;
+                      CHECK(ledger[id].state==0 && finish>=ledger[id].offered);
+                      ledger[id].state=1;ledger[id].finished=finish;ledger[id].selected=(unsigned)((m>>k)&1);
+                      CHECK(ledger[id].selected==(unsigned)(input[id].a!=input[id].b));selected+=ledger[id].selected;processed++;
+                  }
+              }
+              consumer_cpu=now(CLOCK_THREAD_CPUTIME_ID)-start;return NULL;
+          }
+          int main(int argc,char**argv){
+              CHECK(argc==7 && sizeof(struct pair)==16);
+              width=(unsigned)strtoul(argv[1],NULL,10);CHECK(width==8||width==32);
+              CHECK(!strcmp(argv[2],"native")||!strcmp(argv[2],"safe"));safe=!strcmp(argv[2],"safe");
+              CHECK(!strcmp(argv[3],"paced")||!strcmp(argv[3],"burst"));burst=!strcmp(argv[3],"burst");
+              FILE*f=fopen(argv[4],"r");CHECK(f);unsigned q,a,b,c,d;
+              for(unsigned i=0;i<N;i++){CHECK(fscanf(f,"%u %u %u %u %u",&q,&a,&b,&c,&d)==5);CHECK(q<=1&&a<=65535&&b<=65535&&c<=1&&d<=1);input[i]=(struct pair){c,d};}
+              int ch;do{ch=fgetc(f);}while(ch==' '||ch=='\n'||ch=='\r'||ch=='\t');CHECK(ch==EOF&&!ferror(f)&&fclose(f)==0);
+              unsigned char code[1040];size_t len=8*(4*width+2);f=fopen(argv[5],"rb");CHECK(f);CHECK(fread(code,1,len,f)==len&&fgetc(f)==EOF&&!ferror(f)&&fclose(f)==0);
+              vm=ubpf_create();CHECK(vm);CHECK(ubpf_set_execution_profile(vm,UBPF_EXECUTION_PROFILE_SAFE)==0);CHECK(ubpf_set_instruction_limit(vm,4*width+2,NULL)==0);
+              char*err=NULL;CHECK(ubpf_load(vm,code,len,&err)==0);free(err);
+              pthread_condattr_t attr;CHECK(pthread_condattr_init(&attr)==0);CHECK(pthread_condattr_setclock(&attr,CLOCK_MONOTONIC)==0);CHECK(pthread_cond_init(&cond,&attr)==0);CHECK(pthread_condattr_destroy(&attr)==0);
+              pthread_t p,t;uint64_t start=now(CLOCK_MONOTONIC);CHECK(pthread_create(&t,NULL,consumer,NULL)==0);CHECK(pthread_create(&p,NULL,producer,NULL)==0);CHECK(pthread_join(p,NULL)==0);CHECK(pthread_join(t,NULL)==0);uint64_t wall=now(CLOCK_MONOTONIC)-start;
+              CHECK(count==0&&processed+drops==N&&high<=CAP);
+              if(burst)CHECK(processed==CAP&&drops==N-CAP&&high==CAP);
+              f=fopen(argv[6],"w");CHECK(f);
+              for(unsigned i=0;i<N;i++){CHECK(ledger[i].state==1||ledger[i].state==2);CHECK(fprintf(f,"%u,%u,%" PRIu64 ",%" PRIu64 ",%u\n",i+1,ledger[i].state,ledger[i].offered,ledger[i].finished,ledger[i].selected)>0);}
+              CHECK(fclose(f)==0);
+              printf("QUEUE width=%u runtime=%s load=%s offered=%u processed=%u dropped=%u high=%u batches=%u partial=%u selected=%u wall_ns=%" PRIu64 " producer_cpu_ns=%" PRIu64 " consumer_cpu_ns=%" PRIu64 "\n",width,argv[2],argv[3],N,processed,drops,high,batches,partial,selected,wall,producer_cpu,consumer_cpu);
+              ubpf_destroy(vm);CHECK(pthread_cond_destroy(&cond)==0);CHECK(pthread_mutex_destroy(&lock)==0);return 0;
+          }
+          EOF
+          cat > verify.py <<'PY'
+          import csv,sys,hashlib,pathlib,math
+          rows=pathlib.Path(sys.argv[1]).read_text().splitlines()
+          raw=pathlib.Path(sys.argv[2]).read_bytes()
+          ledger=list(csv.reader(raw.decode().splitlines()))
+          assert len(rows)==len(ledger)==8268
+          lat=[];drops=selected=lost_selected=0;last=0;lastdone=0
+          for i,(line,row) in enumerate(zip(rows,ledger),1):
+              q,a,b,c,d=map(int,line.split())
+              idx,state,t,end,hit=map(int,row)
+              assert idx==i and t>=last and t>0
+              last=t
+              if state==1:
+                  assert end>=t and end>=lastdone and hit==(c!=d)
+                  lastdone=end;lat.append(end-t);selected+=hit
+              else:
+                  assert state==2 and end==hit==0
+                  drops+=1;lost_selected+=(c!=d)
+          assert len(lat)+drops==8268
+          if sys.argv[3]=='burst':
+              assert len(lat)==128 and all(int(r[1])==(1 if i<128 else 2) for i,r in enumerate(ledger))
+          lat.sort()
+          assert lat
+          p=lambda x:lat[math.ceil(x*len(lat))-1]
+          print(f'WITNESS processed={len(lat)} dropped={drops} selected={selected} lost_selected={lost_selected} p50_ns={p(.5)} p95_ns={p(.95)} p99_ns={p(.99)} max_ns={lat[-1]} ledger_sha={hashlib.sha256(raw).hexdigest()}')
+          PY
+          lib=$(find build -name libubpf.a -type f -print -quit)
+          test -n "$lib"
+          cc -O2 -Wall -Wextra -Werror -pthread -Iubpf/vm/inc -Ibuild/vm bench.c "$lib" -lm -o bench
+          sha256sum bench.c verify.py bench "$lib"
+          for ring in split packed; do
+            for width in 8 32; do
+              for load in paced burst; do
+                for runtime in native safe; do
+                  echo "BEGIN $ring $width $load $runtime"
+                  timeout 20s ./bench "$width" "$runtime" "$load" "$ring.rows" "batch-$width.bin" ledger.csv
+                  python3 verify.py "$ring.rows" ledger.csv "$load"
+                  echo "END $ring $width $load $runtime"
+                done
+              done
+            done
+          done
+      - name: Clean temporary input
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/upip-e03b"
