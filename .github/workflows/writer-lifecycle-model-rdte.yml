@@ -1,0 +1,26 @@
+name: Crash Safe Writer Lifecycle Model RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/writer-lifecycle-model/**'
+      - '.github/workflows/writer-lifecycle-model-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exhaustive-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Explore reachable states and require unsafe counterexamples
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I rdte/writer-lifecycle-model/model.py
