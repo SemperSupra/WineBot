@@ -1,0 +1,99 @@
+name: VirtIO native block backend error and recovery prequalification
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-blkdebug-v05.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Bind public execution identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-blkdebug-v05 -f description='Public backend experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Install public distribution QEMU tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils
+          qemu-io --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-utils > receipts/package.txt
+          sha256sum "$(command -v qemu-io)" > receipts/binary.sha256
+      - name: Execute matched control and one-shot error with recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import hashlib,json,pathlib,re,subprocess,time
+          P=pathlib.Path
+          R=P("receipts")
+          initial=bytes(65536)
+          cfg=R/"one-shot.conf"
+          cfg.write_text('[inject-error]\nevent = "none"\niotype = "write"\nsector = "2"\nonce = "on"\nerrno = "5"\n')
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          def phase(name,inject):
+              disk=P(name+".raw").resolve()
+              disk.write_bytes(initial)
+              target=f"blkdebug:{cfg.resolve()}:{disk}" if inject else str(disk)
+              cmds=["write -P 0x33 1536 512","write -P 0x5a 1024 512",
+                    f"read -P {0 if inject else 0x5a} 1024 512",
+                    "write -P 0xa6 1024 512","read -P 0xa6 1024 512",
+                    "read -P 0x33 1536 512","flush"]
+              argv=["qemu-io","-f","raw"]
+              for cmd in cmds: argv.extend(["-c",cmd])
+              argv.append(target)
+              (R/(name+"-argv.json")).write_text(json.dumps(argv))
+              t=time.monotonic()
+              run=subprocess.run(argv,capture_output=True,text=True,timeout=30,env={"PATH":"/usr/bin:/bin","LC_ALL":"C"})
+              log=run.stdout+"\n"+run.stderr
+              (R/(name+".log")).write_text(log)
+              actual=disk.read_bytes()
+              expected=bytearray(initial)
+              expected[1024:1536]=bytes([0xa6])*512
+              expected[1536:2048]=bytes([0x33])*512
+              failures=len(re.findall(r"write failed: Input/output error",log))
+              reads=len(re.findall(r"read 512/512 bytes at offset",log))
+              writes=len(re.findall(r"wrote 512/512 bytes at offset",log))
+              result={"mode":name,"exit":run.returncode,"failures":failures,"reads":reads,"writes":writes,"whole_disk_match":actual==expected,"disk_sha256":sha(actual),"expected_sha256":sha(expected),"seconds":time.monotonic()-t}
+              (R/(name+".json")).write_text(json.dumps(result,indent=2))
+              assert actual==expected,result
+              assert failures==int(inject) and reads==3 and writes==3-int(inject),result
+              assert not re.search(r"verification failed|read failed|flush failed|invalid option|can't open",log,re.I),log
+              if not inject: assert run.returncode==0,result
+              disk.unlink()
+              return result
+          results=[phase("control",False),phase("error-recovery",True)]
+          (R/"summary.json").write_text(json.dumps(results,indent=2))
+          (R/"classification.txt").write_text("DISTRIBUTION QEMU-IO BACKEND ONE-SHOT ERROR AND RECOVERY; NOT PINNED SOURCE QEMU, GUEST DRIVER, VIRTQUEUE, DELAY, DURABILITY OR RELEASE QUALIFICATION\n")
+          PY
+          python3 receipts/run.py
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-blkdebug-v05
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal execution URL
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-blkdebug-v05 -f description='Public backend experiment wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
