@@ -1,0 +1,224 @@
+name: Synthetic binary analysis with runtime configuration
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/synthetic-analysis-b05b.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir -p receipts lab
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/synthetic-analysis-b05b -f description='Synthetic experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build synthetic binary and acquire external witness
+        run: |
+          set -euo pipefail
+          command -v gdb || { sudo apt-get update -qq; sudo apt-get install -y -qq gdb; }
+          cat > lab/fixture.c <<'C'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <stdint.h>
+          typedef int (*operation)(int);
+          __attribute__((used,noinline)) static int increment(int x) { return x + 3; }
+          __attribute__((used,noinline)) static int decrement(int x) { return x - 7; }
+          __attribute__((used,noinline)) static int transform(int x) { return x ^ 13; }
+          __attribute__((noinline)) static int dispatch(operation f, int x) {
+              operation volatile chosen = f;
+              return chosen(x);
+          }
+          int main(int argc, char **argv) {
+              if (argc != 2) return 2;
+              int k = atoi(argv[1]);
+              if (k < 0 || k > 2) return 2;
+              uintptr_t table[3];
+              FILE *fp = fopen("lab/dispatch.bin", "rb");
+              if (!fp) return 3;
+              size_t got = fread(table, sizeof(table[0]), 3, fp);
+              fclose(fp);
+              if (got != 3) return 3;
+              printf("%d\n", dispatch((operation)table[k],20));
+              return 0;
+          }
+          C
+          cc -O0 -g -fno-pie -no-pie -Wall -Wextra -Werror lab/fixture.c -o lab/oracle
+          cp lab/oracle lab/subject
+          strip --strip-all lab/subject
+          # Fixture setup only: truth-derived configuration is not an analyzer input.
+          python3 - <<'PY'
+          import pathlib,struct,subprocess
+          sym={}
+          for line in subprocess.check_output(['nm','--defined-only','lab/oracle'],text=True).splitlines():
+              f=line.split()
+              if len(f)==3:sym[f[2]]=int(f[0],16)
+          pathlib.Path('lab/dispatch.bin').write_bytes(struct.pack('<QQQ',*(sym[k] for k in ('increment','decrement','transform'))))
+          PY
+          sha256sum lab/dispatch.bin > receipts/config.sha256
+          cc --version > receipts/compiler.txt
+          gdb --version > receipts/gdb-version.txt
+          objdump -d -j .text lab/subject > receipts/static.txt
+          sha256sum lab/fixture.c lab/oracle lab/subject > receipts/build.sha256
+          cat > lab/witness.py <<'PY'
+          import gdb,json,re
+          class Witness(gdb.Breakpoint):
+              def __init__(self,pc,reg):
+                  super().__init__("*"+hex(pc),internal=True)
+                  self.reg=reg
+              def stop(self):
+                  print("WITNESS "+json.dumps({"pc":int(gdb.parse_and_eval("$pc")),"target":int(gdb.parse_and_eval("$"+self.reg))}))
+                  return False
+          for line in open("receipts/static.txt"):
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m: Witness(int(m.group(1),16),m.group(2))
+          gdb.execute("set disable-randomization off")
+          gdb.execute("run")
+          PY
+          for n in 0 1; do
+            timeout 30 gdb -nx -q -batch -x lab/witness.py --args lab/subject "$n" > "receipts/train-$n.log" 2>&1
+          done
+          python3 - <<'PY'
+          import json,pathlib,hashlib,re,subprocess
+          r=pathlib.Path("receipts")
+          def bysite(n):
+              log=(r/f"train-{n}.log").read_text()
+              assert "exited normally" in log,log
+              d={}
+              for line in log.splitlines():
+                  if line.startswith("WITNESS "):
+                      x=json.loads(line.split("WITNESS ",1)[1])
+                      d.setdefault(x["pc"],set()).add(x["target"])
+              return d
+          a,b=bysite(0),bysite(1)
+          sites=[p for p in a.keys()&b.keys() if len(a[p])==len(b[p])==1 and a[p]!=b[p]]
+          assert len(sites)==1,(a,b,sites)
+          p=sites[0]
+          sections=subprocess.check_output(["objdump","-h","lab/subject"],text=True)
+          m=re.search(r"^\s*\d+\s+\.text\s+([0-9a-f]+)\s+([0-9a-f]+)",sections,re.M)
+          assert m
+          size,start=map(lambda x:int(x,16),m.groups())
+          targets=sorted(a[p]|b[p])
+          assert all(start<=x<start+size for x in [p]+targets)
+          (r/"observed.json").write_text(json.dumps({"sha256":hashlib.sha256(pathlib.Path("lab/subject").read_bytes()).hexdigest(),"pc":p,"targets":targets,"text":[start,start+size]},indent=2))
+          PY
+      - name: Retrieve public Ghidra release
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          "$JAVA_HOME/bin/java" -version 2> receipts/java-version.txt
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          curl --fail --silent --show-error --location --max-time 60 https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/tags/Ghidra_11.4.2_build > lab/release.json
+          python3 - <<'PY'
+          import json,pathlib
+          j=json.loads(pathlib.Path("lab/release.json").read_text())
+          a=[x for x in j["assets"] if x["name"]=="ghidra_11.4.2_PUBLIC_20250826.zip"]
+          assert len(a)==1
+          a=a[0]
+          assert a["browser_download_url"].startswith("https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.4.2_build/")
+          pathlib.Path("receipts/release-asset.json").write_text(json.dumps({k:a.get(k) for k in ("id","name","size","digest","browser_download_url")},indent=2))
+          pathlib.Path("lab/url").write_text(a["browser_download_url"])
+          PY
+          curl --fail --silent --show-error --location --max-time 240 "$(cat lab/url)" -o lab/ghidra.zip
+          python3 - <<'PY'
+          import pathlib,hashlib,json
+          a=json.loads(pathlib.Path("receipts/release-asset.json").read_text())
+          p=pathlib.Path("lab/ghidra.zip")
+          assert p.stat().st_size==a["size"]
+          with p.open("rb") as f: digest="sha256:"+hashlib.file_digest(f,"sha256").hexdigest()
+          expected=a.get("digest")
+          if expected: assert expected==digest
+          pathlib.Path("receipts/ghidra.sha256").write_text(digest+"\n")
+          pathlib.Path("receipts/ghidra-integrity.txt").write_text("release digest matched\n" if expected else "release digest unavailable; observed hash and size only\n")
+          PY
+          unzip -q lab/ghidra.zip -d lab
+      - name: Enrich disposable Ghidra program
+        run: |
+          set -euo pipefail
+          mkdir -p lab/scripts lab/project
+          cat > lab/scripts/ObserveCalls.py <<'PY'
+          #@category Analysis
+          import json
+          from ghidra.program.model.symbol import RefType, SourceType
+          args=getScriptArgs()
+          data=json.load(open(args[0]))
+          assert currentProgram.getExecutableSHA256().lower()==data["sha256"]
+          pc=toAddr(data["pc"])
+          ins=getInstructionAt(pc)
+          assert ins is not None and ins.getFlowType().isCall() and ins.getFlowType().isComputed()
+          rm=currentProgram.getReferenceManager()
+          def refs():
+              return sorted([(int(x.getToAddress().getOffset()),str(x.getReferenceType()),int(x.getOperandIndex()),bool(x.getReferenceType().isCall())) for x in rm.getReferencesFrom(pc)])
+          before=refs()
+          added=[]
+          for target in data["targets"]:
+              address=toAddr(target)
+              assert currentProgram.getMemory().contains(address)
+              if not any(x[0]==target and x[3] for x in refs()):
+                  rm.addMemoryReference(pc,address,RefType.COMPUTED_CALL,SourceType.ANALYSIS,0)
+                  added.append(target)
+          after=refs()
+          assert all(x in after for x in before),"existing reference removed"
+          assert all(any(x[0]==t and x[3] for x in after) for t in data["targets"])
+          with open(args[1],"w") as f: json.dump({"pc":data["pc"],"before":before,"after":after,"added":added},f)
+          PY
+          timeout 180 lab/ghidra_11.4.2_PUBLIC/support/analyzeHeadless lab/project synthetic -import lab/subject -scriptPath lab/scripts -postScript ObserveCalls.py "$PWD/receipts/observed.json" "$PWD/receipts/ghidra-refs.json" -deleteProject > receipts/ghidra.log 2>&1
+          test -s receipts/ghidra-refs.json
+      - name: Evaluate held-out destination and symbol oracle
+        run: |
+          set -euo pipefail
+          timeout 30 gdb -nx -q -batch -x lab/witness.py --args lab/subject 2 > receipts/heldout.log 2>&1
+          nm -S --defined-only lab/oracle > receipts/oracle-symbols.txt
+          python3 - <<'PY'
+          import pathlib,json
+          r=pathlib.Path("receipts")
+          obs=json.loads((r/"observed.json").read_text())
+          a=json.loads((r/"ghidra-refs.json").read_text())
+          sym={}
+          for line in (r/"oracle-symbols.txt").read_text().splitlines():
+              f=line.split()
+              if len(f)==4:sym[f[3]]=(int(f[0],16),int(f[1],16))
+          start,size=sym["dispatch"]
+          assert start<=obs["pc"]<start+size
+          truth={sym[k][0] for k in ("increment","decrement","transform")}
+          assert set(obs["targets"])=={sym["increment"][0],sym["decrement"][0]}
+          log=(r/"heldout.log").read_text()
+          assert "exited normally" in log
+          hold=[json.loads(x.split("WITNESS ",1)[1]) for x in log.splitlines() if x.startswith("WITNESS ")]
+          assert {x["target"] for x in hold if x["pc"]==obs["pc"]}=={sym["transform"][0]}
+          before={x[0] for x in a["before"] if x[3]}
+          after={x[0] for x in a["after"] if x[3]}
+          assert set(a["added"])<=set(obs["targets"])
+          assert before<=after and set(obs["targets"])<=after
+          assert not (after-before)-truth
+          assert len(after&truth)>=len(before&truth)
+          result={"truth_count":len(truth),"static_correct":len(before&truth),"enriched_correct":len(after&truth),"static_false":len(before-truth),"enriched_false":len(after-truth),"observed_count":len(obs["targets"]),"heldout_in_static":sym["transform"][0] in before,"heldout_in_enriched":sym["transform"][0] in after,"added":a["added"],"classification":"fixed-address synthetic ELF with runtime configuration; observations not exhaustive; same-author oracle; no promotion"}
+          (r/"summary.json").write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-analysis-b05b
+          path: receipts/
+          retention-days: 7
+      - name: Report terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/synthetic-analysis-b05b -f description='Synthetic analysis wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
