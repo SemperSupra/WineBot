@@ -1,0 +1,214 @@
+name: Matched debug and stripped rendering witness
+on:
+  push:
+    branches: [rdte/custom-render-witness-20261125]
+    paths: [.github/workflows/source-withheld-w1b.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind execution identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/custom-render-witness-20261125
+          mkdir -p receipts
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/source-withheld-w1b -f description='Public custom rendering experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Install distribution dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libx11-dev xvfb xauth xdotool binutils
+          dpkg-query -W libsdl2-dev libx11-dev xvfb xauth xdotool binutils > receipts/packages.txt
+          cc --version > receipts/compiler.txt
+      - name: Build original SDL fixture and independent X11 observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/fixture.c <<'C'
+          #include <SDL.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <unistd.h>
+          static void draw(SDL_Renderer *r,int state) {
+            SDL_Rect b={20,20,100,80}, s={160,20,120,80};
+            SDL_SetRenderDrawColor(r,20,20,20,255); SDL_RenderClear(r);
+            SDL_SetRenderDrawColor(r,30,70,110,255); SDL_RenderFillRect(r,&b);
+            if(state==0) SDL_SetRenderDrawColor(r,100,100,100,255);
+            else if(state==1) SDL_SetRenderDrawColor(r,20,160,60,255);
+            else SDL_SetRenderDrawColor(r,180,30,30,255);
+            SDL_RenderFillRect(r,&s); SDL_RenderPresent(r);
+          }
+          int main(int argc,char **argv) {
+            if(argc!=3 || SDL_Init(SDL_INIT_VIDEO)!=0) return 2;
+            SDL_Window *w=SDL_CreateWindow("witness-fixture",0,0,320,240,SDL_WINDOW_SHOWN);
+            if(!w) return 3;
+            SDL_Renderer *r=SDL_CreateRenderer(w,-1,SDL_RENDERER_SOFTWARE);
+            if(!r) return 4;
+            draw(r,0);
+            int done=0, state=0;
+            Uint32 start=SDL_GetTicks();
+            while(SDL_GetTicks()-start<25000 && !done) {
+              SDL_Event e;
+              if(!SDL_WaitEventTimeout(&e,100)) continue;
+              if(e.type==SDL_QUIT) done=1;
+              if(e.type==SDL_WINDOWEVENT && e.window.event==SDL_WINDOWEVENT_EXPOSED) draw(r,state);
+              if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT &&
+                 e.button.x>=20 && e.button.x<120 && e.button.y>=20 && e.button.y<100 && !state) {
+                FILE *f=fopen(argv[2],"wb"); int ok=0;
+                if(f) {
+                  int a=fputs("committed:fixture-v1\n",f);
+                  int b=fflush(f), c=fsync(fileno(f)), d=fclose(f);
+                  ok=a>=0 && b==0 && c==0 && d==0;
+                }
+                state=(ok || strcmp(argv[1],"misleading")==0)?1:2;
+                draw(r,state);
+              }
+            }
+            SDL_DestroyRenderer(r); SDL_DestroyWindow(w); SDL_Quit();
+            return 0;
+          }
+          C
+          cat > receipts/observer.c <<'C'
+          #include <X11/Xlib.h>
+          #include <X11/Xutil.h>
+          #include <stdio.h>
+          static unsigned char rgb(unsigned long p,unsigned long m) {
+            if(!m) return 0;
+            while(!(m&1)){p>>=1;m>>=1;}
+            return (unsigned char)(((p&m)*255)/m);
+          }
+          int main(void) {
+            Display *d=XOpenDisplay(NULL); if(!d)return 2;
+            Window root=DefaultRootWindow(d);
+            XImage *i=XGetImage(d,root,0,0,320,240,AllPlanes,ZPixmap);
+            if(!i)return 3;
+            printf("P6\n320 240\n255\n");
+            for(int y=0;y<240;y++)for(int x=0;x<320;x++){
+              unsigned long p=XGetPixel(i,x,y);
+              unsigned char b[3]={rgb(p,i->red_mask),rgb(p,i->green_mask),rgb(p,i->blue_mask)};
+              if(fwrite(b,1,3,stdout)!=3)return 4;
+            }
+            XDestroyImage(i);XCloseDisplay(d);return fflush(stdout)!=0;
+          }
+          C
+          cc -std=gnu11 -Wall -Wextra -Werror -O0 -g receipts/fixture.c $(pkg-config --cflags --libs sdl2) -o fixture
+          cc -std=c11 -Wall -Wextra -Werror -O2 receipts/observer.c -lX11 -o observer
+          cp fixture fixture-stripped
+          strip --strip-all fixture-stripped
+          python3 - <<'PY'
+          import hashlib,json,pathlib,struct,subprocess
+          def identity(name):
+              b=pathlib.Path(name).read_bytes()
+              assert b[:6]==b"\x7fELF\x02\x01"
+              h=struct.unpack_from("<16sHHIQQQIHHHHHH",b)
+              segments=[]
+              for i in range(h[10]):
+                  t,f,o,v,p,fs,ms,a=struct.unpack_from("<IIQQQQQQ",b,h[5]+i*h[9])
+                  if t==1 and f&1:
+                      segments.append([v,fs,ms,hashlib.sha256(b[o:o+fs]).hexdigest()])
+              assert segments
+              sections=subprocess.check_output(["readelf","-SW",name],text=True)
+              return {"sha256":hashlib.sha256(b).hexdigest(),"entry":h[4],"exec_segments":segments,"debug_info":".debug_info" in sections,"symtab":".symtab" in sections}
+          d,s=identity("fixture"),identity("fixture-stripped")
+          assert d["entry"]==s["entry"] and d["exec_segments"]==s["exec_segments"]
+          assert d["sha256"]!=s["sha256"] and d["debug_info"] and d["symtab"] and not s["debug_info"] and not s["symtab"]
+          pathlib.Path("receipts/identity.json").write_text(json.dumps({"debug":d,"stripped":s},indent=2)+"\n")
+          PY
+          sha256sum receipts/*.c fixture fixture-stripped observer > receipts/build.sha256
+          cat > receipts/run.py <<'PY'
+          import hashlib,json,os,pathlib,subprocess,time
+          R=pathlib.Path("receipts")
+          H=b"P6\n320 240\n255\n"
+          BASE=(100,100,100)
+          GREEN=(20,160,60)
+          RED=(180,30,30)
+          def capture():
+              b=subprocess.check_output(["./observer"],timeout=3)
+              assert b.startswith(H) and len(b)==len(H)+320*240*3
+              p=len(H)+(60*320+220)*3
+              return b,tuple(b[p:p+3])
+          def wait_color(target):
+              until=time.monotonic()+8
+              while time.monotonic()<until:
+                  b,c=capture()
+                  if c==target: return b
+                  time.sleep(.08)
+              raise AssertionError((target,c))
+          def hash_bytes(b): return hashlib.sha256(b).hexdigest()
+          def trial(lane,exe,name,fail,target):
+              label=lane+'-'+name
+              p=pathlib.Path("out-"+label).resolve()
+              if fail:p.mkdir()
+              env=dict(os.environ,SDL_VIDEODRIVER="x11")
+              t=time.monotonic_ns()
+              app=subprocess.Popen([exe,name,str(p)],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+              try:
+                  before=wait_color(BASE)
+                  assert not p.is_file()
+                  (R/(label+"-before.ppm")).write_bytes(before)
+                  # XTEST action at actual rendered coordinates; this is an actuator receipt,
+                  # not an independent input-event trace.
+                  click_before=time.monotonic_ns()
+                  subprocess.run(["xdotool","mousemove","60","60","click","1"],check=True,timeout=5)
+                  click_after=time.monotonic_ns()
+                  after=wait_color(target)
+                  observed=time.monotonic_ns()
+                  (R/(label+"-after.ppm")).write_bytes(after)
+                  actual=p.read_bytes() if p.is_file() else None
+                  if actual is not None: (R/(label+"-saved.bin")).write_bytes(actual)
+                  persisted=actual==b"committed:fixture-v1\n"
+                  assert persisted == (not fail)
+                  assert not fail or p.is_dir()
+                  claimed=target==GREEN
+                  return {"lane":lane,"case":name,"before_rgb":BASE,"after_rgb":target,
+                    "before_sha256":hash_bytes(before),"after_sha256":hash_bytes(after),
+                    "reported_success_color":claimed,"verified_file_contents":persisted,
+                    "contradiction":claimed!=persisted,"start_ns":t,
+                    "click_begin_ns":click_before,"click_end_ns":click_after,
+                    "frame_observed_ns":observed,"file_sha256":hash_bytes(actual) if actual is not None else None}
+              finally:
+                  app.terminate()
+                  try: app.communicate(timeout=3)
+                  except subprocess.TimeoutExpired:
+                      app.kill();app.communicate(timeout=3)
+                  if p.is_file():p.unlink()
+                  elif p.is_dir():p.rmdir()
+          results=[trial(lane,exe,name,fail,target) for lane,exe in [("debug","./fixture"),("stripped","./fixture-stripped")] for name,fail,target in [("normal",False,GREEN),("truthful",True,RED),("misleading",True,GREEN)]]
+          (R/"summary.json").write_text(json.dumps(results,indent=2)+"\n")
+          assert [r["contradiction"] for r in results]==[False,False,True]*2
+          for a,b in zip(results[:3],results[3:]):
+              for k in ("before_sha256","after_sha256","file_sha256","contradiction","verified_file_contents"): assert a[k]==b[k],(k,a,b)
+          (R/"classification.txt").write_text("DEVELOPMENTAL MATCHED DEBUG/STRIPPED CONTROL; EXECUTABLE SEGMENT IDENTITY ONLY; SAME AUTHOR FIXTURE AND ORACLE; NOT BLIND RECOVERY, INPUT TRACE, FULL MEMORY EQUIVALENCE OR RELEASE QUALIFICATION\n")
+          PY
+          xvfb-run -a -s "-screen 0 320x240x24 -nolisten tcp" python3 receipts/run.py
+          sha256sum receipts/*.ppm receipts/*.bin receipts/*.py receipts/identity.json receipts/summary.json > receipts/evidence.sha256
+          test "$(du -sb receipts | cut -f1)" -le 26214400
+      - name: Retain bounded public evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-withheld-w1b
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal execution URL
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/custom-render-witness-20261125
+          state=failure
+          if test "$JOB_STATUS" = success; then state=success; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/source-withheld-w1b -f description='Public custom rendering experiment terminal' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
