@@ -1,0 +1,314 @@
+name: VirtIO concurrent Linux and QEMU request witnesses
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-cross-vantage-v18d.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind execution and find prior public run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-cross-vantage-v18d -f description='Public Linux guest experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Retrieve exact public source-built executables
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-source-binaries-v17b
+          run-id: 45625601744
+          github-token: ${{ github.token }}
+          path: binaries
+      - name: Verify independent executable and firmware pins
+        run: |
+          set -euo pipefail
+          cat > receipts/expected.sha256 <<'EOF'
+          4d567f217c247a9d39f3d5e364992dbf16e2eb624fc1eee09c70828aae40dda5  binaries/stock-qemu-system-x86_64
+          af5001a9a1c8e1d90436455b8f69ea4be8cd3ddbf6081b98a1d886dc2b24f5e6  binaries/candidate-qemu-system-x86_64
+          ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650  binaries/pc-bios/bios-256k.bin
+          cdf057a71b07e3b52b19cbe210bdefa59250d01a9810b960f7fe1f98eed95a27  binaries/pc-bios/kvmvapic.bin
+          9c49e255340c78fc12e54ed043462bca02fb7fca29b7cfab62ff88a5344b6950  binaries/pc-bios/linuxboot_dma.bin
+          08c3841ff05a3d374817035181743ec8fbb9f05d04e63d00cb5298a9acac2cb6  binaries/candidate.patch
+          EOF
+          sha256sum -c receipts/expected.sha256
+          test "$(cat binaries/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod u+x binaries/*qemu-system-x86_64
+          cp binaries/candidate.patch binaries/upstream-sha.txt receipts/
+      - name: Retrieve qualified guest kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-guest-boot-v18c2
+          run-id: 45637343010
+          github-token: ${{ github.token }}
+          path: guest-kernel
+      - name: Install public packages and construct guest
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          binaries/candidate-qemu-system-x86_64 --version > receipts/qemu-version.txt
+          ldd binaries/candidate-qemu-system-x86_64 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          dpkg-query -W qemu-system-x86 qemu-utils busybox-static linux-image-virtual > receipts/packages.txt
+          echo '0e8033cf855ebe91e6d35c5e3f2f09a85687ba1f715ef7132cf11b6fbef30b4b  guest-kernel/bzImage' | sha256sum -c -
+          cp guest-kernel/bzImage kernel.bin
+          mkdir -p root/{bin,dev,proc,sys}
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > receipts/workload.c <<'C'
+          #define _GNU_SOURCE
+          #include <errno.h>
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          #include <pthread.h>
+          #include <time.h>
+          static void die(const char *s){perror(s);exit(1);}
+          static void pause_ms(long ms){
+              struct timespec t={.tv_sec=ms/1000,.tv_nsec=(ms%1000)*1000000};
+              while(nanosleep(&t,&t))if(errno!=EINTR)die("sleep");
+          }
+          struct task {int fd,sector;unsigned char pattern;long stagger;};
+          static void *writer(void *v){
+              struct task *t=v;unsigned char *buf=NULL;
+              if(posix_memalign((void **)&buf,4096,4096))exit(3);
+              memset(buf,t->pattern,512);
+              pause_ms(t->stagger);
+              printf("WRITE_BEGIN sector=%d\n",t->sector);
+              errno=0;
+              ssize_t n=pwrite(t->fd,buf,512,(off_t)t->sector*512);int e=errno;
+              printf("WRITE sector=%d result=%zd errno=%d\n",t->sector,n,e);
+              if(n!=512){errno=e;die("write");}
+              free(buf);return NULL;
+          }
+          static void rd(int fd,int sec,unsigned char pat){
+              unsigned char *buf=NULL;if(posix_memalign((void **)&buf,4096,4096))exit(3);
+              memset(buf,0xcc,512);
+              if(pread(fd,buf,512,(off_t)sec*512)!=512)die("read");
+              for(int i=0;i<512;i++)if(buf[i]!=pat)exit(4);
+              printf("READ sector=%d pattern=%02x PASS\n",sec,pat);
+              free(buf);
+          }
+          int main(int ac,char **av){
+              if(ac!=2||(strcmp(av[1],"control")&&strcmp(av[1],"delay")))return 2;
+              setvbuf(stdout,NULL,_IONBF,0);
+              int fd=open("/dev/vda",O_RDWR|O_DIRECT);if(fd<0)die("open");
+              struct task a={fd,101,0xa6,0},b={fd,203,0x33,20};
+              pthread_t ta,tb;
+              if(pthread_create(&ta,NULL,writer,&a)||pthread_create(&tb,NULL,writer,&b))exit(5);
+              if(pthread_join(ta,NULL)||pthread_join(tb,NULL))exit(6);
+              rd(fd,101,0xa6);rd(fd,203,0x33);
+              if(fsync(fd))die("fsync");
+              puts("FSYNC PASS");if(close(fd))die("close");
+              printf("GUEST_PASS %s\n",av[1]);return 0;
+          }
+          C
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -static -pthread receipts/workload.c -o root/workload
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          $B uname -r
+          for d in /sys/bus/virtio/devices/*; do
+            echo "VIRTIO_DEVICE $d"
+            $B readlink "$d/driver" || true
+            if [ -r "$d/features" ]; then echo "FEATURES $($B cat "$d/features")"; fi
+          done
+          mode=control
+          case " $($B cat /proc/cmdline) " in *" rdte_mode=error "*) mode=error;; *" rdte_mode=delay "*) mode=delay;; esac
+          T=/sys/kernel/tracing
+          $B mount -t tracefs tracefs "$T"
+          echo 0 > "$T/tracing_on"
+          echo 512 > "$T/buffer_size_kb"
+          echo > "$T/trace"
+          echo 1 > "$T/events/virtio_observe/virtio_buffer/enable"
+          echo 1 > "$T/events/block/block_rq_issue/enable"
+          echo 1 > "$T/events/block/block_rq_complete/enable"
+          echo "GUEST_DEVICE $($B cat /sys/block/vda/dev)"
+          echo GUEST_FORMAT_BEGIN
+          $B cat "$T/events/block/block_rq_issue/format" "$T/events/block/block_rq_complete/format"
+          echo GUEST_FORMAT_END
+          echo 1 > "$T/tracing_on"
+          if /workload "$mode"; then echo RDTE_INIT_PASS; else echo RDTE_INIT_FAIL; fi
+          echo 0 > "$T/tracing_on"
+          echo GUEST_TRACE_BEGIN
+          $B cat "$T/trace"
+          echo GUEST_TRACE_END
+          echo GUEST_STATS_BEGIN
+          $B cat "$T/per_cpu/cpu0/stats"
+          echo GUEST_STATS_END
+          echo 0 > "$T/events/block/block_rq_issue/enable"
+          echo 0 > "$T/events/block/block_rq_complete/enable"
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz root/workload "$(command -v qemu-system-x86_64)" "$(command -v busybox)" > receipts/binary.sha256
+      - name: Paired native driver experiment
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import hashlib,json,pathlib,re,subprocess,time
+          P=pathlib.Path; R=P("receipts")
+          Q=str(P("binaries/candidate-qemu-system-x86_64").resolve())
+          initial=bytes(4*1024*1024); expected=bytearray(initial)
+          expected[101*512:102*512]=bytes([0xa6])*512; expected[203*512:204*512]=bytes([0x33])*512
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          h=subprocess.run([Q,"-trace","help"],capture_output=True,text=True,timeout=10,check=True)
+          ht=h.stdout+h.stderr;(R/"trace-help.txt").write_text(ht[:1024*1024])
+          names=["virtqueue_buffer_pop","virtqueue_buffer_fill_attempt","virtqueue_pop","virtqueue_fill","virtqueue_flush","virtqueue_host_advance","virtio_blk_req_complete","virtio_blk_handle_write","virtio_blk_handle_read"]
+          present=[n for n in names if re.search(r"(?m)^\s*"+n+r"(?:\s|$)",ht)]
+          assert set(names)==set(present),present
+          def phase(packed,mode):
+              name=("packed" if packed else "split")+"-"+mode
+              disk=P(name+".raw").resolve(); disk.write_bytes(initial)
+              cfg=R/(name+".conf")
+              if mode!="control":
+                  cfg.write_text('[inject-error]\nevent = "none"\niotype = "write"\nsector = "101"\nonce = "on"\nerrno = "'+("5" if mode=="error" else "0")+'"\n'+('delay-ns = "100000000"\n' if mode=="delay" else ""))
+              target=f"blkdebug:{cfg.resolve()}:{disk}" if mode!="control" else str(disk)
+              log=R/(name+".serial");trace=R/(name+".trace")
+              argv=[Q,"-L",str(P("binaries/pc-bios").resolve()),"-accel","tcg","-machine","pc","-m","512","-smp","1","-nodefaults","-nic","none","-display","none","-monitor","none","-serial","stdio","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append",f"console=ttyS0 rdinit=/init panic=-1 quiet rdte_mode={mode}","-drive",f"file={target},format=raw,if=none,id=d,cache=none,werror=report,rerror=report","-device","virtio-blk-pci,drive=d,disable-legacy=on,packed="+("on" if packed else "off")]
+              ev=R/(name+".events");ev.write_text("\n".join(present)+"\n")
+              argv+=["-trace","events="+str(ev),"-D",str(trace)]
+              (R/(name+"-argv.json")).write_text(json.dumps(argv,indent=2))
+              with log.open("wb") as out:
+                  run=subprocess.run(argv,stdout=out,stderr=out,timeout=120)
+              output=log.read_text(errors="replace");actual=disk.read_bytes()
+              tt=trace.read_text(errors="replace") if trace.exists() else ""
+              counts={n:len(re.findall(r"\b"+n+r"\b",tt)) for n in present}
+              writes=[tuple(map(int,m)) for m in re.findall(r"WRITE sector=(\d+) result=(-?\d+) errno=(\d+)",output)]
+              features=re.findall(r"FEATURES ([01]+)",output)
+              advance=re.findall(r"virtqueue_host_advance\s+queue\s+\d+\s+packed\s+([01])",tt)
+              result={"name":name,"mode":mode,"packed":packed,"exit":run.returncode,"whole_disk_match":actual==expected,"disk_sha256":sha(actual),"expected_sha256":sha(expected),"guest_pass":f"GUEST_PASS {mode}" in output and "RDTE_INIT_PASS" in output,"driver_observed":"virtio_blk" in output,"features":features,"trace_counts":counts,"writes":writes}
+              (R/(name+".json")).write_text(json.dumps(result,indent=2))
+              assert run.returncode==0 and result["guest_pass"] and result["driver_observed"],result
+              assert len(features)==1 and len(features[0])>34 and features[0][34]==str(int(packed)),features
+              assert sorted(writes)==[(101,512,0),(203,512,0)],writes
+              assert "FSYNC PASS" in output and actual==expected,result
+              assert advance and len(advance)==counts["virtqueue_host_advance"] and all(v==str(int(packed)) for v in advance),counts
+              expected_ops=[("W",101,1,0),("W",203,1,0),("R",101,1,0),("R",203,1,0)]
+              device=re.findall(r"GUEST_DEVICE (\d+):(\d+)",output)
+              assert len(device)==1,device
+              major,minor=device[0]
+              guest_text=output.split("GUEST_TRACE_BEGIN",1)[1].split("GUEST_TRACE_END",1)[0]
+              stats=output.split("GUEST_STATS_BEGIN",1)[1].split("GUEST_STATS_END",1)[0]
+              for field in ("overrun","commit overrun","dropped events"):
+                  assert re.search(r"(?m)^\s*"+field+r":\s+0\s*$",stats),stats
+              gi=[];gc=[];ga=set();gmax=0
+              for line in guest_text.splitlines():
+                  m=re.search(r"block_rq_(issue|complete):\s+(\d+),(\d+)\s+([RW]\S*)\s+(?:\d+\s+)?\([^)]*\)\s+(\d+)\s+\+\s+(\d+)\s+\[([^]]*)\]",line)
+                  if not m:continue
+                  kind,ma,mi,op,sec,n,last=m.groups()
+                  if (ma,mi)!=(major,minor) or int(sec) not in (101,203):continue
+                  k=(op[0],int(sec),int(n))
+                  if kind=="issue":
+                      assert k not in ga,("ambiguous live guest key",line)
+                      ga.add(k);gi.append(k);gmax=max(gmax,len(ga))
+                  else:
+                      assert k in ga,("orphan guest completion",line)
+                      ga.remove(k);gc.append((*k,int(last)))
+              assert not ga and sorted(gi)==sorted(x[:3] for x in expected_ops) and sorted(gc)==sorted(expected_ops),(gi,gc)
+              pending={}; generations={}; hi=[];hc=[];relations=[];hmax=0
+              for line in tt.splitlines():
+                  m=re.search(r"virtio_blk_handle_(write|read)\s+vdev\s+(\S+)\s+req\s+(\S+)\s+sector\s+(\d+)\s+nsectors\s+(\d+)",line)
+                  if m:
+                      op,dev,req,sec,n=m.groups()
+                      if int(sec) not in (101,203):continue
+                      k=(dev,req);opkey=(op[0].upper(),int(sec),int(n))
+                      assert k not in pending and all(v[0]!=opkey for v in pending.values()),("ambiguous live host key",line)
+                      gen=generations.get(k,0)+1;generations[k]=gen
+                      pending[k]=(opkey,gen);hi.append(opkey);hmax=max(hmax,len(pending));continue
+                  m=re.search(r"virtio_blk_req_complete\s+vdev\s+(\S+)\s+req\s+(\S+)\s+status\s+(\d+)",line)
+                  if m:
+                      dev,req,status=m.groups();k=(dev,req)
+                      if k not in pending:continue
+                      opkey,gen=pending.pop(k);status=int(status);assert status==0,line
+                      hc.append((*opkey,0))
+                      relations.append({"operation":opkey,"host_handle_generation":gen,"host_status":status})
+              assert not pending and sorted(hi)==sorted(gi) and sorted(hc)==sorted(gc),(hi,hc,gi,gc)
+              # Delayed first write must actually overlap and finish after the unrelated write.
+              target=("W",101,1);other=("W",203,1)
+              inversion=gi.index(target)<gi.index(other) and hi.index(target)<hi.index(other) and gc.index((*other,0))<gc.index((*target,0)) and hc.index((*other,0))<hc.index((*target,0))
+              result["cross_layer"]={"guest_issue":gi,"guest_complete":gc,"host_issue":hi,"host_complete":hc,"relations":relations,"guest_peak_outstanding":gmax,"host_peak_outstanding":hmax,"completion_inversion":inversion,"guest_loss_stats":stats.strip(),"scope":"unique nonadjacent request keys; no timestamp joins or global request ID"}
+              (R/(name+".json")).write_text(json.dumps(result,indent=2))
+              if mode=="delay":assert gmax>=2 and hmax>=2 and inversion,result
+              guest_active=set(); guest_pairs=[]
+              for m in re.finditer(r"virtio_buffer: dev=(\d+) queue=(\d+) id=(\d+) packed=([01]) consume=([01]) len=(\d+)",guest_text):
+                  dev,q,bid,ring,consume,length=m.groups()
+                  assert dev=="0" and ring==str(int(packed))
+                  key=(q,bid)
+                  if consume=="0":
+                      assert key not in guest_active
+                      guest_active.add(key)
+                  else:
+                      assert key in guest_active
+                      guest_active.remove(key);guest_pairs.append(key)
+              assert not guest_active and guest_pairs
+              # Host boot traffic precedes guest trace enable; compare workload suffix.
+              host_pairs=re.findall(r"virtqueue_buffer_fill_attempt\s+dev \S+ queue (\d+) elem \S+ id (\d+) ndescs \d+ packed [01]",tt)
+              assert host_pairs[-len(guest_pairs):]==guest_pairs,(host_pairs,guest_pairs)
+              result["shared_identity_pairs"]=guest_pairs
+              active={}; generations={}; peak=0; pops=0; fills=0
+              for line in tt.splitlines():
+                  m=re.search(r"virtqueue_buffer_(pop|fill_attempt)\s+dev (\S+) queue (\d+) elem (\S+) id (\d+) ndescs (\d+) packed ([01])",line)
+                  if not m:continue
+                  kind,dev,queue,elem,bid,ndescs,ring=m.groups()
+                  assert ring==str(int(packed)) and int(ndescs)>0,line
+                  key=(dev,queue,bid)
+                  if kind=="pop":
+                      assert key not in active,line
+                      generations[key]=generations.get(key,0)+1
+                      active[key]=(elem,ndescs);pops+=1;peak=max(peak,len(active))
+                  else:
+                      assert active.pop(key)==(elem,ndescs),line
+                      fills+=1
+              assert not active and pops==fills==counts["virtqueue_pop"]==counts["virtqueue_buffer_pop"]==counts["virtqueue_buffer_fill_attempt"] and pops>0
+              if mode=="delay":assert peak>=2
+              result["descriptor_witness"]={"pops":pops,"fills":fills,"peak":peak,"reused_keys":sum(v>1 for v in generations.values()),"scope":"single boot, no reset, host-only protocol identity"}
+              (R/(name+".json")).write_text(json.dumps(result,indent=2))
+              disk.unlink();return result
+          results=[]
+          for packed in (False,True):
+              for mode in ("control","delay"):
+                  results.append(phase(packed,mode))
+                  (R/"summary.json").write_text(json.dumps(results,indent=2))
+          (R/"classification.txt").write_text("NATIVE LINUX BLOCK ISSUE/COMPLETE VS HOST REQUEST ISSUE/STATUS; TWO NONADJACENT CONCURRENT WRITES; CONTROL/DELAY; REQUIRE ACTUAL OVERLAP AND COMPLETION INVERSION IN DELAY ARMS; NO GENERAL ID OR PUBLICATION CLAIM\n")
+          PY
+          python3 receipts/run.py
+      - name: Retain public evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-cross-vantage-v18d
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-cross-vantage-v18d -f description='Public Linux guest wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
