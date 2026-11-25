@@ -1,0 +1,194 @@
+name: Public Lua feedback-directed workload comparison
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/lua-recovery-b06c.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir -p receipts lab
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/lua-recovery-b06c -f description='Synthetic experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build unmodified public Lua and collect runtime observations
+        run: |
+          set -euo pipefail
+          command -v gdb || { sudo apt-get update -qq; sudo apt-get install -y -qq gdb; }
+          curl -fsSL --max-time 60 https://www.lua.org/ftp/lua-5.4.9.tar.gz -o lab/lua.tar.gz
+          echo '2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6  lab/lua.tar.gz' | sha256sum -c -
+          tar -xzf lab/lua.tar.gz -C lab
+          make -C lab/lua-5.4.9 -j2 linux MYCFLAGS='-g -fno-pie' MYLDFLAGS=-no-pie > receipts/build.log 2>&1
+          cp lab/lua-5.4.9/src/lua lab/oracle
+          cp lab/oracle lab/subject
+          strip --strip-all lab/subject
+          readelf -h lab/subject > receipts/elf.txt
+          grep -q 'Type:.*EXEC' receipts/elf.txt
+          sha256sum lab/lua.tar.gz lab/oracle lab/subject > receipts/build.sha256
+          cc --version > receipts/compiler.txt
+          gdb --version > receipts/gdb-version.txt
+          objdump -d -j .text lab/subject > receipts/static.txt
+          cat > lab/workloads.py <<'PY'
+          # Ordinary Lua tasks, not selected using source or symbol names.
+          # Pool order and group labels are predeclared, not derived from traces.
+          tasks={
+            "text0":("text",'local t={}; for k,v in ("pear=4;apple=2;plum=3"):gmatch("(%a+)=(%d+)") do t[#t+1]={k,tonumber(v)} end; table.sort(t,function(a,b)return a[2]<b[2] end); assert(t[1][1]=="apple"); print("WORKLOAD_OK",string.upper(t[2][1]))'),
+            "control0":("control",'local c=coroutine.create(function() coroutine.yield(11);return 22 end);local a,b=coroutine.resume(c);assert(a and b==11);a,b=coroutine.resume(c);assert(a and b==22);assert(not pcall(function() error("expected") end));print("WORKLOAD_OK",math.floor(math.sqrt(81)))'),
+            "text1":("text",'local x=string.gsub("a12 b34","%d+",function(s)return tostring(tonumber(s)*2) end);assert(x=="a24 b68");print("WORKLOAD_OK",string.format("%s:%d",x,#x))'),
+            "text2":("text",'local t={"alpha","beta","gamma"};local s=table.concat(t,",");local a,b=string.find(s,"beta",1,true);assert(a==7 and b==10);print("WORKLOAD_OK",string.reverse(s))'),
+            "control1":("control",'local o=setmetatable({},{__index=function(_,k)return k.."!" end,__call=function(_,n)return n+5 end});assert(o.hello=="hello!" and o(7)==12);print("WORKLOAD_OK",type(o))'),
+            "control2":("control",'local function f()return error("expected") end;local ok,e=xpcall(f,function(x)return "handled:"..x end);assert(not ok and e:find("handled:",1,true));print("WORKLOAD_OK",select("#",1,2,3))'),
+            "io1":("io",'local f=assert(io.tmpfile());assert(f:write("one\\ntwo\\n"));assert(f:seek("set",0));local t={};for l in f:lines() do t[#t+1]=l end;assert(#t==2 and t[2]=="two");assert(f:close());print("WORKLOAD_OK",table.concat(t,":"))'),
+            "io2":("io",'local f=assert(io.tmpfile());assert(f:write(string.pack("<I4",12345)));assert(f:seek("set",0));local b=f:read(4);assert(string.unpack("<I4",b)==12345);assert(f:close());print("WORKLOAD_OK",#b)'),
+            "numeric1":("numeric",'local a=math.floor(math.sqrt(81));assert(a==9 and math.max(1,5,2)==5);math.randomseed(1,2);local n=math.random(1,10);assert(n>=1 and n<=10);print("WORKLOAD_OK",a)'),
+            "numeric2":("numeric",'local x=string.pack("<I4d",77,3.5);local a,b=string.unpack("<I4d",x);assert(a==77 and b==3.5);print("WORKLOAD_OK",math.type(a),math.abs(-3))'),
+            "runtime1":("runtime",'local n=0;debug.sethook(function()n=n+1 end,"c");local function f()return 3 end;assert(f()==3);debug.sethook();assert(n>0);print("WORKLOAD_OK",n)'),
+            "runtime2":("runtime",'local t=setmetatable({},{__mode="v"});t[1]={};collectgarbage("collect");assert(t[1]==nil);local f=assert(load("return 6*7"));assert(f()==42);print("WORKLOAD_OK",collectgarbage("count")>0)'),
+          }
+          held={
+            "hold_file":'local f=assert(io.tmpfile());assert(f:write("sample\\n"));assert(f:seek("set",0));assert(f:read("*l")=="sample");assert(f:close());print("WORKLOAD_OK",utf8.len("hello"))',
+            "hold_binary":'local x=string.pack("<I4",1234);assert(string.unpack("<I4",x)==1234);assert(table.concat({"a","b","c"},":")=="a:b:c");print("WORKLOAD_OK",math.max(1,4,2))',
+            "hold_runtime":'local a=assert(load("return function(x) return x*2 end"))();assert(a(9)==18);local k,v=debug.getlocal(1,1);assert(k~=nil);print("WORKLOAD_OK",math.tointeger(18.0))',
+          }
+          PY
+          cat > lab/witness.py <<'PY'
+          import gdb,json,re
+          seen=set()
+          count=0
+          class Witness(gdb.Breakpoint):
+              def __init__(self,pc,reg):
+                  super().__init__("*"+hex(pc),internal=True)
+                  self.reg=reg
+              def stop(self):
+                  global count
+                  count+=1
+                  pair=(int(gdb.parse_and_eval("$pc")),int(gdb.parse_and_eval("$"+self.reg)))
+                  if pair not in seen:
+                      seen.add(pair)
+                      print("WITNESS "+json.dumps(pair))
+                  if count>20000:
+                      raise gdb.GdbError("observation budget exceeded")
+                  return False
+          for line in open("receipts/static.txt"):
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m: Witness(int(m.group(1),16),m.group(2))
+          gdb.execute("set disable-randomization off")
+          gdb.execute("run")
+          print("WITNESS_COUNT "+str(count))
+          PY
+          cp lab/workloads.py receipts/workloads.py
+          cp lab/witness.py receipts/witness.py
+          cat > lab/compare.py <<'PY'
+          import pathlib,json,re,subprocess,time,hashlib,sys
+          from workloads import tasks,held
+          R=pathlib.Path("receipts"); L=pathlib.Path("lab")
+          m=re.search(r"^\s*\d+\s+\.text\s+([0-9a-f]+)\s+([0-9a-f]+)",subprocess.check_output(["objdump","-h","lab/subject"],text=True),re.M)
+          assert m
+          size,lo=map(lambda x:int(x,16),m.groups()); hi=lo+size
+          sites={int(m.group(1),16) for l in (R/"static.txt").read_text().splitlines() if (m:=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",l))}
+          assert sites
+          def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          def observe(arm,key,code):
+              p=L/(key+".lua");p.write_text(code+"\n")
+              t=time.monotonic_ns()
+              run=subprocess.run(["gdb","-nx","-q","-batch","-x","lab/witness.py","--args","lab/subject",str(p)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=45)
+              dt=time.monotonic_ns()-t
+              log=run.stdout.decode("utf-8","replace")
+              (R/(arm+"-"+key+".log")).write_text(log)
+              assert run.returncode==0 and "exited normally" in log and "WORKLOAD_OK" in log and "observation budget exceeded" not in log,(arm,key)
+              counts=re.findall(r"^WITNESS_COUNT (\d+)$",log,re.M)
+              assert len(counts)==1
+              raw={tuple(json.loads(l.split(" ",1)[1])) for l in log.splitlines() if l.startswith("WITNESS ")}
+              edges={e for e in raw if lo<=e[0]<hi and lo<=e[1]<hi}
+              assert all(p in sites for p,q in edges)
+              return edges,{"task":key,"elapsed_ns":dt,"log_bytes":len(run.stdout),"hits":int(counts[0]),"edges":sorted(edges),"script_sha256":sha(p),"external_edges":len(raw)-len(edges)}
+          # Same two seeds and four additional observations per arm.
+          # Decisions have no access to unexecuted traces or held-out observations.
+          seeds=["text0","control0"]
+          fixed=["text1","control1","io1","numeric1"]
+          arms={}; decisions={}
+          for arm in ["A_fixed","B_gain","C_gap_challenge"]:
+              known=set(); used=[]; records=[]; gains={}; plan=[]
+              for step in range(6):
+                  if step<2: key=seeds[step];scores={}
+                  else:
+                      remaining=[k for k in tasks if k not in used]
+                      def score(k):
+                          g=tasks[k][0]; prior=gains.get(g,[])
+                          # Exploit known productive workload groups.
+                          avg=sum(v[0] for v in prior)/len(prior) if prior else 0
+                          if arm=="B_gain":return avg
+                          # Exploration of unknown groups and recovery-gap signal.
+                          # The bonus is an explicit heuristic, not inferred semantics.
+                          newsite=sum(v[1] for v in prior)/len(prior) if prior else 0
+                          bonus=(len(sites)-len({p for p,q in known}))/len(sites)*8 if not prior else 0
+                          return avg+3*newsite+bonus
+                      scores={k:score(k) for k in remaining}
+                      if arm=="A_fixed":key=fixed[step-2]
+                      elif arm=="C_gap_challenge" and step==5:
+                          # Reserve last query for an unvisited group when feasible.
+                          unvisited=[k for k in remaining if tasks[k][0] not in gains]
+                          key=max(unvisited or remaining,key=lambda k:scores[k])
+                      else:key=max(remaining,key=lambda k:scores[k])
+                  assert key not in used
+                  group,code=tasks[key]
+                  before_sites={p for p,q in known}
+                  edges,rec=observe(arm,key,code)
+                  new=edges-known; newsite={p for p,q in edges}-before_sites
+                  gains.setdefault(group,[]).append((len(new),len(newsite)))
+                  plan.append({"step":step,"selected":key,"scores":scores,"prior_edges":len(known),"prior_sites":len(before_sites),"new_edges":len(new),"new_sites":len(newsite)})
+                  known|=edges;used.append(key);records.append(rec)
+              arms[arm]={"known":sorted(known),"records":records,"queries":len(records),"distinct_sites":len({p for p,q in known}),"distinct_edges":len(known),"hits":sum(r["hits"] for r in records),"elapsed_ns":sum(r["elapsed_ns"] for r in records),"log_bytes":sum(r["log_bytes"] for r in records)}
+              decisions[arm]=plan
+          # Holdout is run after all arms; not available during decisions.
+          truth=set(); tests=[]
+          for k,code in held.items():
+              e,rec=observe("evaluation",k,code);truth|=e;tests.append(rec)
+          for arm,r in arms.items():
+              known=set(map(tuple,r["known"]))
+              r["heldout_edges"]=len(truth);r["heldout_hits"]=len(known&truth);r["heldout_missed"]=len(truth-known)
+          summary={k:{p:v for p,v in r.items() if p not in ("known","records")} for k,r in arms.items()}
+          result={"subject_sha256":sha(L/"subject"),"static_sites":sorted(sites),"budget_queries":6,"summary":summary,"arms":arms,"decisions":decisions,"heldout":tests,"classification":"real Lua workload selection; static inventory and prior observed edges, heuristic workload groups; equal queries, not equal measured resource cost; not independent author or full CFG truth"}
+          (R/"comparison.json").write_text(json.dumps(result,indent=2));print(json.dumps(summary))
+          PY
+          cp lab/compare.py receipts/compare.py
+          python3 lab/compare.py
+      - name: Bound retained evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -d receipts && test "$(du -sb receipts | cut -f1)" -gt 10485760; then
+            printf 'Artifact size exceeded 10 MiB; original evidence not retained\n' > receipts-size-failure.txt
+            find receipts -type f -printf '%s %P\n' >> receipts-size-failure.txt
+            rm -rf receipts
+            mkdir receipts
+            mv receipts-size-failure.txt receipts/
+            exit 1
+          fi
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lua-recovery-b06c
+          path: receipts/
+          retention-days: 7
+      - name: Report terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/lua-recovery-b06c -f description='Synthetic analysis wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
