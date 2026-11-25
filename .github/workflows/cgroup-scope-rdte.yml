@@ -1,0 +1,44 @@
+name: Real Recursive Cgroup Scope RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/scope_cgroup*.go'
+      - '.github/workflows/cgroup-scope-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cgroup-parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Strict parser and non-cgroup refusal
+        run: go test -race -count=1 -timeout=90s ./rdte/protected-control -run '^TestCgroupEventStrictness$'
+  real-disposable-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build standalone fixture
+        run: go test -c -o "$RUNNER_TEMP/cgroup-fixture.test" ./rdte/protected-control
+      - name: Exercise a fresh nested cgroup on disposable hosted Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n env WINEBOT_REAL_CGROUP_FIXTURE=1 "$RUNNER_TEMP/cgroup-fixture.test" -test.run '^TestCgroupRealNestedFixture$' -test.timeout=30s -test.v
+          echo 'REAL_RECURSIVE_SCOPE=PASS'
