@@ -1,0 +1,106 @@
+name: Public ReactOS VirtIO compile probe V20b
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-reactos-v20b3.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Bind public run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-reactos-v20b3 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+      - name: Public source and build dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory receipts
+          git init src
+          git -C src fetch --depth=1 https://github.com/reactos/reactos.git 4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git -C src checkout --detach FETCH_HEAD
+          git -C src rev-parse HEAD | Out-File receipts/source.txt
+          curl.exe -fL https://svn.reactos.org/storage/vperevertkin/flexbison.7z -o flexbison.7z
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-FileHash flexbison.7z | Out-File receipts/toolchain.txt
+          7z x flexbison.7z -obin
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $bison = Get-ChildItem bin -Recurse -Filter bison.exe | Select-Object -First 1
+          $flex = Get-ChildItem bin -Recurse -Filter flex.exe | Select-Object -First 1
+          $m4 = Get-ChildItem bin -Recurse -Filter m4.exe | Select-Object -First 1
+          if (!$bison -or !$flex -or !$m4) { throw "Missing extracted build tools" }
+          $bison.DirectoryName,$flex.DirectoryName,$m4.DirectoryName | Sort-Object -Unique | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          $data = Get-ChildItem bin -Recurse -Directory -Filter bison | Where-Object { $_.Parent.Name -eq 'share' } | Select-Object -First 1
+          if (!$data) { throw "Missing bison data" }
+          "BISON_PKGDATADIR=$($data.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "M4=$($m4.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          & $bison.FullName --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $flex.FullName --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Stock library
+        shell: pwsh
+        run: |
+          $bison = (Get-ChildItem bin -Recurse -Filter bison.exe | Select-Object -First 1).FullName.Replace('\','/')
+          $flex = (Get-ChildItem bin -Recurse -Filter flex.exe | Select-Object -First 1).FullName.Replace('\','/')
+          $p = 'src/sdk/cmake/host-tools.cmake'
+          $s = [IO.File]::ReadAllText((Resolve-Path $p))
+          $anchor = '            -UCMAKE_TOOLCHAIN_FILE'
+          if (($s.Split($anchor).Count -lt 2) -or !$s.Contains($anchor)) { throw 'Missing host tools anchor' }
+          $s = $s.Replace($anchor, "$anchor`n            -DBISON_EXECUTABLE:FILEPATH=$bison`n            -DFLEX_EXECUTABLE:FILEPATH=$flex")
+          [IO.File]::WriteAllText((Resolve-Path $p),$s)
+          git -C src diff -- sdk/cmake/host-tools.cmake | Out-File receipts/build-adapter.patch
+          cmake -S src -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE:FILEPATH=toolchain-msvc.cmake -DARCH:STRING=i386 -DCMAKE_BUILD_TYPE=Debug -DDLL_EXPORT_VERSION=0x502 "-DBISON_EXECUTABLE:FILEPATH=$bison" "-DFLEX_EXECUTABLE:FILEPATH=$flex"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build --target virtio 2>&1 | Tee-Object receipts/stock.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem build -Recurse -Filter virtio.lib | Copy-Item -Destination receipts/stock.lib
+      - name: Minimal compile-only sensor probe
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root=Path("src/sdk/lib/drivers/virtio")
+          for name, pairs in [
+            ("VirtIORing.c", [("vq->num_added_since_kick++;", "vq->num_added_since_kick++;\n    DPrintf(5, \"OBS submit q=%u id=%u packed=0\\n\", (unsigned)_vq->index, (unsigned)idx);"),("ASSERT(opaque != NULL);","ASSERT(opaque != NULL);\n    DPrintf(5, \"OBS consume q=%u id=%u packed=0\\n\", (unsigned)_vq->index, (unsigned)idx);")]),
+            ("VirtIORing-Packed.c",[("vq->packed.desc_state[id].last = id;","vq->packed.desc_state[id].last = id;\n        DPrintf(5, \"OBS submit q=%u id=%u packed=1\\n\", (unsigned)_vq->index, (unsigned)id);"),("vq->num_added += descs_used;","vq->num_added += descs_used;\n        DPrintf(5, \"OBS submit q=%u id=%u packed=1\\n\", (unsigned)_vq->index, (unsigned)id);"),("return ret;","DPrintf(5, \"OBS consume q=%u id=%u packed=1\\n\", (unsigned)_vq->index, (unsigned)id);\n    return ret;")])]:
+              p=root/name
+              s=p.read_text()
+              for a,b in pairs:
+                  assert s.count(a)==1,(name,a,s.count(a))
+                  s=s.replace(a,b)
+              p.write_text(s)
+          PY
+          git -C src diff > receipts/candidate.patch
+      - name: Candidate library
+        shell: pwsh
+        run: |
+          cmake --build build --target virtio 2>&1 | Tee-Object receipts/candidate.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem build -Recurse -Filter virtio.lib | Copy-Item -Destination receipts/candidate.lib
+          Get-FileHash receipts/*.lib | Out-File receipts/hashes.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-reactos-v20b3
+          path: receipts/
+          retention-days: 7
+      - name: Terminal receipt
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-reactos-v20b3 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
