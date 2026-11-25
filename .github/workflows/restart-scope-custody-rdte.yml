@@ -1,0 +1,38 @@
+name: Restart Scope Custody RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/scope_keeper*.go'
+      - '.github/workflows/restart-scope-custody-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-custody:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: go test -race -count=1 -timeout=90s ./rdte/protected-control -run '^TestScopeKeeperLostCustodyRefuses$'
+  real-supervisor-death:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: go test -c -o "$RUNNER_TEMP/scope-keeper.test" ./rdte/protected-control
+      - name: Kill disposable supervisor and verify retained scope witness
+        run: sudo -n env WINEBOT_REAL_SCOPE_KEEPER=1 "$RUNNER_TEMP/scope-keeper.test" -test.run '^TestScopeKeeperRealSupervisorDeath$' -test.timeout=30s -test.v
