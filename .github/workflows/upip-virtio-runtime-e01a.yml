@@ -1,0 +1,167 @@
+name: VirtIO recorded-event runtime comparison E01a
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-virtio-runtime-e01a.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Recover exact public recording
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upip-e01a"
+          cd "$RUNNER_TEMP/upip-e01a"
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15005235158/zip > v12.zip
+          echo '63c3d6282b08c66b857d68df76d54925d4a4c5d8da7d889e2ba796356c2832fd  v12.zip' | sha256sum -c -
+      - name: Build and compare pinned runtime on recorded device events
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upip-e01a"
+          trap 'cd /; rm -rf "$RUNNER_TEMP/upip-e01a"' EXIT
+          pin=5755157bf4341be69af2afcd5175997f02303669
+          git init -q ubpf
+          git -C ubpf fetch --depth=1 https://github.com/iovisor/ubpf.git "$pin"
+          git -C ubpf checkout -q --detach FETCH_HEAD
+          test "$(git -C ubpf rev-parse HEAD)" = "$pin"
+          test "$(git -C ubpf hash-object vm/inc/ubpf.h)" = ab8b94657772edae6515a813d5a12654f2992822
+          test "$(git -C ubpf hash-object LICENSE.txt)" = d645695673349e3947e8e5ae42332d0ac3164cd7
+          cmake -S ubpf -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DUBPF_SKIP_EXTERNAL=ON -DUBPF_ENABLE_TESTS=OFF -DUBPF_INSTALL_GIT_HOOKS=OFF
+          cmake --build build --target ubpf -j 2
+          cat > extract.py <<'PY'
+          import hashlib,re,zipfile,pathlib
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          pat=re.compile(rb'virtqueue_host_advance queue (0|1) packed (0|1) ordered (0) used (0|[1-9][0-9]*)->(0|[1-9][0-9]*) wrap (0|1)->(0|1) inuse (0|[1-9][0-9]*)->(0|[1-9][0-9]*)\n')
+          pins=[
+            ('split',0,'b7ea805ee869d9a872bc0338497e328de5f65bca7dfeece716c62be2dc44fc3c','d50c73fe1218d37ad66138199b740e2d2d1bb742e62649f7abd1d1c86106f243','e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',0),
+            ('packed',1,'b6719c122336e5eb641c6f8b50b1654fe6c50415c93375429f3b598983ec7267','96ab1791d1be9d60a843cd544ea8c2ed6de296b16ac13a9fd7fa70c068bea1fb','aca386a3acc93907874390b8f1118233969a4fd885b9f69238fb2a83a7b512a7',31)]
+          assert all(re.fullmatch(r'[0-9a-f]{64}', h) for pin in pins for h in pin[2:5])
+          with zipfile.ZipFile('v12.zip') as z:
+            assert len(z.namelist())==87 and z.testzip() is None
+            for name,mode,rawhash,scopehash,outhash,count in pins:
+              raw=z.read(f'candidate-{name}-on.trace')
+              assert sha(raw)==rawhash
+              rows=[]; scoped=[]; selected=[]
+              for line in raw.splitlines(keepends=True):
+                if not line.startswith(b'virtqueue_host_advance'):continue
+                m=pat.fullmatch(line)
+                assert m
+                q,p,o,a,b,c,d,e,g=map(int,m.groups())
+                assert p==mode and a<=65535 and b<=65535 and e<2**32 and g<2**32 and (p or c==d) and (a,c,e)!=(b,d,g)
+                scoped.append(line)
+                rows.append(f'{q} {a} {b} {c} {d}\n')
+                if c!=d:selected.append(f'{len(rows)} {q} {a} {b} {c} {d}\n')
+              assert len(rows)==8268 and len(selected)==count
+              assert sha(b''.join(scoped))==scopehash
+              out=''.join(selected).encode()
+              assert sha(out)==outhash
+              pathlib.Path(name+'.rows').write_text(''.join(rows))
+              pathlib.Path(name+'.expected').write_bytes(out)
+              print(f'INPUT {name} rows={len(rows)} selected={count} expected_sha={outhash}')
+          PY
+          python3 extract.py
+          cat > compare.c <<'EOF'
+          #define _POSIX_C_SOURCE 200809L
+          #include <ubpf.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <time.h>
+          #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x); exit(1); } } while (0)
+          enum { N=8268, LOOPS=100 };
+          struct ctx { uint64_t before, after; };
+          struct event { unsigned q,a,b,c,d; };
+          static struct event events[N];
+          static struct ctx contexts[N];
+          static const unsigned char code[][8] = {
+            {0x79,0x12,0,0,0,0,0,0},
+            {0x79,0x13,8,0,0,0,0,0},
+            {0x5d,0x32,2,0,0,0,0,0},
+            {0xb7,0,0,0,0,0,0,0},
+            {0x95,0,0,0,0,0,0,0},
+            {0xb7,0,0,0,1,0,0,0},
+            {0x95,0,0,0,0,0,0,0}
+          };
+          static int admit(const void *p,size_t n) {return n==sizeof(code) && memcmp(p,code,n)==0;}
+          static uint64_t now(void) {
+            struct timespec t; CHECK(clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&t)==0);
+            return (uint64_t)t.tv_sec*1000000000u+(uint64_t)t.tv_nsec;
+          }
+          typedef uint64_t (*fn)(struct ubpf_vm *,struct ctx *);
+          __attribute__((noinline)) static uint64_t native(struct ubpf_vm *v,struct ctx *c) {
+            (void)v;return c->before!=c->after;
+          }
+          __attribute__((noinline)) static uint64_t interpreted(struct ubpf_vm *v,struct ctx *c) {
+            uint64_t out=UINT64_MAX;CHECK(ubpf_exec(v,c,sizeof(*c),&out)==0);return out;
+          }
+          __attribute__((noinline)) static uint64_t guarded(fn f,struct ubpf_vm *v,const struct ctx *c) {
+            struct ctx copy=*c;uint64_t r=f(v,&copy);
+            CHECK(r<=1 && memcmp(c,&copy,sizeof(copy))==0);return r;
+          }
+          int main(int argc,char **argv) {
+            CHECK(argc==3 && sizeof(struct ctx)==16);
+            FILE *in=fopen(argv[1],"r");CHECK(in);
+            for(size_t i=0;i<N;i++){
+              struct event *e=&events[i];
+              CHECK(fscanf(in,"%u %u %u %u %u",&e->q,&e->a,&e->b,&e->c,&e->d)==5);
+              CHECK(e->q<=1 && e->a<=65535 && e->b<=65535 && e->c<=1 && e->d<=1);
+              contexts[i]=(struct ctx){e->c,e->d};
+            }
+            unsigned extra;CHECK(fscanf(in,"%u",&extra)==EOF);CHECK(fclose(in)==0);
+            struct ubpf_vm *v=ubpf_create();CHECK(v);
+            CHECK(ubpf_set_execution_profile(v,UBPF_EXECUTION_PROFILE_SAFE)==0);
+            CHECK(ubpf_set_instruction_limit(v,32,NULL)==0);
+            unsigned char bad[sizeof(code)];memcpy(bad,code,sizeof(bad));bad[0]=0x7b;
+            CHECK(admit(code,sizeof(code)) && !admit(bad,sizeof(bad)) && !admit(code,sizeof(code)-8));
+            char *err=NULL;CHECK(ubpf_load(v,code,sizeof(code),&err)==0);free(err);
+            struct ctx c={0,1};uint64_t out=0;
+            CHECK(ubpf_exec(v,&c,8,&out)!=0);
+            CHECK(ubpf_set_instruction_limit(v,1,NULL)==0);
+            CHECK(ubpf_exec(v,&c,sizeof(c),&out)!=0);
+            CHECK(ubpf_set_instruction_limit(v,32,NULL)==0);
+            FILE *selected=fopen(argv[2],"w");CHECK(selected);uint64_t count=0;
+            for(size_t i=0;i<N;i++){
+              struct event *e=&events[i];uint64_t a=guarded(native,v,&contexts[i]),b=guarded(interpreted,v,&contexts[i]);
+              CHECK(a==b && a==(uint64_t)(e->c!=e->d));count+=b;
+              if(b)CHECK(fprintf(selected,"%zu %u %u %u %u %u\n",i+1,e->q,e->a,e->b,e->c,e->d)>0);
+            }
+            CHECK(fclose(selected)==0);
+            printf("PARITY rows=%d selected=%llu negatives=4\n",N,(unsigned long long)count);
+            for(int rep=0;rep<3;rep++){
+              for(int j=0;j<3;j++){
+                int arm=(rep+j)%3;uint64_t start=now(),sum=0;
+                for(int k=0;k<LOOPS;k++)for(size_t i=0;i<N;i++){
+                  if(arm==0)sum+=native(v,&contexts[i]);
+                  else sum+=guarded(arm==1?native:interpreted,v,&contexts[i]);
+                }
+                uint64_t dt=now()-start;CHECK(sum==count*LOOPS);
+                printf("ARM rep=%d mode=%s records=%d cpu_ns=%llu selected=%llu\n",rep,arm==0?"native-direct":arm==1?"native-guarded":"safe-guarded",N*LOOPS,(unsigned long long)dt,(unsigned long long)sum);
+              }
+            }
+            ubpf_destroy(v);return 0;
+          }
+          EOF
+          lib=$(find build -name libubpf.a -type f -print -quit)
+          test -n "$lib"
+          cc -O2 -Wall -Wextra -Werror -Iubpf/vm/inc -Ibuild/vm compare.c "$lib" -lm -o compare
+          sha256sum extract.py compare.c "$lib" compare
+          for mode in split packed; do
+            echo "BEGIN $mode"
+            timeout 60s ./compare "$mode.rows" "$mode.actual"
+            cmp "$mode.expected" "$mode.actual"
+            sha256sum "$mode.actual"
+            echo "END $mode"
+          done
+      - name: Clean temporary input
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/upip-e01a"
