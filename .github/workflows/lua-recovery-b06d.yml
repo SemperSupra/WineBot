@@ -1,0 +1,173 @@
+name: Public Lua upstream suite observation budget comparison
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/lua-recovery-b06d.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir -p receipts lab
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/lua-recovery-b06d -f description='Synthetic experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build unmodified public Lua and collect runtime observations
+        run: |
+          set -euo pipefail
+          command -v gdb || { sudo apt-get update -qq; sudo apt-get install -y -qq gdb; }
+          curl -fsSL --max-time 60 https://www.lua.org/ftp/lua-5.4.9.tar.gz -o lab/lua.tar.gz
+          echo '2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6  lab/lua.tar.gz' | sha256sum -c -
+          tar -xzf lab/lua.tar.gz -C lab
+          make -C lab/lua-5.4.9 -j2 linux MYCFLAGS='-g -fno-pie' MYLDFLAGS=-no-pie > receipts/build.log 2>&1
+          cp lab/lua-5.4.9/src/lua lab/oracle
+          cp lab/oracle lab/subject
+          strip --strip-all lab/subject
+          readelf -h lab/subject > receipts/elf.txt
+          grep -q 'Type:.*EXEC' receipts/elf.txt
+          sha256sum lab/lua.tar.gz lab/oracle lab/subject > receipts/build.sha256
+          cc --version > receipts/compiler.txt
+          gdb --version > receipts/gdb-version.txt
+          objdump -d -j .text lab/subject > receipts/static.txt
+          # Exact public B06c A arm observed model; do not rebind by address on another build.
+          echo 'b6e4bf98ce0908ece441cfb5949140c44ce58ffae32c352c482449a6c1bf5cc6  lab/subject' | sha256sum -c -
+          cat > receipts/prior-edges.json <<'JSON'
+          [[4238147,4218896],[4238147,4237504],[4238147,4237776],[4238147,4242336],[4238147,4248976],[4238147,4280144],[4241362,4345360],[4242048,4216320],[4242048,4345264],[4242048,4345584],[4242048,4346256],[4242048,4346944],[4242048,4348032],[4242048,4348144],[4242048,4349280],[4242048,4349616],[4242048,4349728],[4242048,4350224],[4242048,4350688],[4242048,4351184],[4242048,4356080],[4242048,4359280],[4242048,4359648],[4242048,4360928],[4242048,4361120],[4242048,4361200],[4242048,4361424],[4242048,4361872],[4242048,4362384],[4242048,4363440],[4242048,4363696],[4242048,4365456],[4242048,4365792],[4242048,4366208],[4242048,4366784],[4242048,4369072],[4242048,4370768],[4242048,4373872],[4242048,4374816],[4242048,4377712],[4242048,4381696],[4242048,4383728],[4242048,4385104],[4242048,4389280],[4242048,4391472],[4242048,4391936],[4242048,4393008],[4242048,4395744],[4280595,4318128],[4361011,4356624]]
+          JSON
+          curl -fsSL --max-time 60 https://www.lua.org/tests/lua-5.4.9-tests.tar.gz -o lab/tests.tar.gz
+          echo '7d971845f545ffc09fbb3128a86b2c6524161c70d0fdf0154a16e8c00c343fca  lab/tests.tar.gz' | sha256sum -c -
+          sha256sum lab/tests.tar.gz > receipts/tests.sha256
+          cat > lab/suite-witness.py <<'PY'
+          import gdb,json,re,os
+          mode=os.environ["OBS_MODE"]
+          root=os.environ["OBS_ROOT"]
+          prior=set(tuple(x) for x in json.load(open(root+"/receipts/prior-edges.json")))
+          knownsites={p for p,t in prior}
+          sites={}
+          for line in open(root+"/receipts/static.txt"):
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m:sites[int(m.group(1),16)]=m.group(2)
+          assert len(sites)==15 and knownsites<=set(sites)
+          selected={p:r for p,r in sites.items() if mode!="gap" or p not in knownsites}
+          total=0; limit=1500; counts={}; seen=set(); last=None; censored=set()
+          class Witness(gdb.Breakpoint):
+              def __init__(self,pc,reg):
+                  super().__init__("*"+hex(pc),internal=True)
+                  self.pc=pc;self.reg=reg
+              def stop(self):
+                  global last,total
+                  pc=int(gdb.parse_and_eval("$pc"))
+                  assert pc==self.pc
+                  t=int(gdb.parse_and_eval("$"+self.reg))
+                  total+=1;counts[pc]=counts.get(pc,0)+1
+                  if (pc,t) not in seen:
+                      seen.add((pc,t));print("WITNESS "+json.dumps([pc,t]))
+                  last=self
+                  return True
+          bp=[Witness(p,r) for p,r in selected.items()]
+          gdb.execute("set disable-randomization off")
+          gdb.execute("run",to_string=False)
+          while gdb.selected_inferior().pid:
+              assert last is not None,"unexpected non-breakpoint stop"
+              if total>=limit:
+                  for x in bp:
+                      if x.enabled:
+                          x.enabled=False;censored.add(x.pc)
+              elif mode=="stratified" and counts[last.pc]>=limit//len(sites):
+                  last.enabled=False;censored.add(last.pc)
+              last=None
+              gdb.execute("continue",to_string=False)
+          print("OBS_SUMMARY "+json.dumps({"mode":mode,"selected":sorted(selected),"hits":total,"counts":counts,"censored":sorted(censored),"limit":limit,"scope":"main inferior only; disabled sites not evidence of absence"}))
+          PY
+          cp lab/suite-witness.py receipts/suite-witness.py
+          cat > lab/suite-compare.py <<'PY'
+          import pathlib,os,subprocess,json,re,time,shutil
+          L=pathlib.Path("lab").resolve();R=pathlib.Path("receipts").resolve()
+          subject=L/"subject";prior=set(map(tuple,json.loads((R/"prior-edges.json").read_text())))
+          m=re.search(r"^\s*\d+\s+\.text\s+([0-9a-f]+)\s+([0-9a-f]+)",subprocess.check_output(["objdump","-h",str(subject)],text=True),re.M);assert m
+          size,lo=map(lambda x:int(x,16),m.groups());hi=lo+size
+          results={}
+          # All modes use fresh copies of the unmodified official test suite.
+          for mode in ("baseline","broad","gap","stratified"):
+              dest=L/("suite-"+mode);dest.mkdir()
+              subprocess.run(["tar","-xzf",str(L/"tests.tar.gz"),"-C",str(dest)],check=True)
+              cwd=dest/"lua-5.4.9-tests";assert (cwd/"all.lua").is_file()
+              args=[str(subject),"-e","_U=true","all.lua"]
+              env={"PATH":"/usr/bin:/bin","LC_ALL":"C","HOME":str(dest),"TMPDIR":str(dest),"OBS_MODE":mode,"OBS_ROOT":str(L.parent)}
+              if mode!="baseline":args=["gdb","-nx","-q","-batch","-x",str(L/"suite-witness.py"),"--args"]+args
+              path=R/(mode+".log");start=time.monotonic_ns();timedout=False
+              try:
+                  with path.open("wb") as f:
+                      cp=subprocess.run(args,cwd=cwd,env=env,stdout=f,stderr=subprocess.STDOUT,timeout=150)
+                  rc=cp.returncode
+              except subprocess.TimeoutExpired:
+                  rc=124;timedout=True
+              elapsed=time.monotonic_ns()-start
+              if path.stat().st_size>2*1024*1024:
+                  with path.open("rb") as f: head=f.read(65536)
+                  path.write_bytes(head+b"\nLOG_TRUNCATED_SIZE_CAP\n")
+                  results[mode]={"status":"LOG_CAP","exit":rc,"elapsed_ns":elapsed}
+                  continue
+              log=path.read_text(errors="replace")
+              ok=rc==0 and not timedout and "final OK" in log
+              result={"status":"PASS" if ok else ("TIMEOUT" if timedout else "FAIL"),"exit":rc,"elapsed_ns":elapsed,"log_bytes":path.stat().st_size}
+              if mode!="baseline":
+                  obs=[json.loads(x[len("OBS_SUMMARY "):]) for x in log.splitlines() if x.startswith("OBS_SUMMARY ")]
+                  raw={tuple(json.loads(x[len("WITNESS "):])) for x in log.splitlines() if x.startswith("WITNESS ")}
+                  edges={e for e in raw if lo<=e[0]<hi and lo<=e[1]<hi}
+                  result.update({"edges":sorted(edges),"new_edges":len(edges-prior),"distinct_sites":len({p for p,t in edges}),"new_sites":len({p for p,t in edges}-{p for p,t in prior}),"external_edges":len(raw-edges),"observation":obs[0] if len(obs)==1 else None})
+                  if len(obs)!=1 or obs[0]["hits"]>1500 or "exited normally" not in log:result["status"]="INCOMPLETE"
+              results[mode]=result
+              shutil.rmtree(dest)
+          # Symbol oracle is consulted only after every observation arm.
+          symbols=subprocess.check_output(["nm","-S","--defined-only",str(L/"oracle")],text=True)
+          (R/"oracle-symbols.txt").write_text(symbols)
+          entries={int(f[0],16) for line in symbols.splitlines() if len(f:=line.split())==4 and f[2] in ("T","t","W","w")}
+          for mode,result in results.items():
+              if "edges" in result:result["symbol_entry_edges"]=sum(t in entries for p,t in result["edges"])
+          receipt={"prior_edges":len(prior),"prior_sites":len({p for p,t in prior}),"global_hit_ceiling":1500,"results":results,"classification":"official version-matched basic suite, capped main-inferior observations; intentional censorship, not exhaustive coverage; one run per arm"}
+          (R/"suite-comparison.json").write_text(json.dumps(receipt,indent=2))
+          print(json.dumps({k:{p:v for p,v in r.items() if p!="edges"} for k,r in results.items()}))
+          assert len(results)==4 and all(r["status"]=="PASS" for r in results.values()),"incomplete or failing workload arm"
+          PY
+          cp lab/suite-compare.py receipts/suite-compare.py
+          ulimit -c 0
+          python3 lab/suite-compare.py
+      - name: Bound retained evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -d receipts && test "$(du -sb receipts | cut -f1)" -gt 10485760; then
+            printf 'Artifact size exceeded 10 MiB; original evidence not retained\n' > receipts-size-failure.txt
+            find receipts -type f -printf '%s %P\n' >> receipts-size-failure.txt
+            rm -rf receipts
+            mkdir receipts
+            mv receipts-size-failure.txt receipts/
+            exit 1
+          fi
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lua-recovery-b06d
+          path: receipts/
+          retention-days: 7
+      - name: Report terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/lua-recovery-b06d -f description='Synthetic analysis wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
