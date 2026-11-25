@@ -1,0 +1,96 @@
+name: Linux TCG replay qualification R1a
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-replay-r1a.yml]
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare public kernel and original guest fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts root/bin
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 busybox-static cpio
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-system-x86 busybox-static cpio > receipts/packages.txt
+          sha256sum "$(command -v qemu-system-x86_64)" > receipts/qemu.sha256
+          curl -fL --retry 2 --max-time 90 https://storage.tuxboot.com/buildroot/20241119/x86_64/bzImage -o kernel
+          echo 'f57bfc6553bcd6e0a54aab86095bf642b33b5571d14e3af1731b18c87ed5aef8  kernel' | sha256sum -c -
+          cp "$(command -v busybox)" root/bin/busybox
+          cp /dev/null receipts/init
+          cat > receipts/init <<'SH'
+          #!/bin/busybox sh
+          export PATH=/bin
+          echo TEO_BEGIN
+          /bin/busybox printf 'public-replay-fixture\n' | /bin/busybox sha256sum
+          echo TEO_END
+          /bin/busybox poweroff -f
+          SH
+          cp receipts/init root/init
+          chmod 755 root/init
+          mkdir -p root/dev root/proc root/sys
+          sudo mknod root/dev/console c 5 1
+          sudo mknod root/dev/null c 1 3
+          (cd root && find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --owner=0:0 --reproducible) > initramfs
+          sha256sum kernel initramfs receipts/init root/bin/busybox > receipts/inputs.sha256
+      - name: Record and replay twice with isolated output
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/run.sh <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          mode="$1"; arm="$2"
+          timeout --kill-after=5s 180s qemu-system-x86_64 -machine q35 -cpu Nehalem -accel tcg,thread=single -smp 1 -m 256 -display none -monitor none -serial "file:receipts/$arm.serial" -nic none -no-reboot -kernel kernel -initrd initramfs -append 'console=ttyS0 rdinit=/init panic=-1 nokaslr' -icount "shift=5,rr=$mode,rrfile=receipts/record.bin" > "receipts/$arm.stdout" 2> "receipts/$arm.stderr"
+          SH
+          chmod +x receipts/run.sh
+          /usr/bin/time -f '%e' -o receipts/record.seconds receipts/run.sh record record
+          test -s receipts/record.bin
+          sha256sum receipts/record.bin > receipts/record.sha256
+          /usr/bin/time -f '%e' -o receipts/replay1.seconds receipts/run.sh replay replay1
+          sha256sum -c receipts/record.sha256
+          /usr/bin/time -f '%e' -o receipts/replay2.seconds receipts/run.sh replay replay2
+          sha256sum -c receipts/record.sha256
+      - name: Independent guest-output oracle and negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > receipts/verify.py <<'PY'
+          import hashlib,json,pathlib,re
+          p=pathlib.Path("receipts")
+          expected=hashlib.sha256(b"public-replay-fixture\n").hexdigest()
+          def verify(text):
+              rows=text.splitlines()
+              begins=[i for i,x in enumerate(rows) if x=="TEO_BEGIN"]
+              ends=[i for i,x in enumerate(rows) if x=="TEO_END"]
+              if len(begins)!=1 or len(ends)!=1 or ends[0]!=begins[0]+2:
+                  return False
+              return rows[begins[0]+1].split()==[expected,"-"]
+          results={}
+          for arm in ("record","replay1","replay2"):
+              t=(p/f"{arm}.serial").read_text(errors="replace")
+              results[arm]={"oracle":verify(t),"seconds":float((p/f"{arm}.seconds").read_text())}
+          good=f"TEO_BEGIN\n{expected}  -\nTEO_END\n"
+          controls=[good.replace(expected,"0"*64),good+good,good.replace("TEO_END",""),good.replace("TEO_BEGIN","TEO_OTHER")]
+          results["negative_controls"]=[not verify(x) for x in controls]
+          results["scope"]="guest marker and digest only; no full-state or external-input determinism claim"
+          (p/"oracle.json").write_text(json.dumps(results,indent=2))
+          print(json.dumps(results,indent=2))
+          assert verify(good) and all(results["negative_controls"])
+          assert all(results[a]["oracle"] for a in ("record","replay1","replay2"))
+          PY
+          python3 receipts/verify.py
+          du -h receipts/record.bin
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tcg-replay-r1a
+          path: receipts/
+          retention-days: 7
