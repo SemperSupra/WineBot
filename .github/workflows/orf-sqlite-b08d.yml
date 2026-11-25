@@ -1,0 +1,222 @@
+name: ORF SQLite upstream speedtest1 CTE heldout sensing
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/orf-sqlite-b08d.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir -p receipts lab
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/orf-sqlite-b08d -f description='SQLite experiment started' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build pinned upstream SQLite speedtest1 and compare upstream CTE workload
+        run: |
+          set -euo pipefail
+          command -v gdb && command -v tclsh || { sudo apt-get update -qq; sudo apt-get install -y -qq gdb tcl-dev; }
+          curl -fsSL --max-time 90 https://codeload.github.com/sqlite/sqlite/tar.gz/8ed5e7365e6f12f427910188bbf6b254daad2ef6 -o lab/source.tar.gz
+          echo "6982dc596d5265e4a00928d378ab657b0dc0967815b1004366dd2b6f10835ba5  lab/source.tar.gz" | sha256sum -c -
+          sha256sum lab/source.tar.gz > receipts/archive.sha256
+          mkdir lab/src lab/build
+          tar -xzf lab/source.tar.gz --strip-components=1 -C lab/src
+          grep -Fx 4d8adfb30e03f9cf27f800a2c1ba3c48fb4ca1b08b0f5ed59a4d5ecbf45e20a3 lab/src/manifest.uuid
+          cp lab/src/manifest.uuid receipts/manifest.uuid
+          test "$(git hash-object lab/src/test/speedtest1.c)" = 10cd30f1c79ba09252c26cd3b6de34fcd9d356c4
+          git hash-object lab/src/test/speedtest1.c > receipts/speedtest1.blob
+          ( cd lab/build; CFLAGS='-O2 -g -fno-pie' LDFLAGS=-no-pie ../src/configure --disable-shared --disable-readline; make -j2 speedtest1 ) > receipts/build.log 2>&1
+          cp lab/build/speedtest1 lab/oracle
+          cp lab/oracle lab/subject
+          strip --strip-all lab/subject
+          readelf -h lab/subject > receipts/elf.txt
+          grep -q 'Type:.*EXEC' receipts/elf.txt
+          sha256sum lab/oracle lab/subject > receipts/build.sha256
+          cc --version > receipts/compiler.txt
+          gdb --version > receipts/gdb-version.txt
+          objdump -d -j .text lab/subject | awk '/callq?[[:space:]]+\*%[a-z0-9]+[[:space:]]*$/' > receipts/static.txt
+          cat > lab/stream_parser.py <<'PY'
+          import json,collections
+          def require(ok,why):
+              if not ok: raise ValueError(why)
+          def unique(pairs):
+              d={}
+              for k,v in pairs:
+                  require(k not in d,"duplicate key")
+                  d[k]=v
+              return d
+          def integer(v):
+              return type(v) is int and 0<=v<2**64
+          def sitecap(mode,targets):
+              if mode=="broad": return None
+              if mode in ("fixed8","fixed20","fixed32"): return int(mode[5:])
+              if mode=="adaptive": return 32 if len(set(targets[:8]))>=2 else 8
+              raise ValueError("unknown mode")
+          def parse(data,mode,selected,limit=1500,per_site=100):
+              require(0<len(data)<=512*1024 and data.endswith(b"\n"),"size or truncated record")
+              rows=data.decode("ascii").splitlines()
+              require(2<=len(rows)<=limit+1,"missing/overflow")
+              values=[json.loads(l,object_pairs_hook=unique) for l in rows]
+              counts=collections.Counter();edges=set();targets=collections.defaultdict(list)
+              for i,v in enumerate(values[:-1],1):
+                  require(type(v) is dict and set(v)=={"seq","pc","target"},"event shape")
+                  require(all(integer(v[k]) for k in v) and v["seq"]==i and v["pc"] in selected,"event identity")
+                  counts[v["pc"]]+=1;edges.add((v["pc"],v["target"]));targets[v["pc"]].append(v["target"])
+              s=values[-1]
+              require(type(s) is dict and set(s)=={"mode","selected","hits","counts","censored","exits"},"terminal shape")
+              require(s["mode"]==mode and s["selected"]==sorted(selected) and all(integer(x) for x in s["selected"]),"mode/sites")
+              require(integer(s["hits"]) and s["hits"]==len(values)-1,"hit count")
+              require(type(s["counts"]) is dict and all(integer(v) for v in s["counts"].values()) and s["counts"]=={str(k):v for k,v in counts.items()},"per-site count")
+              require(type(s["exits"]) is list and len(s["exits"])==1 and integer(s["exits"][0]) and s["exits"][0]==0,"inferior exit")
+              caps={p:sitecap(mode,targets[p]) for p in counts}
+              require(all(cap is None or counts[p]<=cap for p,cap in caps.items()),"per-site budget")
+              expected=set(selected) if s["hits"]==limit else {p for p,cap in caps.items() if cap is not None and counts[p]==cap}
+              require(type(s["censored"]) is list and all(integer(p) for p in s["censored"]) and s["censored"]==sorted(expected),"censoring")
+              return edges,s
+          if __name__=="__main__":
+              import copy
+              a={"seq":1,"pc":1,"target":3};s={"mode":"broad","selected":[1],"hits":1,"counts":{"1":1},"censored":[],"exits":[0]}
+              def encode(rows):return ("\n".join(json.dumps(x) for x in rows)+"\n").encode()
+              good=encode([a,s])
+              assert parse(good,"broad",{1})[0]=={(1,3)}
+              bad=[b"",good[:-1],encode([a]),encode([dict(a,seq=2),s]),encode([a,dict(s,hits=2)]),encode([a,dict(s,exits=[1])]),encode([dict(a,pc=2),s]),encode([a,dict(s,censored=[1])]),encode([dict(a,target=True),s]),b'{"seq":1,"seq":1,"pc":1,"target":3}\n'+encode([s]),b'WITNESS [1,3]\n'+encode([s])]
+              for b in bad:
+                  try:parse(b,"broad",{1})
+                  except (ValueError,TypeError,AttributeError):continue
+                  raise AssertionError("accepted invalid stream")
+              def adaptive_fixture(targets,mode,censored):
+                  ev=[{"seq":i+1,"pc":1,"target":t} for i,t in enumerate(targets)]
+                  return encode(ev+[{"mode":mode,"selected":[1],"hits":len(ev),"counts":{"1":len(ev)},"censored":censored,"exits":[0]}])
+              for targets,mode,censored in [([3]*8,"adaptive",[1]),([3,4]*16,"adaptive",[1]),([3]*32,"fixed32",[1])]:
+                  parse(adaptive_fixture(targets,mode,censored),mode,{1})
+              for targets,mode,censored in [([3]*8+[4],"adaptive",[]),([3,4]*16+[3],"adaptive",[]),([3]*8,"adaptive",[]),([3]*9,"fixed8",[])]:
+                  try:parse(adaptive_fixture(targets,mode,censored),mode,{1})
+                  except ValueError:continue
+                  raise AssertionError("accepted over-budget or uncensored stream")
+              print("PARSER_CONTROLS 4 positive 15 rejected")
+          PY
+          cp lab/stream_parser.py receipts/stream_parser.py
+          cat > lab/witness.py <<'PY'
+          import gdb,json,re,os,shlex
+          root=os.environ["OBS_ROOT"]; mode=os.environ["OBS_MODE"]
+          sites={}
+          for line in open(root+"/receipts/static.txt"):
+              m=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%([a-z0-9]+)\s*$",line)
+              if m:sites[int(m.group(1),16)]=m.group(2)
+          assert 2<=len(sites)<=4096
+          total=0; limit=1500; counts={}; first={}; last=None; censored=set(); exits=[]
+          out=open(os.environ["OBS_FILE"],"x",encoding="ascii")
+          def emit(v):out.write(json.dumps(v,separators=(",",":"))+"\n")
+          def on_exit(event):exits.append(getattr(event,"exit_code",None))
+          gdb.events.exited.connect(on_exit)
+          class W(gdb.Breakpoint):
+              def __init__(self,p,r):
+                  super().__init__("*"+hex(p),internal=True); self.p=p; self.r=r
+              def stop(self):
+                  global total,last
+                  pc=int(gdb.parse_and_eval("$pc")); assert pc==self.p and total<limit
+                  t=int(gdb.parse_and_eval("$"+self.r)); total+=1; counts[pc]=counts.get(pc,0)+1
+                  if counts[pc]<=8:first.setdefault(pc,set()).add(t)
+                  emit({"seq":total,"pc":pc,"target":t}); last=self; return True
+          bp=[W(p,r) for p,r in sites.items()]
+          gdb.execute("set disable-randomization off")
+          gdb.execute("run --testset cte --size 1 --verify --memdb --output "+shlex.quote(os.environ["OBS_RESULT"])+" "+shlex.quote(os.environ["OBS_DB"]))
+          while gdb.selected_inferior().pid:
+              assert last is not None,"unexpected stop"
+              if total>=limit:
+                  for b in bp:
+                      if b.enabled:b.enabled=False;censored.add(b.p)
+              elif mode!="broad":
+                  cap=(32 if len(first[last.p])>=2 else 8) if mode=="adaptive" else int(mode[5:])
+                  if counts[last.p]>=cap:last.enabled=False;censored.add(last.p)
+              last=None;gdb.execute("continue")
+          emit({"mode":mode,"selected":sorted(sites),"hits":total,"counts":counts,"censored":sorted(censored),"exits":exits})
+          out.close()
+          PY
+          cp lab/witness.py receipts/witness.py
+          cat > lab/compare.py <<'PY'
+          import os,pathlib,subprocess,json,re,time,hashlib
+          from stream_parser import parse
+          L=pathlib.Path("lab").resolve(); R=pathlib.Path("receipts").resolve(); subject=L/"subject"
+          sites={int(m.group(1),16) for line in (R/"static.txt").read_text().splitlines() if (m:=re.search(r"^\s*([0-9a-f]+):.*\bcallq?\s+\*%[a-z0-9]+\s*$",line))}
+          assert 2<=len(sites)<=4096
+          m=re.search(r"^\s*\d+\s+\.text\s+([0-9a-f]+)\s+([0-9a-f]+)",subprocess.check_output(["objdump","-h",str(subject)],text=True),re.M);assert m
+          size,lo=map(lambda x:int(x,16),m.groups()); hi=lo+size
+          results=[]; expected=None
+          for rep in range(1,4):
+              policies=("broad","fixed32","adaptive")
+              shift=rep-1;order=policies[shift:]+policies[:shift]
+              for mode in ("baseline",)+order:
+                  label=f"{rep}-{mode}";db=L/(label+".db");stream=R/(label+".jsonl");log=R/(label+".log"); witness=R/(label+".verify")
+                  args=[str(subject),"--testset","cte","--size","1","--verify","--memdb","--output",str(witness),str(db)]
+                  if mode!="baseline":args=["gdb","-nx","-q","-batch","-x",str(L/"witness.py"),"--args"]+args
+                  env={"PATH":"/usr/bin:/bin","LC_ALL":"C","HOME":str(L),"OBS_MODE":mode,"OBS_ROOT":str(L.parent),"OBS_FILE":str(stream),"OBS_DB":str(db),"OBS_RESULT":str(witness)}
+                  start=time.monotonic_ns()
+                  with log.open("wb") as f:
+                      cp=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=f,stderr=subprocess.STDOUT,env=env,timeout=60)
+                  elapsed=time.monotonic_ns()-start
+                  lines=log.read_text(errors="replace").splitlines()
+                  hashes=[l.strip() for l in lines if re.fullmatch(r"Verification Hash: [0-9]+ [0-9a-f]{48}",l.strip())]
+                  assert cp.returncode==0 and len(hashes)==1 and any("TOTAL" in l for l in lines),label
+                  assert all(any(t in l for l in lines) for t in ("Sudoku with recursive","Sudoku with VALUES","Mandelbrot Set","EXCEPT operator")),label
+                  assert witness.is_file() and 0<witness.stat().st_size<=1024*1024 and log.stat().st_size<=1024*1024,label
+                  raw=witness.read_bytes(); key=(hashes[0],hashlib.sha256(raw).hexdigest())
+                  if expected is None:expected=key
+                  assert key==expected,label
+                  out={"rep":rep,"mode":mode,"elapsed_ns":elapsed,"verify_hash":key[0],"verify_sha256":key[1],"verify_bytes":len(raw),"status":"PASS"}
+                  if mode!="baseline":
+                      raw,s=parse(stream.read_bytes(),mode,sites,1500,32)
+                      edges={e for e in raw if lo<=e[0]<hi and lo<=e[1]<hi}
+                      assert edges,label
+                      out.update({"hits":s["hits"],"observed_sites":len({p for p,t in edges}),"edges":sorted(edges),"external_edges":len(raw-edges),"censored":s["censored"],"stream_bytes":stream.stat().st_size})
+                  results.append(out);print(json.dumps({k:v for k,v in out.items() if k!="edges"}),flush=True)
+          symbols=subprocess.check_output(["nm","-S","--defined-only",str(L/"oracle")],text=True)
+          (R/"oracle-symbols.txt").write_text(symbols)
+          entries={int(f[0],16) for l in symbols.splitlines() if len(f:=l.split())==4 and f[2] in ("T","t","W","w")}
+          for r in results:
+              if "edges" in r:r["symbol_entry_edges"]=sum(t in entries for p,t in r["edges"])
+          (R/"comparison.json").write_text(json.dumps({"sites":sorted(sites),"results":results,"classification":"upstream speedtest1 CTE size1; verification stream omits floating values; capped broad not exhaustive; no source-blind claim"},indent=2))
+          assert len(results)==12 and len({r["verify_sha256"] for r in results})==1
+          PY
+          cp lab/compare.py receipts/compare.py
+          python3 lab/stream_parser.py
+          ulimit -c 0
+          python3 lab/compare.py
+      - name: Bound retained evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -d receipts && test "$(du -sb receipts | cut -f1)" -gt 10485760; then
+            printf 'Artifact size exceeded 10 MiB; original evidence not retained\n' > receipts-size-failure.txt
+            find receipts -type f -printf '%s %P\n' >> receipts-size-failure.txt
+            rm -rf receipts
+            mkdir receipts
+            mv receipts-size-failure.txt receipts/
+            exit 1
+          fi
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orf-sqlite-b08d
+          path: receipts/
+          retention-days: 7
+      - name: Report terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/orf-sqlite-b08d -f description='SQLite RDTE wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
