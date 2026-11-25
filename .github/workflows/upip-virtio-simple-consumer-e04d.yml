@@ -1,0 +1,175 @@
+name: VirtIO binary trace programmable consumer E04d
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-virtio-simple-consumer-e04d.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Recover exact public recording
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upip-e04d"
+          cd "$RUNNER_TEMP/upip-e04d"
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15070360730/zip > capture.zip
+          echo 'ecd8104bfdfd7b17d6782c5860815576729befc5d9c2035ccb9f7a55cb457081  capture.zip' | sha256sum -c -
+      - name: Build and compare pinned runtime on recorded device events
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upip-e04d"
+          trap 'cd /; rm -rf "$RUNNER_TEMP/upip-e04d"' EXIT
+          pin=5755157bf4341be69af2afcd5175997f02303669
+          git init -q ubpf
+          git -C ubpf fetch --depth=1 https://github.com/iovisor/ubpf.git "$pin"
+          git -C ubpf checkout -q --detach FETCH_HEAD
+          test "$(git -C ubpf rev-parse HEAD)" = "$pin"
+          test "$(git -C ubpf hash-object vm/inc/ubpf.h)" = ab8b94657772edae6515a813d5a12654f2992822
+          test "$(git -C ubpf hash-object LICENSE.txt)" = d645695673349e3947e8e5ae42332d0ac3164cd7
+          cmake -S ubpf -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DUBPF_SKIP_EXTERNAL=ON -DUBPF_ENABLE_TESTS=OFF -DUBPF_INSTALL_GIT_HOOKS=OFF
+          cmake --build build --target ubpf -j 2
+          cat > programs.py <<'PY'
+          import hashlib, pathlib, struct
+          P=pathlib.Path
+          pins={1:'a35bf2d505ed1bab49bc494fa2989c7ea80ab8bf3b8453536c18e4203e0a672b',8:'194b298fb0c9b599e14d9ffe714072bbb74bafa2b2e46e857bb66d77853e42c4',32:'2c3a89e564d6b1b8cda97fe57a3ea28db46c1d2bee623e5d8528b2d222434333'}
+          def ins(op,d=0,s=0,off=0,imm=0):return struct.pack('<BBhI',op,(s<<4)|d,off,imm&0xffffffff)
+          for n,pin in pins.items():
+              code=[ins(0xb7)]
+              for i in range(n):code.extend([ins(0x79,2,1,16*i),ins(0x79,3,1,16*i+8),ins(0x1d,2,3,1),ins(0x44,0,0,0,1<<i)])
+              raw=b''.join(code)+ins(0x95)
+              assert len(raw)==8*(4*n+2) and hashlib.sha256(raw).hexdigest()==pin
+              P(f'batch-{n}.bin').write_bytes(raw)
+              print(f'PROGRAM width={n} instructions={len(raw)//8} sha={pin}')
+          PY
+          python3 programs.py
+          cat > decode.py <<'PY'
+          import hashlib,struct,zipfile,re,pathlib,json
+          P=pathlib.Path
+          N={'virtqueue_host_advance':9,'virtqueue_buffer_pop':6,'virtqueue_buffer_fill_attempt':6}
+          DROP=2**64-2
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def decode(raw):
+              pos=0;ids={};seen=set();events=[];drops=0;active={};adv=[];offsets=[]
+              def take(n):
+                  nonlocal pos
+                  assert 0<=n<=len(raw)-pos
+                  x=raw[pos:pos+n];pos+=n;return x
+              def read(f):return struct.unpack('<'+f,take(struct.calcsize('<'+f)))
+              assert read('QQQ')==(2**64-1,0xf2b177cb0aa429b4,4)
+              while pos<len(raw):
+                  typ,=read('Q')
+                  if typ==0:
+                      k,n=read('QI');assert 0<n<=512 and k<DROP
+                      name=take(n).decode('ascii')
+                      assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) and k not in ids and name not in seen
+                      ids[k]=name;seen.add(name)
+                  elif typ==1:
+                      k,t,n,pid=read('QQII');assert t>0 and pid>0 and 24<=n<=4096
+                      start=pos;payload=take(n-24)
+                      if k==DROP:
+                          assert len(payload)==8
+                          d,=struct.unpack('<Q',payload);assert d>0;drops+=d;continue
+                      name=ids[k];assert name in N and len(payload)==8*N[name]
+                      a=struct.unpack('<'+'Q'*N[name],payload);events.append((name,a))
+                      if name=='virtqueue_host_advance':
+                          q,p,o,old,new,x,y,oi,ni=a
+                          assert q<=65535 and p in (0,1) and o==0 and old<=65535 and new<=65535 and x in (0,1) and y in (0,1) and (p or x==y) and oi<2**32 and ni<2**32 and ni<oi
+                          adv.append(a);offsets.append(start)
+                      else:
+                          dev,q,elem,bid,nd,p=a;assert dev and elem and q<=65535 and bid<=65535 and 0<nd<2**32 and p in (0,1)
+                          key=(dev,q,bid)
+                          if name.endswith('_pop'):assert key not in active;active[key]=(elem,nd,p)
+                          else:assert active.pop(key)==(elem,nd,p)
+                  else:raise AssertionError('record type')
+              assert N.keys()<=seen and not active and drops==0
+              return adv,offsets
+          def output(name,adv):
+              pairs=[(a[5],a[6]) for a in adv]
+              P(name+'.pairs').write_bytes(b''.join(struct.pack('<QQ',*a) for a in pairs))
+              expected=''.join(f'{i}\n' for i,(a,b) in enumerate(pairs,1) if a!=b).encode()
+              P(name+'.expected').write_bytes(expected)
+              print(f'INPUT {name} count={len(pairs)} selected={expected.count(bytes([10]))} pairs_sha={sha(P(name+".pairs").read_bytes())} expected_sha={sha(expected)}')
+              return name
+          with zipfile.ZipFile('capture.zip') as z:
+              assert len(z.namelist())==90 and z.testzip() is None
+              assert sha(z.read('trace-events-all'))=='931d8bcf92beebc8caad29bcddd3dfb7cdd3e773e4977470cbe686743569caef'
+              pat=re.compile(r'virtqueue_host_advance queue (\d+) packed ([01]) ordered ([01]) used (\d+)->(\d+) wrap ([01])->([01]) inuse (\d+)->(\d+)')
+              cases=[]
+              for rep in range(3):
+                  for i,n in enumerate((5,0,2,5)):
+                      stem=f'{rep}-{i}'
+                      raw=z.read(stem+'-simple-on.trace')
+                      adv,offsets=decode(raw)
+                      text=[tuple(map(int,m.groups())) for l in z.read(stem+'-log-on.trace').decode().splitlines() if l.startswith('virtqueue_host_advance') for m in [pat.fullmatch(l)] if m]
+                      assert len(adv)==len(text)==n and adv==text
+                      assert all(a[1]==0 and a[5]==a[6] for a in adv)
+                      cases.append(output(stem,adv))
+              raw=z.read('0-0-simple-on.trace');adv,off=decode(raw);assert len(off)==5
+              # Positive predicate control only: modify the normalized input, not a claimed native packed trace.
+              mod=[tuple([*a[:1],1,*a[2:6],1-a[5],*a[7:]]) if i in (0,4) else a for i,a in enumerate(adv)]
+              cases.append(output('synthetic-positive',mod))
+              damaged=bytearray(raw);struct.pack_into('<Q',damaged,off[0]+6*8,2)
+              loss=struct.pack('<QQQIIQ',1,DROP,1,32,1,1)
+              for label,bad in [('trunc',raw[:-1]),('loss',raw+loss),('bad_bool',bytes(damaged)),('trailing',raw+b'x')]:
+                  try:decode(bad)
+                  except (AssertionError,KeyError,UnicodeError,struct.error):print('REFUSE '+label)
+                  else:raise AssertionError(label)
+              P('cases.txt').write_text('\n'.join(cases)+'\n')
+          PY
+          python3 decode.py
+          cat > consume.c <<'EOF'
+          #include <ubpf.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);exit(1);}}while(0)
+          struct pair{uint64_t a,b;};
+          int main(int argc,char**argv){
+              CHECK(argc==5&&sizeof(struct pair)==16);
+              unsigned w=(unsigned)strtoul(argv[1],0,10);CHECK(w==1||w==8||w==32);
+              FILE*f=fopen(argv[2],"rb");CHECK(f);unsigned char code[1040];size_t len=8*(4*w+2);
+              CHECK(fread(code,1,len,f)==len&&fgetc(f)==EOF&&!ferror(f)&&fclose(f)==0);
+              struct ubpf_vm*v=ubpf_create();CHECK(v&&ubpf_set_execution_profile(v,UBPF_EXECUTION_PROFILE_SAFE)==0&&ubpf_set_instruction_limit(v,4*w+2,NULL)==0);
+              char*err=NULL;CHECK(ubpf_load(v,code,len,&err)==0);free(err);
+              f=fopen(argv[3],"rb");FILE*out=fopen(argv[4],"w");CHECK(f&&out);
+              unsigned n=0,calls=0,selected=0;
+              for(;;){
+                  struct pair p[32]={{0}},copy[32];size_t bytes=fread(p,1,w*sizeof(*p),f);CHECK(!ferror(f)&&bytes%sizeof(*p)==0);
+                  if(!bytes)break;
+                  unsigned valid=(unsigned)(bytes/sizeof(*p));uint64_t expect=0,got=UINT64_MAX;
+                  for(unsigned i=0;i<valid;i++){CHECK(p[i].a<=1&&p[i].b<=1);if(p[i].a!=p[i].b)expect|=UINT64_C(1)<<i;}
+                  memcpy(copy,p,w*sizeof(*p));CHECK(ubpf_exec(v,copy,w*sizeof(*p),&got)==0&&got==expect&&memcmp(copy,p,w*sizeof(*p))==0);
+                  for(unsigned i=0;i<valid;i++)if(got&(UINT64_C(1)<<i)){CHECK(fprintf(out,"%u\n",n+i+1)>0);selected++;}
+                  n+=valid;calls++;
+              }
+              CHECK(fclose(f)==0&&fclose(out)==0);ubpf_destroy(v);
+              printf("CONSUME width=%u count=%u calls=%u selected=%u\n",w,n,calls,selected);return 0;
+          }
+          EOF
+          lib=$(find build -name libubpf.a -type f -print -quit)
+          test -n "$lib"
+          cc -O2 -Wall -Wextra -Werror -Iubpf/vm/inc -Ibuild/vm consume.c "$lib" -lm -o consume
+          sha256sum decode.py consume.c consume "$lib"
+          while read -r name; do
+            for width in 1 8 32; do
+              echo "BEGIN $name $width"
+              ./consume "$width" "batch-$width.bin" "$name.pairs" "$name.actual"
+              cmp "$name.expected" "$name.actual"
+              sha256sum "$name.actual"
+              echo "END $name $width"
+            done
+          done < cases.txt
+          echo 'E04D PASS 39'
+      - name: Clean temporary input
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/upip-e04d"
