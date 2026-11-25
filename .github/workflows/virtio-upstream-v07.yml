@@ -1,0 +1,99 @@
+name: VirtIO upstream QEMU regression baseline
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-upstream-v07.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  upstream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-upstream-v07 -f description='Public QEMU upstream regression' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Obtain exact public upstream source and build
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends build-essential ninja-build pkg-config python3-venv python3-pip python3-setuptools libglib2.0-dev libpixman-1-dev libfdt-dev libslirp-dev zlib1g-dev libcap-ng-dev libattr1-dev liburing-dev libaio-dev libzstd-dev libgnutls28-dev libgcrypt20-dev libtasn1-6-dev libnuma-dev flex bison git meson
+          git init qemu
+          git -C qemu remote add origin https://github.com/qemu/qemu.git
+          git -C qemu fetch --depth=1 origin 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu checkout --detach FETCH_HEAD
+          test "$(git -C qemu rev-parse HEAD)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu rev-parse HEAD > receipts/upstream-sha.txt
+          mkdir build
+          cd build
+          ../qemu/configure --target-list=x86_64-softmmu --enable-tcg --disable-kvm --disable-docs --disable-werror --enable-trace-backends=simple --disable-gtk --disable-sdl > ../receipts/configure.log 2>&1 || { tail -80 ../receipts/configure.log; exit 1; }
+          make -j"$(nproc)" > ../receipts/build.log 2>&1 || { tail -100 ../receipts/build.log; exit 1; }
+          ./qemu-system-x86_64 --version > ../receipts/qemu-version.txt
+          sha256sum qemu-system-x86_64 qemu-img > ../receipts/binaries.sha256
+          cp config-host.mak ../receipts/
+          git -C ../qemu status --porcelain > ../receipts/source-status.txt
+          git -C ../qemu submodule status > ../receipts/submodules.txt
+          ./run meson test --list > ../receipts/test-list.txt
+          make check-help > ../receipts/check-help.txt
+      - name: Run upstream unit, trace, QOS and raw block tests
+        run: |
+          set -uo pipefail
+          cd build
+          r=../receipts
+          : > "$r/exit.tsv"
+          probe() {
+            name=$1
+            shift
+            timeout 420 "$@" > "$r/$name.log" 2>&1
+            rc=$?
+            printf '%s\t%s\n' "$name" "$rc" >> "$r/exit.tsv"
+            for file in meson-logs/testlog.txt meson-logs/testlog.json; do
+              if test -f "$file"; then cp "$file" "$r/$name-$(basename "$file")"; fi
+            done
+            tail -25 "$r/$name.log"
+          }
+          probe unit make check-unit
+          probe tracetool make check-tracetool
+          probe qos ./run meson test --print-errorlogs qtest-x86_64/qos-test
+          probe block-raw make check-block-raw
+          cat "$r/exit.tsv"
+          awk -F '\t' 'NF!=2 || $2!=0 {bad=1} END {exit (NR!=4 || bad)}' "$r/exit.tsv"
+      - name: Retain bounded public results
+        if: always()
+        run: |
+          mkdir -p receipts
+          du -ah receipts | sort -h | tail -20
+          python3 - <<'PY'
+          import pathlib
+          for p in pathlib.Path("receipts").rglob("*"):
+              if p.is_file() and p.stat().st_size>8*1024*1024:
+                  n=p.stat().st_size
+                  with p.open("rb") as f:
+                      head=f.read(1024*1024)
+                      f.seek(-6*1024*1024,2); tail=f.read()
+                  p.write_bytes(head+b"\nTRUNCATED ORIGINAL_BYTES="+str(n).encode()+b"\n"+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-upstream-v07
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-upstream-v07 -f description='Public QEMU upstream wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
