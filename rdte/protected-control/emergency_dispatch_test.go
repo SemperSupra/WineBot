@@ -38,7 +38,10 @@ func TestEmergencyStopWhileJournalLocked(t *testing.T){
  canceled:=make(chan struct{})
  release:=make(chan struct{})
  done:=make(chan error,1)
- defer close(release)
+ defer func(){
+  close(release)
+  select{case <-done:case <-time.After(5*time.Second):t.Error("worker cleanup timeout")}
+ }()
  go func(){done<-e.run(func(ctx context.Context)error{
   close(entered)
   <-ctx.Done()
