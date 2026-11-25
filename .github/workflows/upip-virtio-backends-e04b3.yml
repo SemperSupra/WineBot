@@ -1,0 +1,203 @@
+name: VirtIO native trace backend comparison E04b3
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-virtio-backends-e04b3.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Recover exact public V17b build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts previous
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15028588120/zip > previous.zip
+          echo '8a1fc3c431c0aa500301a4ff79b48d11e2facfe2112bab2036c39894ce90a57d  previous.zip' | sha256sum -c -
+          unzip -q previous.zip -d previous
+          echo '08c3841ff05a3d374817035181743ec8fbb9f05d04e63d00cb5298a9acac2cb6  previous/candidate.patch' | sha256sum -c -
+          echo 'af5001a9a1c8e1d90436455b8f69ea4be8cd3ddbf6081b98a1d886dc2b24f5e6  previous/candidate-qemu-system-x86_64' | sha256sum -c -
+          chmod +x previous/candidate-qemu-system-x86_64
+      - name: Build pinned simple-only candidate and native QOS harness
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends build-essential ninja-build pkg-config python3-venv python3-pip python3-setuptools libglib2.0-dev libpixman-1-dev libfdt-dev libslirp-dev zlib1g-dev libcap-ng-dev libattr1-dev liburing-dev libaio-dev libzstd-dev libgnutls28-dev libgcrypt20-dev libtasn1-6-dev libnuma-dev flex bison git meson
+          ldd previous/candidate-qemu-system-x86_64 | tee receipts/log-binary-ldd.txt
+          if grep -q 'not found' receipts/log-binary-ldd.txt; then exit 1; fi
+          previous/candidate-qemu-system-x86_64 --version | tee receipts/log-binary-version.txt
+          git init qemu
+          git -C qemu remote add origin https://github.com/qemu/qemu.git
+          git -C qemu fetch --depth=1 origin 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu checkout --detach FETCH_HEAD
+          test "$(git -C qemu rev-parse HEAD)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu rev-parse HEAD > receipts/upstream-sha.txt
+          git -C qemu apply --check "$PWD/previous/candidate.patch"
+          git -C qemu apply "$PWD/previous/candidate.patch"
+          git -C qemu diff --check
+          mkdir build
+          cd build
+          ../qemu/configure --target-list=x86_64-softmmu --enable-tcg --disable-kvm --disable-docs --disable-werror --enable-trace-backends=simple --disable-gtk --disable-sdl > ../receipts/configure.log 2>&1 || { tail -80 ../receipts/configure.log; exit 1; }
+          make -j"$(nproc)" > ../receipts/build.log 2>&1 || { tail -100 ../receipts/build.log; exit 1; }
+          ./qemu-system-x86_64 --version > ../receipts/qemu-version.txt
+          sha256sum qemu-system-x86_64 qemu-img > ../receipts/binaries.sha256
+          cp config-host.mak ../receipts/
+          git -C ../qemu status --porcelain > ../receipts/source-status.txt
+          git -C ../qemu submodule status > ../receipts/submodules.txt
+          ./run meson test --list > ../receipts/test-list.txt
+          make check-help > ../receipts/check-help.txt
+      - name: Retain reusable simple binary before comparison
+        run: |
+          set -euo pipefail
+          mkdir -p simple-build/pc-bios
+          cp build/qemu-system-x86_64 build/qemu-img build/tests/qtest/qos-test simple-build/
+          strip --strip-debug simple-build/qemu-system-x86_64 simple-build/qemu-img simple-build/qos-test
+          cp build/trace/trace-events-all previous/candidate.patch receipts/upstream-sha.txt simple-build/
+          cp -L qemu/pc-bios/bios-256k.bin qemu/pc-bios/kvmvapic.bin qemu/pc-bios/linuxboot_dma.bin simple-build/pc-bios/
+          (cd simple-build && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          test "$(du -sb simple-build | cut -f1)" -lt 100000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upip-e04b3-simple-build
+          path: simple-build/
+          retention-days: 7
+      - name: Compare matched native QOS cases
+        run: |
+          set -euo pipefail
+          cat > receipts/qualify.py <<'PY'
+          import os,re,json,pathlib,signal,subprocess,shlex,time,struct,hashlib,sys
+          from collections import Counter
+          P=pathlib.Path; root=P.cwd(); r=root/'receipts'; b=root/'build'
+          q=b/'tests/qtest/qos-test'
+          simple=b/'qemu-system-x86_64'; log=root/'previous/candidate-qemu-system-x86_64'
+          eventfile=r/'sensor.events'
+          names={'virtqueue_host_advance':9,'virtqueue_buffer_pop':6,'virtqueue_buffer_fill_attempt':6}
+          eventfile.write_text('\n'.join(names)+'\n')
+          maps=list(b.rglob('trace-events-all'))
+          mapfile=b/'trace/trace-events-all'
+          assert mapfile.is_file() and maps and all(p.read_bytes()==mapfile.read_bytes() for p in maps),maps
+          (r/'trace-events-all').write_bytes(mapfile.read_bytes())
+          sys.path.insert(0,str(root/'qemu/scripts'))
+          import simpletrace
+          from tracetool import read_events
+          with mapfile.open() as f: declared=read_events(f,str(mapfile))
+          def strict(raw):
+              pos=0
+              def take(n):
+                  nonlocal pos
+                  assert 0<=n<=len(raw)-pos,(pos,n,len(raw))
+                  out=raw[pos:pos+n];pos+=n;return out
+              def read(fmt):return struct.unpack('<'+fmt,take(struct.calcsize('<'+fmt)))
+              assert read('QQQ')==(2**64-1,0xf2b177cb0aa429b4,4)
+              ids={}; labels=set(); records=[]; dropped=0
+              while pos<len(raw):
+                  typ,=read('Q')
+                  if typ==0:
+                      k,n=read('QI')
+                      assert 0<n<=512 and k<2**64-2
+                      name=take(n).decode('ascii')
+                      assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) and k not in ids and name not in labels
+                      ids[k]=name;labels.add(name)
+                  elif typ==1:
+                      k,t,n,pid=read('QQII')
+                      assert t>0 and pid>0 and 24<=n<=4096
+                      payload=take(n-24)
+                      if k==2**64-2:
+                          assert len(payload)==8
+                          loss,=struct.unpack('<Q',payload);assert loss>0;dropped+=loss
+                      else:
+                          name=ids[k]
+                          assert name in names and len(payload)==8*names[name]
+                          args=struct.unpack('<'+'Q'*names[name],payload)
+                          records.append((name,t,pid,args))
+                  else:raise AssertionError(('unknown record type',typ))
+              assert names.keys()<=labels
+              return records,dropped
+          def parse_simple(path):
+              raw=path.read_bytes()
+              records,loss=strict(raw)
+              with path.open('rb') as f:
+                  simpletrace.read_trace_header(f)
+                  upstream=list(simpletrace.read_trace_records(declared,f,True))
+              u=[(name,t,pid,tuple(args)) for _,name,t,pid,*args in upstream if name!='dropped']
+              ul=sum(args[0] for _,name,t,pid,*args in upstream if name=='dropped')
+              assert records==u and loss==ul,(len(records),len(u),loss,ul)
+              return Counter(x[0] for x in records),loss,len(raw)
+          env0={k:os.environ[k] for k in ('PATH','HOME','LANG','LC_ALL','TMPDIR') if k in os.environ}
+          env0.update(QTEST_QEMU_IMG=str(b/'qemu-img'),G_TEST_DBUS_DAEMON=str(root/'qemu/tests/dbus-daemon.sh'),PYTHON=str(b/'pyvenv/bin/python3'),MALLOC_PERTURB_='173')
+          for key,p in (('QTEST_QEMU_STORAGE_DAEMON_BINARY','storage-daemon/qemu-storage-daemon'),('QTEST_QEMU_VNC_BINARY','tools/qemu-vnc/qemu-vnc')):
+              if (b/p).is_file():env0[key]=str(b/p)
+          def env(arm,trace):
+              e=env0.copy();e['QTEST_QEMU_BINARY']=str(simple if arm.startswith('simple') else log)
+              args=['-L',str(root/'qemu/pc-bios')]
+              if arm=='simple-on':args+=['-trace','events='+str(eventfile)+',file='+str(trace)]
+              if arm=='log-on':args+=['-trace','events='+str(eventfile),'-D',str(trace)]
+              e['QTEST_QEMU_ARGS']=shlex.join(args);return e
+          def run(args,e,out,timeout=45):
+              start=time.perf_counter_ns()
+              with out.open('wb') as f:
+                  p=subprocess.Popen(args,env=e,cwd=b,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
+                  try:rc=p.wait(timeout=timeout)
+                  except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGKILL);p.wait();rc=124
+              return rc,time.perf_counter_ns()-start,out.read_text(errors='replace')
+          arms=('log-off','log-on','simple-off','simple-on')
+          paths=None
+          for arm in ('log-off','simple-off'):
+              rc,_,txt=run([str(q),'-l'],env(arm,None),r/(arm+'-inventory.log'),60)
+              assert rc==0
+              found=sorted(set(m[1] for l in txt.splitlines() if (m:=re.fullmatch(r'(?:#\s+)?(/\S+)',l.strip())) and '/virtio-blk-tests/' in m[1] and m[1].rsplit('/',1)[-1] in {'basic','config','indirect','resize'}))
+              assert len(found)==4
+              if paths is None:paths=found
+              else:assert paths==found
+          out=[]
+          for rep in range(3):
+              for i,path in enumerate(paths):
+                  for j in range(4):
+                      arm=arms[(rep+j)%4]
+                      base=f'{rep}-{i}-{arm}'
+                      trace=r/(base+'.trace')
+                      rc,ns,txt=run([str(q),'--tap','-p',path],env(arm,trace),r/(base+'.tap'))
+                      tap=[l for l in txt.splitlines() if re.match(r'^(?:not )?ok \d+(?:\s|$)',l)]
+                      assert rc==0 and len(tap)==1 and tap[0].startswith('ok 1') and not re.search(r'#\s*SKIP',tap[0],re.I),(base,rc,txt[-2000:])
+                      counts=Counter();loss=None;size=0
+                      if arm=='simple-on':
+                          counts,loss,size=parse_simple(trace)
+                          assert loss==0,(base,loss)
+                      elif arm=='log-on':
+                          assert trace.is_file()
+                          raw=trace.read_text()
+                          for l in raw.splitlines():
+                              name=l.split()[0] if l.split() else ''
+                              assert name in names,(base,l)
+                              counts[name]+=1
+                          size=trace.stat().st_size
+                      else:assert not trace.exists()
+                      expected={'basic':5,'config':0,'indirect':2,'resize':5}[path.rsplit('/',1)[-1]]
+                      if arm.endswith('-on'):
+                          assert counts['virtqueue_buffer_pop']==counts['virtqueue_buffer_fill_attempt']==expected,(base,counts)
+                          assert counts['virtqueue_host_advance']==expected,(base,counts)
+                      row=dict(rep=rep,path=path,arm=arm,wall_ns=ns,trace_bytes=size,counts=dict(counts),reported_drops=loss,exit=rc)
+                      out.append(row);print('ARM '+json.dumps(row,sort_keys=True),flush=True)
+          (r/'qualification.json').write_text(json.dumps(out,indent=2))
+          assert len(out)==48
+          print('E04B PASS 48')
+          PY
+          python3 receipts/qualify.py
+          sha256sum receipts/qualify.py receipts/trace-events-all build/qemu-system-x86_64 previous/candidate-qemu-system-x86_64
+      - name: Retain bounded public evidence
+        if: always()
+        run: |
+          mkdir -p receipts
+          du -sh receipts
+          test "$(du -sb receipts | cut -f1)" -lt 50000000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upip-e04b3-backends
+          path: receipts/
+          retention-days: 7
