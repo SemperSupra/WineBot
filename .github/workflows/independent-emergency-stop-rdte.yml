@@ -1,0 +1,25 @@
+name: Independent Emergency STOP RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/emergency_dispatch*.go'
+      - '.github/workflows/independent-emergency-stop-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stop-isolation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Exercise STOP with real journal lock contention and late completion
+        run: go test -race -count=10 -timeout=120s ./rdte/protected-control -run '^TestEmergency'
