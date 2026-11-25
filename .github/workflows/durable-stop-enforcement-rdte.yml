@@ -1,0 +1,26 @@
+name: Durable STOP Enforcement RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/durable_stop*.go'
+      - 'rdte/protected-control/writer_gate.go'
+      - '.github/workflows/durable-stop-enforcement-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  durable-stop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify durable STOP and gate regression
+        run: go test -race -count=5 -timeout=150s ./rdte/protected-control -run '^(TestDurableStop|TestEmergency|TestWriterGate)'
