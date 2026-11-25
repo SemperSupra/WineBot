@@ -1,0 +1,178 @@
+name: ReactOS checkpoint replay feasibility
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-reactos-hv1.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Public-only scope and prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/fdr-lua-cli-20261125
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils seabios libglib2.0-0t64 libpixman-1-0 libfdt1 libzstd1
+      - name: Retrieve qualified public installed disk
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45550202697
+          github-token: ${{ github.token }}
+          name: obsros-r23-stock-installed-baseline
+          path: base
+      - name: Retrieve exact source-built QEMU
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271561618
+          github-token: ${{ github.token }}
+          name: obsros-qemu-source-sensor-pio
+          path: source-qemu
+      - name: Run bounded actual guest checkpoint replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 base/guest.qcow2 11564d4433b411c0a31e3398953c6d174129d18c53e22c040ba39e1befe4d1ed source-qemu/build/qemu-system-i386 | sha256sum -c -
+          chmod a-w base/guest.qcow2
+          chmod u+x source-qemu/build/qemu-system-i386
+          sha256sum base/guest.qcow2 source-qemu/build/qemu-system-i386 > receipts/input.sha256
+          ldd source-qemu/build/qemu-system-i386 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          source-qemu/build/qemu-system-i386 --version > receipts/qemu-version.txt
+          source-qemu/build/qemu-system-i386 -trace help > receipts/trace-events.txt 2>&1
+          grep -qw memory_region_ops_read receipts/trace-events.txt
+          grep -qw memory_region_ops_write receipts/trace-events.txt
+          test -r /usr/share/seabios/bios-256k.bin
+          test -r /usr/share/seabios/vgabios-stdvga.bin
+          sha256sum /usr/share/seabios/bios-256k.bin /usr/share/seabios/vgabios-stdvga.bin > receipts/firmware.sha256
+          qemu-img check base/guest.qcow2 > receipts/base-check.txt
+          cp --reflink=auto base/guest.qcow2 guest.qcow2
+          chmod u+w guest.qcow2
+          cat > replay.py <<'PY'
+          import json,pathlib,socket,subprocess,time
+          P=pathlib.Path
+          receipts=P("receipts")
+          log=(receipts/"qmp.ndjson").open("w",buffering=1)
+          def record(direction,obj):
+              log.write(json.dumps({"direction":direction,"monotonic_ns":time.monotonic_ns(),"message":obj})+"\n")
+          class QMP:
+              def __init__(self):
+                  self.s=socket.socket(socket.AF_UNIX)
+                  self.s.settimeout(5)
+                  end=time.monotonic()+15
+                  while True:
+                      try: self.s.connect("qmp.sock"); break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if time.monotonic()>end: raise
+                          time.sleep(.1)
+                  self.f=self.s.makefile("rb")
+                  self.i=0
+                  assert "QMP" in self.recv()
+                  self.call("qmp_capabilities")
+              def recv(self):
+                  b=self.f.readline(262145)
+                  if not b or len(b)>262144 or not b.endswith(b"\n"): raise ValueError("invalid frame")
+                  m=json.loads(b); record("recv",m); return m
+              def call(self,cmd,args=None,expect_error=False):
+                  self.i+=1
+                  m={"execute":cmd,"id":self.i}
+                  if args is not None: m["arguments"]=args
+                  record("send",m)
+                  self.s.sendall(json.dumps(m).encode()+b"\r\n")
+                  for _ in range(128):
+                      r=self.recv()
+                      if "event" in r: continue
+                      assert r.get("id")==self.i,r
+                      if expect_error:
+                          assert "error" in r,r
+                          return r["error"]
+                      if "error" in r: raise RuntimeError(r)
+                      assert "return" in r,r
+                      return r["return"]
+                  raise RuntimeError("event budget exceeded")
+              def job(self,cmd,job_id,tag,expect_error=False):
+                  args={"job-id":job_id,"tag":tag,"devices":["guest-disk"]}
+                  if cmd!="snapshot-delete": args["vmstate"]="guest-disk"
+                  self.call(cmd,args)
+                  end=time.monotonic()+90
+                  while time.monotonic()<end:
+                      jobs=self.call("query-jobs")
+                      matching=[j for j in jobs if j["id"]==job_id]
+                      if len(matching)==1 and matching[0]["status"]=="concluded":
+                          j=matching[0]; assert j["type"]==cmd,j
+                          (receipts/(job_id+".json")).write_text(json.dumps(j,indent=2))
+                          assert ("error" in j)==expect_error,j
+                          self.call("job-dismiss",{"id":job_id})
+                          return
+                      time.sleep(.1)
+                  raise TimeoutError(job_id)
+          qemu=P("source-qemu/build/qemu-system-i386").resolve()
+          args=[str(qemu),"-accel","tcg","-machine","pc","-cpu","pentium3","-smp","1","-m","768","-nic","none","-display","none","-vga","std","-L","/usr/share/seabios","-bios","/usr/share/seabios/bios-256k.bin","-serial","file:receipts/guest.serial","-monitor","none","-qmp","unix:qmp.sock,server=on,wait=off","-blockdev","driver=file,node-name=guest-file,filename=guest.qcow2","-blockdev","driver=qcow2,node-name=guest-disk,file=guest-file","-device","ide-hd,drive=guest-disk","-boot","order=c","-no-reboot"]
+          (receipts/"argv.json").write_text(json.dumps(args))
+          def bounded_wait(p,seconds):
+              end=time.monotonic()+seconds
+              while time.monotonic()<end:
+                  assert p.poll() is None,"guest exited"
+                  for n in ("guest.serial","qemu-stderr.txt"):
+                      path=receipts/n
+                      assert not path.exists() or path.stat().st_size<=8*1024*1024,"output cap"
+                  time.sleep(.25)
+          with (receipts/"qemu-stderr.txt").open("wb") as err:
+              p=subprocess.Popen(args,stdout=err,stderr=err)
+              try:
+                  q=QMP()
+                  available={v["name"] for v in q.call("query-commands")}
+                  assert {"snapshot-save","snapshot-load","snapshot-delete","send-key","screendump"}<=available
+                  blocks=q.call("query-block")
+                  writable=[b["inserted"]["node-name"] for b in blocks if b.get("inserted") and not b["inserted"]["ro"]]
+                  assert writable==["guest-disk"],blocks
+                  def frame(name): q.call("screendump",{"filename":str(receipts/(name+".ppm"))})
+                  bounded_wait(p,80)
+                  frame("boot")
+                  q.call("stop")
+                  assert not q.call("query-status")["running"]
+                  frame("checkpoint")
+                  q.job("snapshot-save","save0","base")
+                  for idx,label,intervene in [(0,"a1",True),(1,"b_idle",False),(2,"a2",True)]:
+                      if idx:
+                          q.job("snapshot-load",f"load{idx}","base")
+                          assert not q.call("query-status")["running"]
+                      frame(label+"-restored-paused")
+                      q.call("cont")
+                      bounded_wait(p,2)
+                      frame(label+"-pre")
+                      if intervene:
+                          q.call("send-key",{"keys":[{"type":"qcode","data":"ctrl"},{"type":"qcode","data":"esc"}],"hold-time":100})
+                      bounded_wait(p,4)
+                      frame(label+"-post")
+                      q.call("stop")
+                      assert not q.call("query-status")["running"]
+                  q.job("snapshot-delete","delete0","base")
+                  q.call("quit")
+                  p.wait(timeout=15)
+                  assert p.returncode==0
+              finally:
+                  if p.poll() is None:
+                      p.terminate()
+                      try: p.wait(timeout=10)
+                      except subprocess.TimeoutExpired: p.kill(); p.wait()
+          (receipts/"classification.txt").write_text("NATIVE_CHECKPOINT_JOBS_CAPTURED; VISUAL_A_A_B_AND_RESTORE_REQUIRE_INDEPENDENT_CLASSIFICATION; NO_PERSISTENT_EFFECT_ROLLBACK_CLAIM\n")
+          PY
+          cp replay.py receipts/
+          timeout 520s python3 replay.py
+          qemu-img check guest.qcow2 > receipts/replay-disk-check.txt
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 base/guest.qcow2 | sha256sum -c -
+      - name: Retain bounded replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reactos-checkpoint-replay-hv1
+          path: receipts/
+          retention-days: 2
+          if-no-files-found: warn
