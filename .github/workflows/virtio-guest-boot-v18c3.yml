@@ -1,0 +1,165 @@
+name: VirtIO guest native tracepoint compile qualification
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-guest-boot-v18c3.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  upstream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-guest-boot-v18c3 -f description='Public QEMU upstream regression' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build guest tracepoint object from public Linux v6.8
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends build-essential flex bison libelf-dev libssl-dev bc git
+          git clone --depth 1 --branch v6.8 https://github.com/torvalds/linux.git linux
+          git -C linux rev-parse HEAD > receipts/upstream-sha.txt
+          test "$(git -C linux hash-object drivers/virtio/virtio_ring.c)" = 49299b1f9ec746bcfae28186c7644092c4849fd8
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("linux/drivers/virtio/virtio_ring.c")
+          s=p.read_text()
+          def insert(anchor,code):
+              global s
+              assert s.count(anchor)==1,anchor
+              s=s.replace(anchor,anchor+code)
+          insert("#include <xen/xen.h>\n", "#define CREATE_TRACE_POINTS\n#include <trace/events/virtio_observe.h>\n")
+          insert("vq->split.vring.avail->idx = cpu_to_virtio16(_vq->vdev,\n\t\t\t\t\t\tvq->split.avail_idx_shadow);", "\n\ttrace_virtio_buffer(_vq->vdev->index, _vq->index, head, false, false, 0);")
+          insert("ret = vq->split.desc_state[i].data;", "\n\ttrace_virtio_buffer(_vq->vdev->index, _vq->index, i, false, true, *len);")
+          insert("vq->packed.desc_state[id].last = id;", "\n\ttrace_virtio_buffer(vq->vq.vdev->index, vq->vq.index, id, true, false, 0);")
+          insert("vq->packed.vring.desc[head].flags = head_flags;", "\n\ttrace_virtio_buffer(_vq->vdev->index, _vq->index, id, true, false, 0);")
+          insert("ret = vq->packed.desc_state[id].data;", "\n\ttrace_virtio_buffer(_vq->vdev->index, _vq->index, id, true, true, *len);")
+          p.write_text(s)
+          Path("linux/include/trace/events/virtio_observe.h").write_text("""/* SPDX-License-Identifier: GPL-2.0 */
+          #undef TRACE_SYSTEM
+          #define TRACE_SYSTEM virtio_observe
+          #if !defined(_TRACE_VIRTIO_OBSERVE_H) || defined(TRACE_HEADER_MULTI_READ)
+          #define _TRACE_VIRTIO_OBSERVE_H
+          #include <linux/tracepoint.h>
+          TRACE_EVENT(virtio_buffer,
+              TP_PROTO(unsigned int dev, unsigned int queue, unsigned int id,
+                       bool packed, bool consume, unsigned int len),
+              TP_ARGS(dev, queue, id, packed, consume, len),
+              TP_STRUCT__entry(
+                  __field(unsigned int, dev)
+                  __field(unsigned int, queue)
+                  __field(unsigned int, id)
+                  __field(bool, packed)
+                  __field(bool, consume)
+                  __field(unsigned int, len)
+              ),
+              TP_fast_assign(
+                  __entry->dev = dev;
+                  __entry->queue = queue;
+                  __entry->id = id;
+                  __entry->packed = packed;
+                  __entry->consume = consume;
+                  __entry->len = len;
+              ),
+              TP_printk("dev=%u queue=%u id=%u packed=%d consume=%d len=%u",
+                  __entry->dev, __entry->queue, __entry->id,
+                  __entry->packed, __entry->consume, __entry->len)
+          );
+          #endif
+          #include <trace/define_trace.h>
+          """)
+          PY
+          git -C linux add -N include/trace/events/virtio_observe.h
+          git -C linux diff --check
+          git -C linux diff > receipts/guest.patch
+          cd linux
+          make tinyconfig > ../receipts/config.log 2>&1
+          scripts/config --enable 64BIT --enable PCI --enable PCI_MSI --enable VIRTIO_MENU --enable VIRTIO --enable VIRTIO_PCI --enable VIRTIO_BLK --enable BLOCK --enable BLK_DEV_INITRD --enable RD_GZIP --enable BINFMT_ELF --enable BINFMT_SCRIPT --enable ACPI --enable FUTEX --enable EPOLL --enable SIGNALFD --enable TIMERFD --enable EVENTFD --enable POSIX_TIMERS --enable MULTIUSER --enable BLOCK --enable BLK_DEV_IO_TRACE --enable TTY --enable SERIAL_8250 --enable SERIAL_8250_CONSOLE --enable PRINTK --enable PROC_FS --enable SYSFS --enable DEVTMPFS --enable DEVTMPFS_MOUNT --enable TRACING --enable FTRACE --enable EVENT_TRACING --enable TRACEPOINTS --enable TRACEFS_FS --enable DEBUG_FS
+          make olddefconfig >> ../receipts/config.log 2>&1
+          cp .config ../receipts/kernel.config
+          for opt in VIRTIO VIRTIO_PCI VIRTIO_BLK BINFMT_SCRIPT BINFMT_ELF TRACING EVENT_TRACING DEVTMPFS PROC_FS SYSFS FUTEX POSIX_TIMERS BLK_DEV_IO_TRACE; do grep -qx "CONFIG_$opt=y" .config || { echo "Missing required CONFIG_$opt"; exit 1; }; done
+          grep -E '^CONFIG_(VIRTIO|TRACING|EVENT_TRACING)=' .config > ../receipts/config-selected.txt
+          make -j"$(nproc)" drivers/virtio/virtio_ring.o > ../receipts/build.log 2>&1 || { tail -80 ../receipts/build.log; exit 1; }
+          nm drivers/virtio/virtio_ring.o > ../receipts/symbols.txt
+          grep -q __tracepoint_virtio_buffer ../receipts/symbols.txt
+          sha256sum drivers/virtio/virtio_ring.o > ../receipts/object.sha256
+          make -j"$(nproc)" bzImage > ../receipts/kernel-build.log 2>&1 || { tail -80 ../receipts/kernel-build.log; exit 1; }
+          cp arch/x86/boot/bzImage ../receipts/bzImage
+          cp .config ../receipts/kernel.config
+          cd ..
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 busybox-static cpio
+          mkdir -p root/{bin,dev,proc,sys}
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > root/init <<'EOF'
+          #!/bin/busybox sh
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          $B mkdir -p /sys/kernel/tracing
+          $B mount -t tracefs tracefs /sys/kernel/tracing || exit 1
+          T=/sys/kernel/tracing
+          $B cat "$T/events/virtio_observe/virtio_buffer/format" || exit 1
+          echo 1 > "$T/events/virtio_observe/virtio_buffer/enable"
+          $B dd if=/dev/vda of=/dev/null bs=512 count=1 || exit 1
+          $B cat "$T/trace"
+          $B test -e "$T/events/block/block_rq_issue/enable" || exit 1
+          $B test -e "$T/events/block/block_rq_complete/enable" || exit 1
+          echo GUEST_BOOT_OK
+          $B poweroff -f
+          EOF
+          chmod +x root/init
+          (cd root && find . | cpio -o -H newc | gzip) > initrd.gz
+          truncate -s 4M disk.raw
+          set +e
+          timeout 90 qemu-system-x86_64 -machine pc,accel=tcg -m 256 -smp 1 -nodefaults -nographic -serial stdio -no-reboot -kernel receipts/bzImage -initrd initrd.gz -append 'console=ttyS0 rdinit=/init panic=1' -drive if=none,id=d,file=disk.raw,format=raw -device virtio-blk-pci,drive=d > receipts/boot.log 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > receipts/boot-exit.txt
+          tail -100 receipts/boot.log
+          test "$rc" = 0
+          grep -q GUEST_BOOT_OK receipts/boot.log
+          grep -E 'virtio_buffer:.*consume=0' receipts/boot.log
+          grep -E 'virtio_buffer:.*consume=1' receipts/boot.log
+          sha256sum receipts/bzImage > receipts/kernel.sha256
+
+      - name: Retain bounded public results
+        if: always()
+        run: |
+          mkdir -p receipts
+          du -ah receipts | sort -h | tail -20
+          python3 - <<'PY'
+          import pathlib
+          for p in pathlib.Path("receipts").rglob("*"):
+              if p.is_file() and p.name!="bzImage" and p.stat().st_size>8*1024*1024:
+                  n=p.stat().st_size
+                  with p.open("rb") as f:
+                      head=f.read(1024*1024)
+                      f.seek(-6*1024*1024,2); tail=f.read()
+                  p.write_bytes(head+b"\nTRUNCATED ORIGINAL_BYTES="+str(n).encode()+b"\n"+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-guest-boot-v18c3
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-guest-boot-v18c3 -f description='Public QEMU upstream wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
