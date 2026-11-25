@@ -1,0 +1,112 @@
+name: FDR Lua CLI calibration
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-lua-cli.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind execution identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=fdr/lua-cli -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Build pinned release pair and minimal intervention
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir fdr-lua
+          cd fdr-lua
+          printf '%s\n' '4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae  lua-5.4.8.tar.gz' '2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6  lua-5.4.9.tar.gz' > SHA256SUMS
+          for v in 5.4.8 5.4.9; do
+            curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --max-time 90 "https://www.lua.org/ftp/lua-$v.tar.gz" -o "lua-$v.tar.gz"
+          done
+          sha256sum -c SHA256SUMS
+          for v in 5.4.8 5.4.9; do tar -xzf "lua-$v.tar.gz"; done
+          cp -a lua-5.4.8 intervention
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("intervention/src/lua.c")
+          s=p.read_text()
+          old="*first = i + 1;"
+          assert s.count(old)==1, "intervention precondition"
+          p.write_text(s.replace(old,"*first = (argv[i + 1] != NULL) ? i + 1 : 0;"))
+          PY
+          gcc --version | head -1
+          for d in lua-5.4.8 lua-5.4.9 intervention; do
+            start=$SECONDS
+            if ! make -C "$d" -j2 linux >"$d.build.log" 2>&1; then tail -30 "$d.build.log"; exit 1; fi
+            printf 'BUILD %s seconds=%s\n' "$d" "$((SECONDS-start))"
+            sha256sum "$d/src/lua.c" "$d/src/lua"
+            "$d/src/lua" -v
+          done
+          diff -u lua-5.4.8/src/lua.c intervention/src/lua.c || test "$?" -eq 1
+      - name: Paired semantic trials and bounded minimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/fdr-lua"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, time
+          root=pathlib.Path.cwd()
+          bins={k:root/d/"src/lua" for k,d in [("bad","lua-5.4.8"),("fixed","lua-5.4.9"),("intervention","intervention")]}
+          env={"PATH":"/usr/bin:/bin","LC_ALL":"C","HOME":str(root)}
+          program='io.write("FDR_".."OK\\n")\n'
+          (root/"control.lua").write_text(program)
+          calls=0
+          def observe(lane,args):
+              global calls
+              calls+=1
+              assert calls<=100
+              start=time.monotonic_ns()
+              try:
+                  p=subprocess.run([str(bins[lane]),*args],input=program,text=True,capture_output=True,timeout=3,env=env,cwd=root)
+              except subprocess.TimeoutExpired:
+                  return "UNRESOLVED"
+              result=("FAIL_SAME" if p.returncode!=0 and "not enough memory" in p.stderr and "FDR_OK" not in p.stdout
+                      else "PASS" if p.returncode==0 and "FDR_OK" in p.stdout and "not enough memory" not in p.stderr
+                      else "OTHER")
+              print(json.dumps({"lane":lane,"args":args,"code":p.returncode,"stdout":p.stdout[:500],"stderr":p.stderr[:500],"classification":result,"elapsed_ns":time.monotonic_ns()-start}),flush=True)
+              return result
+          original=["-E","-i","--"]
+          for rep in range(3):
+              for lane in bins:
+                  assert observe(lane,original)==("FAIL_SAME" if lane=="bad" else "PASS")
+          def same(args):
+              return observe("bad",args)=="FAIL_SAME" and observe("fixed",args)=="PASS"
+          # Greedy deletion minimization, 1-minimal under this predicate, not global minimum.
+          reduced=original[:]
+          while True:
+              for i in range(len(reduced)):
+                  candidate=reduced[:i]+reduced[i+1:]
+                  if same(candidate):
+                      reduced=candidate
+                      break
+              else: break
+          for i in range(len(reduced)):
+              assert not same(reduced[:i]+reduced[i+1:])
+          assert same(reduced)
+          assert observe("intervention",reduced)=="PASS"
+          for rep in range(3):
+              for lane in bins:
+                  for args in (["-i"],["--","control.lua"],["-E","control.lua"]):
+                      assert observe(lane,args)=="PASS"
+          for lane in bins:
+              assert observe(lane,["--invalid"])=="OTHER"
+          print(json.dumps({"result":"CALIBRATION_PASS","minimal_args":reduced,"subprocess_calls":calls,"scope":"open-book historical correction; not blinded or statistical superiority"}))
+          PY
+      - name: Record terminal execution URL
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$JOB_STATUS" = success ]; then state=success; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=fdr/lua-cli -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
