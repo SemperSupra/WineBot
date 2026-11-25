@@ -1,0 +1,152 @@
+name: ReactOS primary ISO namespace oracle
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-reactos-os1b.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  iso-oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check public execution scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/fdr-lua-cli-20261125
+          mkdir -p receipts
+      - name: Retrieve existing public source-built ISO
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271529806
+          github-token: ${{ github.token }}
+          name: obsros-reactos-stock-source-build
+          path: stock
+      - name: Reconstruct matched media and inspect primary namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xorriso
+          iso="$(find stock -type f -name bootcd.iso -print -quit)"
+          test -n "$iso"
+          printf '%s  %s\n' cce7389f10018a81d0cfd075e1c0391d255288717e0bc19453572f0d5ce0f0ef "$iso" | sha256sum -c -
+          sha256sum "$iso" > receipts/original-iso.sha256
+          printf '%s\n' 'reactos/reactos@4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6' 'public artifact 14866900023' > receipts/provenance.txt
+          xorriso -osirrox on -indev "$iso" -extract /freeldr.ini original.ini -extract /i386/unattend.inf original.inf -extract /i386/txtsetup.sif stock-txtsetup.sif -extract /reactos/unattend.inf stock-live.inf >receipts/extract.txt 2>&1
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          expected={
+              "original.ini":"6d531155b9fb6afeb90a4c28ede6d763fddddcb5a87b5634bcab5e461c685151",
+              "original.inf":"48f9a13c554573c5b8b73b0697a588f36b1e51c6f53e6b7fbc6ba4b8748874e8",
+              "stock-txtsetup.sif":"74c31b716fc5b1dad699cf45b924229c465147d6b8e77abe572fbf01c4e69b94",
+              "stock-live.inf":"f206fcab28d7102755e2a645c8d5336b19dd2c8e7488142cbca86c73283f71b3",
+          }
+          for name,digest in expected.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          b=Path("original.ini").read_bytes()
+          assert b.count(b"DefaultOS=LiveImg_Debug")==1 and b.count(b"TimeOut=10")==1
+          derived=b.replace(b"DefaultOS=LiveImg_Debug",b"DefaultOS=Setup_Debug").replace(b"TimeOut=10",b"TimeOut=1")
+          assert hashlib.sha256(derived).hexdigest()=="6ccfbe578171d52a83deab1ccf8a2712ceceb8d06d595612fd8d49c20ba77751"
+          inf=Path("original.inf").read_bytes()
+          assert inf.count(b"UnattendSetupEnabled = no")==1
+          inf=inf.replace(b"UnattendSetupEnabled = no",b"UnattendSetupEnabled = yes")
+          assert hashlib.sha256(inf).hexdigest()=="9d668204d15abcf6746b20b320d1f599e858fa2f6fa66b395124a2131396956b"
+          for name,data in [("freeldr.ini",derived),("unattend.inf",inf)]:
+              with open(name,"xb") as f: f.write(data)
+          PY
+          cp freeldr.ini unattend.inf original.inf receipts/
+          xorriso -indev "$iso" -outdev install.iso -boot_image any replay -map freeldr.ini /freeldr.ini -map unattend.inf /i386/unattend.inf -commit -end > receipts/remaster.txt 2>&1
+          sha256sum install.iso > receipts/derived-iso.sha256
+          xorriso -indev install.iso -report_el_torito plain >receipts/eltorito.txt 2>&1
+          grep -qi 'El Torito boot img' receipts/eltorito.txt
+          xorriso -osirrox on -indev install.iso -extract /freeldr.ini check.ini -extract /i386/unattend.inf check.inf -extract /i386/txtsetup.sif check-txtsetup.sif -extract /reactos/unattend.inf check-live.inf >receipts/roundtrip.txt 2>&1
+          cmp freeldr.ini check.ini
+          cmp unattend.inf check.inf
+          cmp stock-txtsetup.sif check-txtsetup.sif
+          cmp stock-live.inf check-live.inf
+          sha256sum original.inf unattend.inf check.inf stock-txtsetup.sif check-txtsetup.sif stock-live.inf check-live.inf > receipts/roundtrip.sha256
+          # Variant differs only by the additional case-distinct directory entry.
+          xorriso -indev "$iso" -outdev variant.iso -boot_image any replay -map freeldr.ini /freeldr.ini -map unattend.inf /i386/unattend.inf -map unattend.inf /I386/unattend.inf -commit -end >receipts/variant-remaster.txt 2>&1
+          xorriso -osirrox on -indev variant.iso -extract /freeldr.ini variant.ini -extract /i386/unattend.inf variant-lower.inf -extract /I386/unattend.inf variant-upper.inf -extract /i386/txtsetup.sif variant-txtsetup.sif -extract /reactos/unattend.inf variant-live.inf >receipts/variant-roundtrip.txt 2>&1
+          cmp freeldr.ini variant.ini
+          cmp unattend.inf variant-lower.inf
+          cmp unattend.inf variant-upper.inf
+          cmp stock-txtsetup.sif variant-txtsetup.sif
+          cmp stock-live.inf variant-live.inf
+          for arm in install variant; do
+            xorriso -indev "$arm.iso" -ls / >"receipts/$arm-root.txt" 2>&1
+            xorriso -indev "$arm.iso" -report_el_torito plain >"receipts/$arm-eltorito.txt" 2>&1
+            grep -qi 'El Torito boot img' "receipts/$arm-eltorito.txt"
+          done
+          grep -F "'I386'" receipts/variant-root.txt
+          grep -F "'i386'" receipts/variant-root.txt
+          if grep -F "'I386'" receipts/install-root.txt; then echo 'control unexpectedly uppercase'; exit 1; fi
+          sha256sum install.iso variant.iso variant-*.inf variant-txtsetup.sif > receipts/variant.sha256
+          cat > primary.py <<'PY'
+          import hashlib, json, pathlib, sys
+          SECTOR=2048
+          def both(b,offset,n):
+              a=int.from_bytes(b[offset:offset+n],'little')
+              z=int.from_bytes(b[offset+n:offset+2*n],'big')
+              if a!=z: raise ValueError("inconsistent endian fields")
+              return a
+          def record(b):
+              if len(b)<34 or b[0]!=len(b) or 33+b[32]>len(b): raise ValueError("record length")
+              name=b[33:33+b[32]]
+              return dict(name=name.decode('ascii'),extent=both(b,2,4),size=both(b,10,4),flags=b[25])
+          def inspect(path):
+              with open(path,'rb') as f:
+                  f.seek(0,2); length=f.tell()
+                  def read(off,n):
+                      if off<0 or n<0 or off+n>length or n>32*1024*1024: raise ValueError("read bounds")
+                      f.seek(off); b=f.read(n)
+                      if len(b)!=n: raise ValueError("short read")
+                      return b
+                  pvd=None
+                  for i in range(16,64):
+                      b=read(i*SECTOR,SECTOR)
+                      if b[1:6]!=b'CD001' or b[6]!=1: raise ValueError("descriptor identity")
+                      if b[0]==1: pvd=b; break
+                      if b[0]==255: break
+                  if pvd is None or both(pvd,128,2)!=SECTOR: raise ValueError("primary volume absent or unsupported block")
+                  root=record(pvd[156:156+pvd[156]])
+                  def children(r):
+                      if not r['flags']&2: raise ValueError("not a directory")
+                      b=read(r['extent']*SECTOR,r['size'])
+                      p=0; records=[]
+                      while p<len(b):
+                          n=b[p]
+                          if n==0: p=(p//SECTOR+1)*SECTOR; continue
+                          if p+n>len(b) or p//SECTOR!=(p+n-1)//SECTOR: raise ValueError("directory record boundary")
+                          d=record(b[p:p+n]); d['offset']=p
+                          records.append(d); p+=n
+                      return records
+                  def matches(entries,name):
+                      return [r for r in entries if r['name'].split(';',1)[0].lower()==name.lower()]
+                  entries=children(root)
+                  dirs=matches(entries,'I386')
+                  detail=[]
+                  for d in dirs:
+                      files=matches(children(d),'txtsetup.sif')
+                      detail.append(dict(directory=d,files=[dict(r,sha256=hashlib.sha256(read(r['extent']*SECTOR,r['size'])).hexdigest()) for r in files]))
+                  selected=detail[0] if detail else None
+                  return dict(media=path,root=root,root_entries=entries,matches=detail,first_match_resolves=bool(selected and selected['files']),all_matches_resolve=bool(detail and all(d['files'] for d in detail)))
+          for path in sys.argv[1:]:
+              out=inspect(path)
+              print(json.dumps(out,sort_keys=True),flush=True)
+              pathlib.Path('receipts',path+'.primary.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+          PY
+          cp primary.py receipts/
+          python3 primary.py install.iso variant.iso
+      - name: Retain bounded primary namespace evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reactos-primary-namespace-oracle
+          path: receipts/
+          retention-days: 2
+          if-no-files-found: warn
