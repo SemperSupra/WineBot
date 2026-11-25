@@ -1,0 +1,115 @@
+name: FDR NGINX recovery
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-nginx-recovery.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Bind execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=fdr/nginx-recovery -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Obtain ordinary distro reverse proxy without service installation
+        run: |
+          set -euo pipefail
+          if ! command -v nginx >/dev/null; then
+            cd "$RUNNER_TEMP"
+            sudo apt-get update -qq
+            apt-get download nginx
+            dpkg-deb -x nginx_*.deb nginx-local
+            echo "$RUNNER_TEMP/nginx-local/usr/sbin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/nginx-local/usr/sbin/nginx" -v
+          else
+            nginx -v
+          fi
+      - name: Repeat native loopback fault and recovery cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          cat > fdr-nginx.py <<'PY'
+          import hashlib, json, os, pathlib, socket, sqlite3, subprocess, sys, tempfile, time, urllib.request, urllib.error
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          
+          def conn(p):
+              c=sqlite3.connect(p,timeout=3,isolation_level=None); c.execute('PRAGMA synchronous=FULL'); return c
+          
+          def backend(db,port,mode,cut):
+              class H(BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      key=self.headers['Idempotency-Key']; payload=self.rfile.read(int(self.headers['Content-Length'])).decode(); c=conn(db)
+                      c.execute('BEGIN IMMEDIATE'); row=c.execute('SELECT payload FROM receipts WHERE id=?',(key,)).fetchone()
+                      if row and row[0]!=payload: c.rollback(); self.send_response(409); self.end_headers(); return
+                      if not row or mode=='naive':
+                          c.execute('INSERT INTO effects(id,payload) VALUES (?,?)',(key,payload))
+                          if not row: c.execute('INSERT INTO receipts VALUES (?,?)',(key,payload))
+                      if cut=='before': os._exit(77)
+                      c.commit(); c.close()
+                      if cut=='after': os._exit(77)
+                      self.send_response(200); self.end_headers(); self.wfile.write(b'committed')
+                  def log_message(self,*a): pass
+              s=HTTPServer(('127.0.0.1',int(port)),H); print('READY',flush=True); s.serve_forever()
+          
+          def freeport():
+              with socket.socket() as s: s.bind(('127.0.0.1',0)); return s.getsockname()[1]
+          def witness(db):
+              with sqlite3.connect(pathlib.Path(db).as_uri()+'?mode=ro',uri=True) as c:
+                  return [c.execute('SELECT id,payload FROM effects ORDER BY rowid').fetchall(),c.execute('SELECT id,payload FROM receipts').fetchall(),c.execute('PRAGMA integrity_check').fetchone()[0]]
+          def post(port,payload='alpha'):
+              q=urllib.request.Request(f'http://127.0.0.1:{port}/',data=payload.encode(),headers={'Idempotency-Key':'A'},method='POST')
+              try:
+                  with urllib.request.urlopen(q,timeout=4) as r: return r.status,r.read().decode()
+              except urllib.error.HTTPError as e: return e.code,''
+          def stop(p):
+              if p and p.poll() is None: p.terminate(); p.wait(timeout=4)
+          def main():
+              print('python',sys.version.split()[0],'sqlite',sqlite3.sqlite_version,flush=True)
+              subprocess.run(['nginx','-v'],check=True)
+              for case,mode,cut,expected in [('rollback','safe','before',1),('lost-ack','safe','after',1),('unsafe-retry','naive','after',2)]:
+                with tempfile.TemporaryDirectory() as td:
+                  root=pathlib.Path(td); db=str(root/'state.db'); c=conn(db); c.executescript('CREATE TABLE receipts(id TEXT PRIMARY KEY,payload TEXT); CREATE TABLE effects(id TEXT,payload TEXT)');c.close()
+                  up,front=freeport(),freeport()
+                  while front==up: front=freeport()
+                  cfg=root/'nginx.conf'; cfg.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log notice; events {{ worker_connections 64; }} http {{ access_log {root}/access.log; client_body_temp_path {root}/client; proxy_temp_path {root}/proxy; fastcgi_temp_path {root}/fastcgi; uwsgi_temp_path {root}/uwsgi; scgi_temp_path {root}/scgi; server {{ listen 127.0.0.1:{front}; location / {{ proxy_pass http://127.0.0.1:{up}; proxy_next_upstream off; proxy_connect_timeout 2s; proxy_read_timeout 2s; }} }} }}')
+                  proxy=subprocess.Popen(['nginx','-p',td+'/', '-c',str(cfg),'-g','daemon off;'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE); worker=None
+                  def start(cut):
+                      p=subprocess.Popen([sys.executable,__file__,'backend',db,str(up),mode,cut],stdout=subprocess.PIPE,text=True)
+                      assert p.stdout.readline().strip()=='READY'; p.stdout.close(); return p
+                  try:
+                      for _ in range(100):
+                          try:
+                              with socket.create_connection(('127.0.0.1',front),timeout=.1): break
+                          except OSError: time.sleep(.02)
+                      else: raise RuntimeError('proxy not ready')
+                      worker=start(cut); first=post(front); assert first[0]==502 and worker.wait(timeout=4)==77
+                      before=witness(db); assert len(before[0])==(0 if cut=='before' else 1)
+                      worker=start('none'); second=post(front); assert second==(200,'committed')
+                      after=witness(db); assert after==[ [('A','alpha')]*expected,[('A','alpha')],'ok' ],after
+                      conflict=post(front,'different'); assert conflict[0]==409 and witness(db)==after
+                      print(json.dumps({'case':case,'http':[first[0],second[0],conflict[0]],'before':before,'after':after,'expected_effects':expected}),flush=True)
+                  finally:
+                      stop(worker); stop(proxy); proxy.stderr.close()
+          if __name__=='__main__':
+              if len(sys.argv)>1: backend(*sys.argv[2:])
+              else: main()
+          PY
+          echo '67345d05a84c220abb679701c2ae593c110bdfae7fb466ec9d47fc3f52a69028  fdr-nginx.py' | sha256sum -c -
+          for rep in 1 2 3; do
+            echo "REPETITION $rep"
+            timeout 60s python3 fdr-nginx.py
+          done
+      - name: Bind terminal state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$JOB_STATUS" = success ]; then state=success; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=fdr/nginx-recovery -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
