@@ -1,0 +1,177 @@
+name: VirtIO Linux guest block error and recovery
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-linux-block-v06.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind execution and find prior public run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-linux-block-v06 -f description='Public Linux guest experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs" -f head_sha=6c1fa3226674e52e31e5d9cc74910399094be403 -f event=push -f per_page=20 --jq '[.workflow_runs[] | {id,head_sha,path,status,conclusion,html_url}]' > receipts/v03-discovery.json 2> receipts/v03-discovery.stderr || echo LOOKUP_FAILED > receipts/v03-discovery-status.txt
+      - name: Install public packages and construct guest
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd gcc libc6-dev
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-system-x86 qemu-utils busybox-static linux-image-virtual > receipts/packages.txt
+          k=$(find /boot -maxdepth 1 -name 'vmlinuz-*generic' -printf '%f\n' | sort -V | tail -1)
+          test -n "$k"
+          ver=$(echo "$k" | sed 's/^vmlinuz-//')
+          echo "$ver" > receipts/kernel-release.txt
+          sudo cp "/boot/$k" kernel.bin
+          sudo chown "$(id -u):$(id -g)" kernel.bin
+          chmod u+r kernel.bin
+          mkdir -p root/{bin,dev,proc,sys,modules}
+          cp "$(command -v busybox)" root/bin/busybox
+          for m in virtio_pci virtio_blk; do modprobe -S "$ver" --show-depends "$m"; done > receipts/module-dependencies.txt
+          awk '$1=="insmod" && !seen[$2]++ {print $2}' receipts/module-dependencies.txt > module-paths.txt
+          : > root/modules/load
+          while IFS= read -r src; do
+            base=$(basename "$src" | sed -E 's/\.(zst|xz|gz)$//')
+            case "$src" in
+              *.ko.zst) zstd -dc "$src" > "root/modules/$base";;
+              *.ko.xz) xz -dc "$src" > "root/modules/$base";;
+              *.ko.gz) gzip -dc "$src" > "root/modules/$base";;
+              *.ko) cp "$src" "root/modules/$base";;
+              *) exit 1;;
+            esac
+            echo "/modules/$base" >> root/modules/load
+          done < module-paths.txt
+          find root/modules -type f -exec sha256sum {} \; > receipts/modules.sha256
+          cat > receipts/workload.c <<'C'
+          #define _GNU_SOURCE
+          #include <errno.h>
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          static unsigned char *buf;
+          static void die(const char *s){perror(s);exit(1);}
+          static void wr(int fd,int s,unsigned char p,int err){
+              memset(buf,p,512);errno=0;
+              ssize_t n=pwrite(fd,buf,512,(off_t)s*512);int e=errno;
+              printf("WRITE sector=%d result=%zd errno=%d\n",s,n,e);
+              if(err?!(n==-1&&e==EIO):n!=512){errno=e;die("write oracle");}
+          }
+          static void rd(int fd,int s,unsigned char p){
+              memset(buf,0xcc,512);if(pread(fd,buf,512,(off_t)s*512)!=512)die("read");
+              for(int i=0;i<512;i++)if(buf[i]!=p){fprintf(stderr,"read mismatch %d %d\n",s,i);exit(1);}
+              printf("READ sector=%d pattern=%02x PASS\n",s,p);
+          }
+          int main(int ac,char **av){
+              if(ac!=2||(strcmp(av[1],"control")&&strcmp(av[1],"error")))return 2;
+              int fault=!strcmp(av[1],"error");setvbuf(stdout,NULL,_IONBF,0);
+              if(posix_memalign((void **)&buf,4096,4096))return 3;
+              int fd=open("/dev/vda",O_RDWR|O_DIRECT);if(fd<0)die("open");
+              wr(fd,3,0x33,0);wr(fd,2,0x5a,fault);rd(fd,2,fault?0:0x5a);
+              wr(fd,2,0xa6,0);rd(fd,2,0xa6);rd(fd,3,0x33);
+              if(fsync(fd))die("fsync");
+              puts("FSYNC PASS");if(close(fd))die("close");free(buf);
+              printf("GUEST_PASS %s\n",av[1]);return 0;
+          }
+          C
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -static receipts/workload.c -o root/workload
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          while IFS= read -r m; do $B insmod "$m"; done < /modules/load
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          $B uname -r
+          for d in /sys/bus/virtio/devices/*; do
+            echo "VIRTIO_DEVICE $d"
+            $B readlink "$d/driver" || true
+            if [ -r "$d/features" ]; then echo "FEATURES $($B cat "$d/features")"; fi
+          done
+          mode=control
+          case " $($B cat /proc/cmdline) " in *" rdte_mode=error "*) mode=error;; esac
+          if /workload "$mode"; then echo RDTE_INIT_PASS; else echo RDTE_INIT_FAIL; fi
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz root/workload "$(command -v qemu-system-x86_64)" "$(command -v busybox)" > receipts/binary.sha256
+      - name: Paired native driver experiment
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import hashlib,json,pathlib,re,subprocess,time
+          P=pathlib.Path; R=P("receipts"); Q="qemu-system-x86_64"
+          initial=bytes(4*1024*1024); expected=bytearray(initial)
+          expected[1024:1536]=bytes([0xa6])*512; expected[1536:2048]=bytes([0x33])*512
+          cfg=R/"one-shot.conf"
+          cfg.write_text('[inject-error]\nevent = "none"\niotype = "write"\nsector = "2"\nonce = "on"\nerrno = "5"\n')
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          h=subprocess.run([Q,"-trace","help"],capture_output=True,text=True,timeout=10)
+          ht=h.stdout+h.stderr;(R/"trace-help.txt").write_text(ht[:1024*1024])
+          names=["virtqueue_pop","virtqueue_fill","virtqueue_flush","virtio_blk_req_complete"]
+          present=[n for n in names if re.search(r"(?m)^\s*"+n+r"(?:\s|$)",ht)]
+          def phase(mode):
+              disk=P(mode+".raw").resolve(); disk.write_bytes(initial)
+              target=f"blkdebug:{cfg.resolve()}:{disk}" if mode=="error" else str(disk)
+              log=R/(mode+".serial");trace=R/(mode+".trace")
+              argv=[Q,"-accel","tcg","-machine","pc","-m","512","-smp","1","-nodefaults","-nic","none","-display","none","-monitor","none","-serial","stdio","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append",f"console=ttyS0 rdinit=/init panic=-1 quiet rdte_mode={mode}","-drive",f"file={target},format=raw,if=none,id=d,cache=none,werror=report,rerror=report","-device","virtio-blk-pci,drive=d,disable-legacy=on,packed=off"]
+              if present:
+                  ev=R/(mode+".events");ev.write_text("\n".join(present)+"\n")
+                  argv+=["-trace","events="+str(ev),"-D",str(trace)]
+              (R/(mode+"-argv.json")).write_text(json.dumps(argv,indent=2))
+              t=time.monotonic()
+              with log.open("wb") as out:
+                  run=subprocess.run(argv,stdout=out,stderr=out,timeout=120)
+              output=log.read_text(errors="replace");actual=disk.read_bytes()
+              tt=trace.read_text(errors="replace") if trace.exists() else ""
+              counts={n:len(re.findall(r"\b"+n+r"\b",tt)) for n in present}
+              result={"mode":mode,"exit":run.returncode,"whole_disk_match":actual==expected,"disk_sha256":sha(actual),"expected_sha256":sha(expected),"guest_pass":f"GUEST_PASS {mode}" in output and "RDTE_INIT_PASS" in output,"driver_observed":"virtio_blk" in output,"features_observed":re.findall(r"FEATURES ([01]+)",output),"trace_counts":counts,"elapsed_seconds":time.monotonic()-t}
+              (R/(mode+".json")).write_text(json.dumps(result,indent=2))
+              assert run.returncode==0 and result["guest_pass"] and result["driver_observed"],result
+              assert ("WRITE sector=2 result=-1 errno=5" in output)==(mode=="error"),output[-8000:]
+              assert "WRITE sector=2 result=512 errno=0" in output and "FSYNC PASS" in output
+              assert actual==expected,result
+              disk.unlink();return result
+          results=[phase("control"),phase("error")]
+          (R/"summary.json").write_text(json.dumps(results,indent=2))
+          (R/"classification.txt").write_text("LINUX UNMODIFIED VIRTIO BLOCK DRIVER; MODERN PCI SPLIT CONFIGURATION; ONE-SHOT BACKEND ERROR TO GUEST EIO AND RECOVERY; WHOLE DISK ORACLE; TRACE COVERAGE SEPARATE; NOT PACKED, SOURCE-BUILT QEMU, CRASH DURABILITY OR RELEASE QUALIFICATION\n")
+          PY
+          python3 receipts/run.py
+      - name: Retain public evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-linux-block-v06
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-linux-block-v06 -f description='Public Linux guest wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
