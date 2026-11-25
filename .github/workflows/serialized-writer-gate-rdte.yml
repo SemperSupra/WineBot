@@ -1,0 +1,40 @@
+name: Serialized Writer Gate RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/writer_gate*.go'
+      - '.github/workflows/serialized-writer-gate-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Test gate invariants
+        run: go test -race -count=1 -timeout=90s ./rdte/protected-control -run '^TestWriterGate(SerializesAndFences|AmbiguousDispatchNeverRetries)$'
+  real-contained-launch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build synthetic fixture
+        run: go test -c -o "$RUNNER_TEMP/writer-gate.test" ./rdte/protected-control
+      - name: Exercise atomic contained launch and recursive reaping
+        run: sudo -n env WINEBOT_REAL_WRITER_GATE=1 "$RUNNER_TEMP/writer-gate.test" -test.run '^TestWriterGateRealContainedLaunch$' -test.timeout=30s -test.v
