@@ -1,0 +1,31 @@
+name: Durable Writer Lifecycle Journal RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/lifecycle_journal*.go'
+      - '.github/workflows/durable-writer-journal-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle-journal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - name: Checkout exact public source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check journal transitions and real process-death injection
+        shell: bash
+        run: |
+          set -euo pipefail
+          go vet ./rdte/protected-control
+          go test -race -count=1 -timeout=90s ./rdte/protected-control -run '^TestLifecycle'
+          echo 'DURABLE_WRITER_JOURNAL=PASS'
