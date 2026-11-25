@@ -1,0 +1,113 @@
+name: Event runtime comparison B01
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-event-runtime-b01.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Pinned userspace runtime and bounded event comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          cd "$work"
+          pin=5755157bf4341be69af2afcd5175997f02303669
+          git init -q ubpf
+          git -C ubpf fetch --depth=1 https://github.com/iovisor/ubpf.git "$pin"
+          git -C ubpf checkout -q --detach FETCH_HEAD
+          test "$(git -C ubpf rev-parse HEAD)" = "$pin"
+          test "$(git -C ubpf hash-object vm/inc/ubpf.h)" = ab8b94657772edae6515a813d5a12654f2992822
+          test "$(git -C ubpf hash-object LICENSE.txt)" = d645695673349e3947e8e5ae42332d0ac3164cd7
+          cmake -S ubpf -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DUBPF_SKIP_EXTERNAL=ON -DUBPF_ENABLE_TESTS=OFF -DUBPF_INSTALL_GIT_HOOKS=OFF
+          cmake --build build --target ubpf -j 2
+          cat > compare.c <<'EOF'
+          #define _POSIX_C_SOURCE 200809L
+          #include <ubpf.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <time.h>
+          #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); exit(1); } } while (0)
+          enum { N = 20000 };
+          struct event { uint64_t status, latency; };
+          static struct event events[N];
+          static const unsigned char code[][8] = {
+            {0x79,0x12,0,0,0,0,0,0},
+            {0x55,0x02,4,0,0,0,0,0},
+            {0x79,0x12,8,0,0,0,0,0},
+            {0x35,0x02,2,0,0xe8,3,0,0},
+            {0xb7,0x00,0,0,0,0,0,0},
+            {0x95,0,0,0,0,0,0,0},
+            {0xb7,0x00,0,0,1,0,0,0},
+            {0x95,0,0,0,0,0,0,0}
+          };
+          static uint64_t now(void) {
+            struct timespec t;
+            CHECK(clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&t)==0);
+            return (uint64_t)t.tv_sec*1000000000u+(uint64_t)t.tv_nsec;
+          }
+          static uint64_t native(const struct event *e) {
+            return e->status != 0 || e->latency >= 1000;
+          }
+          static uint64_t vmrun(struct ubpf_vm *v, struct event *e) {
+            uint64_t result=UINT64_MAX;
+            struct event copy=*e;
+            CHECK(ubpf_exec(v,&copy,sizeof(copy),&result)==0);
+            CHECK(!memcmp(&copy,e,sizeof(copy)));
+            return result;
+          }
+          int main(void) {
+            CHECK(sizeof(struct event)==16);
+            struct ubpf_vm *v=ubpf_create();
+            CHECK(v);
+            CHECK(ubpf_set_execution_profile(v,UBPF_EXECUTION_PROFILE_SAFE)==0);
+            CHECK(ubpf_set_instruction_limit(v,32,NULL)==0);
+            char *err=NULL;
+            CHECK(ubpf_load(v,code,sizeof(code),&err)==0);
+            free(err);
+            uint64_t expect=0;
+            for (size_t i=0;i<N;i++) {
+              events[i]=(struct event){i%11==0,(i*7919u)%2000u};
+              uint64_t oracle=(i%11==0 || (i*7919u)%2000u>=1000);
+              CHECK(native(&events[i])==oracle);
+              CHECK(vmrun(v,&events[i])==oracle);
+              expect+=oracle;
+            }
+            struct event zero={0,0};
+            uint64_t out=0;
+            CHECK(ubpf_exec(v,&zero,8,&out)!=0);
+            CHECK(ubpf_set_instruction_limit(v,1,NULL)==0);
+            CHECK(ubpf_exec(v,&zero,sizeof(zero),&out)!=0);
+            CHECK(ubpf_set_instruction_limit(v,32,NULL)==0);
+            CHECK(vmrun(v,&zero)==0);
+            CHECK(vmrun(v,&(struct event){0,999})==0);
+            CHECK(vmrun(v,&(struct event){0,1000})==1);
+            CHECK(vmrun(v,&(struct event){1,0})==1);
+            printf("PARITY %d expect=%llu negatives=2 boundary=3\n",N,(unsigned long long)expect);
+            for(int rep=0;rep<3;rep++) {
+              for(int j=0;j<2;j++) {
+                int arm=(rep+j)%2;
+                uint64_t start=now(),sum=0;
+                for(size_t i=0;i<N;i++) sum+=arm?vmrun(v,&events[i]):native(&events[i]);
+                uint64_t dt=now()-start;
+                CHECK(sum==expect);
+                printf("ARM rep=%d mode=%s cpu_ns=%llu count=%llu\n",rep,arm?"safe-interpreter":"native",(unsigned long long)dt,(unsigned long long)sum);
+              }
+            }
+            ubpf_destroy(v);
+            return 0;
+          }
+          EOF
+          sha256sum compare.c
+          lib=$(find build -name libubpf.a -type f -print -quit)
+          test -n "$lib"
+          cc -O2 -Wall -Wextra -Werror -Iubpf/vm/inc -Ibuild/vm compare.c "$lib" -lm -o compare
+          sha256sum "$lib" compare
+          timeout 30s ./compare
