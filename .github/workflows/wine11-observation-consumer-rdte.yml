@@ -1,0 +1,30 @@
+name: Wine11 Observation Consumer RDTE
+on:
+  pull_request:
+    paths:
+      - 'rdte/re-observation-contract/**'
+      - 'rdte/wine11-heap-trace/**'
+      - 'rdte/re-lifetime-join/**'
+      - 'rdte/re-observation-cli/**'
+      - '.github/workflows/wine11-observation-consumer-rdte.yml'
+permissions:
+  contents: read
+jobs:
+  observation-consumer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Requalify exact transferred parsers and receipt consumer
+        run: |
+          go vet ./rdte/re-observation-contract ./rdte/wine11-heap-trace ./rdte/re-lifetime-join ./rdte/re-observation-cli
+          go test -race -count=1 ./rdte/re-observation-contract ./rdte/wine11-heap-trace ./rdte/re-lifetime-join
+          go build -o "$RUNNER_TEMP/winebot-observation" ./rdte/re-observation-cli
+      - name: Execute actual CLI on bounded synthetic fixtures
+        run: python3 rdte/re-observation-cli/qualify.py "$RUNNER_TEMP/winebot-observation"
