@@ -45,6 +45,9 @@ if [ "${WINEBOT_STATE_MODEL:-legacy}" = "layered" ]; then
         echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=runtime_install_forbidden' >&2
         exit 2
     fi
+    # Fail before runtime prefix/session initialization on an inadmissible Wine.
+    # The immutable image identity and exact-version qualification are separate gates.
+    bash /scripts/internal/require-wine11.sh || exit 2
     for persistent in /wineprefix /home/winebot /config /userdata /artifacts /winebot-shared; do
         if [ ! -d "$persistent" ] || [ -L "$persistent" ] || [ ! -w "$persistent" ]; then
             echo 'LAYERED_RUNTIME_DIAGNOSTIC stage=persistent_mount_unavailable' >&2

@@ -8,6 +8,8 @@ on:
       - 'compose/layered.yml'
       - 'docker/Dockerfile'
       - 'docker/entrypoint.sh'
+      - 'scripts/init/20-setup-wine.sh'
+      - 'scripts/internal/require-wine11.sh'
       - 'scripts/layers/**'
       - 'scripts/ci/qualify-wine11-layered.sh'
       - 'scripts/ci/classify-layer-init-logs.py'
@@ -49,7 +51,8 @@ jobs:
         run: |
           bash -n scripts/ci/qualify-wine11-layered.sh
           python3 -m unittest discover -s tests -p 'test_layer_init_diagnostics.py' -v
-          test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+          bash -n scripts/init/20-setup-wine.sh
+          bash -n scripts/internal/require-wine11.sh
           test -f ../wine11-candidate/scripts/ci/classify-wine11-soak.py
       - name: Build ephemeral candidate and qualify read-only Wine11 replay
         working-directory: layered
