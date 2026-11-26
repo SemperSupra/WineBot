@@ -20,6 +20,7 @@ import (
 func TestWine11GateStopHIL(t *testing.T){
  if os.Getenv("WINEBOT_REAL_WINE_GATE")!="1"{t.Skip("dedicated disposable public HIL only")}
  if os.Geteuid()!=0{t.Fatal("fixture requires root")}
+ pressure:=os.Getenv("WINEBOT_CPA0_WINE_PRESSURE")=="1"
  ctx,cancel:=context.WithTimeout(context.Background(),8*time.Minute)
  defer cancel()
  call:=func(args ...string)(string,error){
@@ -104,11 +105,24 @@ func TestWine11GateStopHIL(t *testing.T){
  done
  test "$ready" = 1 || fail WINDOW
  echo WINE_GATE_HIL=WINDOW_OK
+ if [ "${WINEBOT_CPA0_WINE_PRESSURE:-0}" = 1 ]; then
+   timeout 30s sh -c 'while :; do :; done' &
+   timeout 30s sh -c 'while :; do :; done' &
+   # Bounded synthetic child pressure; the kernel must deny excess forks.
+   i=0
+   while [ "$i" -lt 280 ]; do
+     sleep 30 &
+     i=$((i+1))
+   done
+ fi
  wait "$app" || fail NOTEPAD_WAIT
  `
- container:=must("create_fixture","docker","create","--name",name,"--cgroup-parent",parent,
+ args:=[]string{"docker","create","--name",name,"--cgroup-parent",parent,
   "--network","none","--user","1000:1000","--cap-drop","ALL","--security-opt","no-new-privileges",
-  "--pids-limit","256","--memory","2g","--init","--entrypoint","/bin/sh",image,"-c",script)
+  "--pids-limit","256","--memory","2g","--init"}
+ if pressure{args=append(args,"--cpus","1","--memory-swap","2g","--env","WINEBOT_CPA0_WINE_PRESSURE=1")}
+ args=append(args,"--entrypoint","/bin/sh",image,"-c",script)
+ container:=must("create_fixture",args...)
  if len(container)!=64{t.Fatal("invalid container identity")}
  defer exec.Command("docker","rm","-f",container).Run()
  if err=e.run(func(context.Context)error{
@@ -122,10 +136,21 @@ func TestWine11GateStopHIL(t *testing.T){
  if err!=nil{t.Fatal("membership unavailable")}
  rel:=strings.TrimPrefix(scope,"/sys/fs/cgroup")
  matched:=false
+ leaf:=""
  for _,line:=range strings.Split(string(membership),"\n"){
-  if line=="0::"+rel || strings.HasPrefix(line,"0::"+rel+"/"){matched=true}
+  if line=="0::"+rel || strings.HasPrefix(line,"0::"+rel+"/"){
+   matched=true
+   leaf=filepath.Join("/sys/fs/cgroup",strings.TrimPrefix(line,"0::"))
+  }
  }
  if !matched{t.Fatal("engine process outside admitted scope")}
+ if pressure{
+  for file,want:=range map[string]string{"cpu.max":"100000 100000","memory.max":"2147483648","memory.swap.max":"0","pids.max":"256"}{
+   b,err:=os.ReadFile(filepath.Join(leaf,file))
+   if err!=nil || strings.TrimSpace(string(b))!=want{t.Fatal("pressure leaf cap mismatch",file)}
+  }
+  t.Log("WINE_GATE_HIL stage=pressure_leaf_limits")
+ }
  // Emit only exact allowlisted synthetic receipts; never print raw logs.
  stages:=map[string]bool{}
  allowed:=[]string{"VERSION_OK","X11_OK","BOOT_OK","PREFIX_OK","WINDOW_OK",
@@ -157,7 +182,42 @@ func TestWine11GateStopHIL(t *testing.T){
  }
  if p,err:=cgroupPopulated(dir,id);err!=nil || !p{t.Fatal("live Wine scope not observed")}
  t.Log("WINE_GATE_HIL stage=wine11_window_ready_in_admitted_scope")
- if _,err=e.requestPersistentStop();err!=nil{t.Fatal("durable STOP failed",err)}
+ if pressure{
+  counter:=func(file,key string)uint64{
+   b,err:=os.ReadFile(filepath.Join(leaf,file))
+   if err!=nil{t.Fatal("pressure counter unavailable",file)}
+   for _,line:=range strings.Split(string(b),"\n"){
+    fields:=strings.Fields(line)
+    if len(fields)==2 && fields[0]==key{
+     n,err:=strconv.ParseUint(fields[1],10,64)
+     if err!=nil{t.Fatal("invalid pressure counter")}
+     return n
+    }
+   }
+   t.Fatal("pressure counter absent",key);return 0
+  }
+  // PID denial cannot occur before the bounded fork fixture starts;
+  // CPU throttling may already occur during Wine initialization.
+  // Require throttling to increase while the pressure workload is live.
+  initialCPU:=counter("cpu.stat","nr_throttled")
+  deadline=time.Now().Add(8*time.Second)
+  for{
+   if counter("cpu.stat","nr_throttled")>initialCPU && counter("pids.events","max")>0{break}
+   if time.Now().After(deadline){t.Fatal("Wine resource pressure not demonstrated")}
+   time.Sleep(50*time.Millisecond)
+  }
+  if p,err:=cgroupPopulated(dir,id);err!=nil || !p{t.Fatal("pressure scope not live",err)}
+  if must("pressure_running","docker","inspect","--format","{{.State.Running}}",container)!="true"{t.Fatal("pressure workload exited")}
+  t.Log("WINE_GATE_HIL stage=cpu_throttle_and_pid_denial")
+  receipt:=make(chan error,1)
+  go func(){_,err:=e.requestPersistentStop();receipt<-err}()
+  select{
+  case err:=<-receipt:if err!=nil{t.Fatal("durable STOP failed",err)}
+  case <-time.After(3*time.Second):t.Fatal("durable STOP receipt exceeded bound")
+  }
+  if p,err:=cgroupPopulated(dir,id);err!=nil || !p{t.Fatal("STOP receipt confused with termination",err)}
+  t.Log("WINE_GATE_HIL stage=durable_stop_under_pressure")
+ }else if _,err=e.requestPersistentStop();err!=nil{t.Fatal("durable STOP failed",err)}
  must("stop_fixture","docker","stop","--time","5",container)
  if must("stopped","docker","inspect","--format","{{.State.Running}}",container)!="false"{t.Fatal("engine termination unconfirmed")}
  deadline=time.Now().Add(10*time.Second)
