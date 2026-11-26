@@ -191,3 +191,49 @@ func TestLifecycleStopCorruptionAndContention(t *testing.T){
  s,err:=lifecycleRead(root,uid)
  if err!=nil || s.Phase!="IDLE" || s.Generation!=0{t.Fatal("denied transition mutated journal",err)}
 }
+
+func TestLifecycleDeploymentModeExclusion(t *testing.T){
+ uid:=uint32(os.Geteuid())
+ t.Run("legacy-selected",func(t *testing.T){
+  root:=lifecycleTestRoot(t)
+  path:=filepath.Join(root,deploymentModeName)
+  if err:=os.WriteFile(path,nil,0600);err!=nil{t.Fatal(err)}
+  if err:=lifecycleProvision(root,uid);err==nil{t.Fatal("legacy volume adopted")}
+  b,err:=os.ReadFile(path)
+  if err!=nil || len(b)!=0{t.Fatal("legacy marker modified",err)}
+  if _,err=os.Stat(filepath.Join(root,lifecycleName));!os.IsNotExist(err){t.Fatal("journal created")}
+ })
+ t.Run("trusted-selected",func(t *testing.T){
+  root:=lifecycleTestRoot(t)
+  if err:=lifecycleProvision(root,uid);err!=nil{t.Fatal(err)}
+  path:=filepath.Join(root,deploymentModeName)
+  b,err:=os.ReadFile(path)
+  if err!=nil || string(b)!=trustedDeploymentMode{t.Fatal("trusted marker missing",err)}
+  st,err:=os.Stat(path)
+  if err!=nil || st.Mode().Perm()!=0600 || st.Sys().(*syscall.Stat_t).Nlink!=1{t.Fatal("marker identity invalid")}
+  if err=os.Remove(filepath.Join(root,lifecycleName));err!=nil{t.Fatal(err)}
+  if err=lifecycleProvision(root,uid);err==nil{t.Fatal("partial authority automatically reprovisioned")}
+  if _,err=os.Stat(filepath.Join(root,lifecycleName));!os.IsNotExist(err){t.Fatal("journal recreated")}
+ })
+ t.Run("concurrent-mode-selection",func(t *testing.T){
+  for i:=0;i<20;i++{
+   root:=lifecycleTestRoot(t)
+   start:=make(chan struct{})
+   legacy:=make(chan error,1)
+   go func(){
+    <-start
+    f,err:=os.OpenFile(filepath.Join(root,deploymentModeName),os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+    if err==nil{err=f.Close()}
+    legacy<-err
+   }()
+   close(start)
+   trustedErr:=lifecycleProvision(root,uid)
+   legacyErr:=<-legacy
+   if (trustedErr==nil)==(legacyErr==nil){t.Fatal("mode selection did not have exactly one winner",trustedErr,legacyErr)}
+   b,err:=os.ReadFile(filepath.Join(root,deploymentModeName))
+   if err!=nil{t.Fatal(err)}
+   if trustedErr==nil && string(b)!=trustedDeploymentMode{t.Fatal("trusted marker changed")}
+   if legacyErr==nil && len(b)!=0{t.Fatal("legacy marker changed")}
+  }
+ })
+}
