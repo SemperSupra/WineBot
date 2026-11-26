@@ -353,6 +353,25 @@ Focus a specific window.
 - **Body:** `{"window_id": "0x123456"}`
 - **Response:** `{"status": "focused", "id": "..."}`
 
+#### `POST /input/key`
+Send keys through an authenticated, policy-admitted control session.
+
+- Explicit `backend: "xdotool"` with a resolved `window_id` uses X11
+  directed synthetic events (XSendEvent); some applications ignore them.
+  A successful command/HTTP `status: "sent"` is dispatch acknowledgement,
+  **not** proof of application receipt or an application state change.
+- Without a requested target, xdotool uses the active desktop focus (XTEST).
+  Use only when the caller intentionally controls the current focus, on an
+  isolated desktop with no concurrent human input. Verify the focus and an
+  application-level postcondition; do not automatically retry an ambiguous
+  dispatch or silently drop a requested target.
+- A supplied title that cannot resolve to an X11 window on the xdotool path
+  fails with `xdotool_target_unresolved`; it must not send keys to the
+  current focus. The AHK title path remains distinct.
+- The Wine 11 directed-key/save acceptance remains a release gate. An
+  alternate focused-mode result is a differential, not a waiver or proof
+  of atomic focus binding. Keep X11 window IDs distinct from native HWNDs.
+
 #### `POST /input/mouse/click`
 Click at specific coordinates.
 - **Body:** 
