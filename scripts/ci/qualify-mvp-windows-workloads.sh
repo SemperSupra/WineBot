@@ -13,7 +13,8 @@ test -n "$(find apps/mvp-ic1/openttd -type f -iname openttd.exe -print -quit)" |
   fail game_missing
 test -z "$(find apps/mvp-ic1 -type l -print -quit)" || fail unexpected_symlink
 
-prefix="mvp-ic1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+prefix="winebot-mvp-ic1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+export COMPOSE_PROJECT_NAME="$prefix"
 export WINEBOT_APP_VOLUME="$prefix-apps"
 export WINEBOT_PREFIX_VOLUME="$prefix-prefix"
 export WINEBOT_HOME_VOLUME="$prefix-home"
@@ -26,9 +27,13 @@ export WINEBOT_VNC_PASSWORD=ic1-public-runner-synthetic-password
 volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
   "$WINEBOT_SHARED_VOLUME")
+created_volumes=()
+compose_started=0
 cleanup() {
-  docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
-  for volume in "${volumes[@]}"; do
+  if [ "$compose_started" = 1 ]; then
+    docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
+  fi
+  for volume in "${created_volumes[@]}"; do
     docker volume rm "$volume" >/dev/null 2>&1 || true
   done
   docker image rm winebot:ic1 winebot-base:ic1 winebot-apps:ic1 >/dev/null 2>&1 || true
@@ -37,6 +42,7 @@ trap cleanup EXIT
 for volume in "${volumes[@]}"; do
   if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
   docker volume create "$volume" >/dev/null 2>&1 || fail volume_create
+  created_volumes+=("$volume")
 done
 docker build -f ../wine11-candidate/docker/base.Dockerfile --target final \
   -t winebot-base:ic1 ../wine11-candidate >"$RUNNER_TEMP/ic1-base-build.log" 2>&1 ||
@@ -58,8 +64,10 @@ export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect -f '{{.Id}}' winebot-app
 docker run --rm --network none --read-only --user 1000:1000 \
   --entrypoint /bin/bash "$WINEBOT_RUNTIME_IMAGE" /scripts/internal/require-wine11.sh \
   || fail wine11_runtime_admission
+bash scripts/layers/preflight.sh --check-volumes || fail volume_identity_admission
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
   fail compose_invalid
+compose_started=1
 docker compose -f compose/layered.yml up -d --no-build winebot-interactive \
   >"$RUNNER_TEMP/ic1-compose-start.log" 2>&1 || fail startup
 wait_health() {
