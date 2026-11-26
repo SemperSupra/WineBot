@@ -3,6 +3,9 @@
 These tests use only stdlib and deliberately do not provision real users.
 An independent public Actions job performs disposable Docker replay.
 """
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -177,6 +180,70 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
             encoding="utf-8"
         ).replace("read_only: true", "--read-only"))
         self.assertNotIn("docker volume prune", script)
+
+
+
+class Wine11RuntimeAdmissionTests(unittest.TestCase):
+    def test_actual_admission_script_rejects_unqualified_version_output(self):
+        # Synthetic version-command results only; no older Wine is installed
+        # or executed. Exercise the exact shell admission code.
+        script = ROOT / "scripts/internal/require-wine11.sh"
+        cases = (
+            ("wine-11.0", 0, "version_floor_pass", 0),
+            ("wine-11.20", 0, "version_floor_pass", 0),
+            ("wine-12.0.1", 0, "version_floor_pass", 0),
+            ("wine-11.0 (Staging)", 0, "version_floor_pass", 0),
+            ("wine-10.0", 0, "below_minimum", 2),
+            ("wine-9.0", 0, "below_minimum", 2),
+            ("wine-011.0", 0, "invalid_version", 2),
+            ("wine-11.0-rc1", 0, "invalid_version", 2),
+            ("wine-11.0\nuntrusted_extra", 0, "invalid_version", 2),
+            ("SYNTHETIC_UNTRUSTED_VERSION", 0, "invalid_version", 2),
+            ("wine-11.0", 124, "version_unavailable", 2),
+            ("wine-11.0", 127, "version_unavailable", 2),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "wine"
+            binary.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_WINE_VERSION"\n'
+                'exit "$FIXTURE_WINE_RC"\n',
+                encoding="utf-8",
+            )
+            binary.chmod(0o700)
+            for version, code, stage, expected in cases:
+                with self.subTest(version=version, command_status=code):
+                    env = {
+                        **os.environ,
+                        "PATH": tmp + os.pathsep + os.environ["PATH"],
+                        "FIXTURE_WINE_VERSION": version,
+                        "FIXTURE_WINE_RC": str(code),
+                    }
+                    result = subprocess.run(
+                        ["bash", str(script)], env=env, capture_output=True,
+                        text=True, timeout=8, check=False,
+                    )
+                    self.assertEqual(result.returncode, expected)
+                    marker = f"WINEBOT_RUNTIME_ADMISSION stage={stage}\n"
+                    self.assertEqual(result.stdout + result.stderr, marker)
+
+    def test_candidate_initializer_is_not_replaced_and_admission_precedes_start(self):
+        entrypoint = (ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
+        gate = "bash /scripts/internal/require-wine11.sh"
+        self.assertLess(entrypoint.index(gate), entrypoint.index("write_instance_state "))
+        for path in (
+            "scripts/ci/qualify-mvp-windows-workloads.sh",
+            "scripts/ci/qualify-wine11-layered.sh",
+        ):
+            source = (ROOT / path).read_text(encoding="utf-8")
+            self.assertNotIn(
+                "cp ../wine11-candidate/scripts/init/20-setup-wine.sh", source
+            )
+            self.assertIn("git diff --exit-code -- scripts/init/20-setup-wine.sh", source)
+            self.assertLess(
+                source.index("/scripts/internal/require-wine11.sh"),
+                source.index("up -d") if "up -d" in source else source.index("up --no-build"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
