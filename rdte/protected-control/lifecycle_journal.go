@@ -14,6 +14,8 @@ import (
 
 const lifecycleName = ".winebot-lifecycle-v1.json"
 const lifecycleSchema = "winebot/writer-lifecycle/v1"
+const deploymentModeName = ".winebot-deployment-gate.lock"
+const trustedDeploymentMode = "winebot-trusted-lifecycle-v1\n"
 
 type lifecycleRecord struct {
  Schema string `json:"schema"`
@@ -71,6 +73,25 @@ func lifecycleWrite(root string,dir *os.File,s lifecycleRecord,fault func(string
  return nil
 }
 
+// Publish the trusted-mode sentinel atomically at the existing legacy gate
+// lock pathname. A legacy gate that wins creation, even if no longer live,
+// prevents automatic migration. The marker is intentionally never removed
+// on error: an incomplete provision requires independent reconciliation.
+// Assumes updated cooperating legacy gate and protected nonrollback root.
+func claimTrustedDeploymentMode(root string,dir *os.File)error{
+ f,err:=os.CreateTemp(root,".winebot-mode-write-")
+ if err!=nil{return err}
+ defer f.Close()
+ defer os.Remove(f.Name())
+ if _,err=f.WriteString(trustedDeploymentMode);err!=nil{return err}
+ if err=f.Sync();err!=nil{return err}
+ if err=f.Close();err!=nil{return err}
+ // Link is atomic and refuses an existing name, unlike Rename.
+ if err=os.Link(f.Name(),filepath.Join(root,deploymentModeName));err!=nil{return errors.New("deployment authority already selected or unavailable")}
+ if err=os.Remove(f.Name());err!=nil{return err}
+ return dir.Sync()
+}
+
 // Explicit initial provisioning only on an independently admitted NEW volume.
 // Runtime reads/transitions NEVER recreate a missing or corrupt journal.
 func lifecycleProvision(root string,uid uint32) error {
@@ -84,6 +105,7 @@ func lifecycleProvision(root string,uid uint32) error {
  if _,err=os.Lstat(filepath.Join(root,lifecycleName));!os.IsNotExist(err){
   return errors.New("provision refused")
  }
+ if err=claimTrustedDeploymentMode(root,dir);err!=nil{return err}
  return lifecycleWrite(root,dir,lifecycleRecord{Schema:lifecycleSchema,Phase:"IDLE"},nil)
 }
 

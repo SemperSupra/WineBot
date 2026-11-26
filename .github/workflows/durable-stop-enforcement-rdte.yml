@@ -6,6 +6,7 @@ on:
       - 'rdte/protected-control/durable_stop*.go'
       - 'rdte/protected-control/writer_gate.go'
       - 'rdte/protected-control/lifecycle_journal*.go'
+      - 'scripts/layers/deployment-gate.sh'
       - '.github/workflows/durable-stop-enforcement-rdte.yml'
 
 permissions:
@@ -27,3 +28,29 @@ jobs:
         run: go build -o "$RUNNER_TEMP/protected-control" ./rdte/protected-control
       - name: Verify durable STOP and gate regression
         run: go test -race -count=5 -timeout=150s ./rdte/protected-control -run '^(TestDurableStop|TestEmergency|TestWriterGate|TestLifecycle)'
+
+  legacy-mode-exclusion:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify actual legacy shell refuses trusted authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d)"
+          trap 'sudo rm -rf -- "$root"' EXIT
+          sudo chown 0:0 "$root"
+          sudo chmod 0700 "$root"
+          sudo sh -c 'umask 077; printf "winebot-trusted-lifecycle-v1\n" > "$1/.winebot-deployment-gate.lock"' sh "$root"
+          set +e
+          result="$(timeout 60s docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --read-only --user 0:0 --mount "type=bind,src=$root,dst=/winebot-control" --mount "type=bind,src=$PWD/scripts/layers/deployment-gate.sh,dst=/gate.sh,readonly" --tmpfs /run:rw,nosuid,nodev,mode=0700,size=1m debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a /bin/sh /gate.sh 2>&1)"
+          rc=$?
+          set -e
+          test "$rc" = 73
+          grep -Fxq 'DEPLOYMENT_GATE stage=trusted_authority_selected' <<< "$result"
+          test "$(sudo cat "$root/.winebot-deployment-gate.lock")" = winebot-trusted-lifecycle-v1
+          echo 'DEPLOYMENT_MODE_EXCLUSION=PASS'
