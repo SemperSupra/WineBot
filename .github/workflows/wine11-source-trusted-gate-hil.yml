@@ -1,0 +1,68 @@
+name: Wine 11 Pristine Source Trusted Gate HIL
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/wine_gate_hil_test.go'
+      - '.github/workflows/wine11-source-trusted-gate-hil.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  wine11-source-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Checkout exact gate candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: gate
+      - name: Checkout previously qualified pristine upstream source recipe
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          persist-credentials: false
+          ref: 18d7fc5d22ffaa13564abb04810a691a96c3b100
+          path: runtime
+      - name: Free disposable runner disk
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+      - name: Build unmodified SHA256-pinned Wine 11.0 upstream source
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker build -f docker/wine11-source.Dockerfile -t winebot-r048:pristine . >"$RUNNER_TEMP/wine-r048-build.log" 2>&1; then
+            echo 'WINE_SOURCE_GATE stage=source_build_failed'
+            exit 1
+          fi
+          echo 'WINE_SOURCE_GATE stage=pristine_source_built'
+      - name: Add display readiness tool only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker build -t winebot-r048:source - >"$RUNNER_TEMP/wine-r048-tool.log" 2>&1 <<'DOCKERFILE'
+          FROM winebot-r048:pristine
+          USER root
+          RUN apt-get update && apt-get install -y --no-install-recommends x11-utils && rm -rf /var/lib/apt/lists/*
+          USER winebot
+          DOCKERFILE
+          then
+            echo 'WINE_SOURCE_GATE stage=display_tool_failed'
+            exit 1
+          fi
+          echo 'WINE_SOURCE_GATE stage=display_tool_ready'
+      - name: Compile identical gate qualification
+        working-directory: gate
+        run: go test -c -o "$RUNNER_TEMP/wine-source-gate.test" ./rdte/protected-control
+      - name: Exercise real source-built GUI and durable STOP
+        run: sudo -n env WINEBOT_REAL_WINE_GATE=1 WINEBOT_WINE_GATE_VARIANT=source "$RUNNER_TEMP/wine-source-gate.test" -test.run '^TestWine11GateStopHIL$' -test.timeout=10m -test.v
+      - name: Remove private-to-runner raw diagnostics
+        if: always()
+        run: rm -f "$RUNNER_TEMP/wine-r048-build.log" "$RUNNER_TEMP/wine-r048-tool.log"
