@@ -224,6 +224,15 @@ async def _send_keys(
         effective_backend = "xdotool" if _desktop_absent() else "ahk"
 
     if effective_backend == "xdotool":
+        # A supplied but unresolved title must never silently become
+        # unscoped XTEST input to the currently focused application.
+        if window_title and not window_id:
+            return {
+                "ok": False,
+                "backend": "xdotool",
+                "error": "xdotool_target_unresolved",
+                "stderr": "",
+            }
         cmd = ["xdotool"]
         if window_id:
             cmd.extend(["key", "--window", window_id, keys])
