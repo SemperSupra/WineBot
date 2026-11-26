@@ -31,6 +31,11 @@ export WINEBOT_SHARED_VOLUME="$prefix-shared"
 export WINEBOT_API_TOKEN=synthetic-ci-only-token
 export WINEBOT_VNC_PASSWORD=synthetic-ci-only-password
 
+# Refuse preexisting names before any create or cleanup claim.
+for volume in "$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME" \
+  "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME" "$WINEBOT_SHARED_VOLUME"; do
+  if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
+done
 # Dry-run should fail with missing external volumes, never create state.
 if bash scripts/layers/preflight.sh --check >/dev/null 2>&1; then fail missing_volume_not_rejected; fi
 bash scripts/layers/preflight.sh --create >/dev/null 2>&1 || fail preflight_create
