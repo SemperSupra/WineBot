@@ -50,6 +50,11 @@ jobs:
         run: go test -c -o "$RUNNER_TEMP/wine-gate.test" ./rdte/protected-control
       - name: Run real Wine GUI and persistent STOP against disposable scope
         run: sudo -n env WINEBOT_REAL_WINE_GATE=1 "$RUNNER_TEMP/wine-gate.test" -test.run '^TestWine11GateStopHIL$' -test.timeout=10m -test.v
+      - name: Reuse image for actual Wine GUI under bounded CPU and PID pressure
+        run: sudo -n env WINEBOT_REAL_WINE_GATE=1 WINEBOT_CPA0_WINE_PRESSURE=1 "$RUNNER_TEMP/wine-gate.test" -test.run '^TestWine11GateStopHIL
+        if: always()
+        run: rm -f "$RUNNER_TEMP/wine-r046-build.log"
+ -test.timeout=10m -test.v
       - name: Remove raw build diagnostics
         if: always()
         run: rm -f "$RUNNER_TEMP/wine-r046-build.log"
