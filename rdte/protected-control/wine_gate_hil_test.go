@@ -71,11 +71,12 @@ func TestWine11GateStopHIL(t *testing.T){
  e,err:=newEmergencyDispatch(g)
  if err!=nil{t.Fatal(err)}
  script:=`set -eu
- export HOME=/home/winebot WINEPREFIX=/tmp/winebot-r046-prefix DISPLAY=:93
+ export HOME=/home/winebot WINEPREFIX=/tmp/winebot-r046-prefix DISPLAY=:93 WINEARCH=win64
+ fail() { printf "WINE_GATE_HIL=FAIL_%s\n" "$1"; exit 1; }
  export WINEDLLOVERRIDES=mscoree,mshtml=
- test "$(id -u)" = 1000
- test "$(dpkg-query -W -f='${Version}' winehq-stable)" = '11.0.0.0~trixie-1'
- wine --version | grep -Eq '^wine-11[.]0([[:space:]]|$)'
+ test "$(id -u)" = 1000 || fail IDENTITY
+ test "$(dpkg-query -W -f='${Version}' winehq-stable)" = '11.0.0.0~trixie-1' || fail PACKAGE
+ wine --version | grep -Eq '^wine-11[.]0([[:space:]]|$)' || fail VERSION
  echo WINE_GATE_HIL=VERSION_OK
  Xvfb "$DISPLAY" -screen 0 1024x768x24 -noreset >/dev/null 2>&1 &
  ready=0
@@ -83,20 +84,27 @@ func TestWine11GateStopHIL(t *testing.T){
    if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then ready=1; break; fi
    sleep .25
  done
- test "$ready" = 1
- timeout -k 5s 120s wineboot -i >/dev/null 2>&1
- test -s "$WINEPREFIX/system.reg"
+ test "$ready" = 1 || fail X11
+ echo WINE_GATE_HIL=X11_OK
+ mkdir -p "$WINEPREFIX" || fail PREFIX_DIRECTORY
+ test -w "$WINEPREFIX" || fail PREFIX_WRITABLE
+ timeout -k 5s 90s wineboot -i >/dev/null 2>&1 || fail WINEBOOT
+ echo WINE_GATE_HIL=BOOT_OK
+ timeout -k 5s 30s wineserver -w >/dev/null 2>&1 || fail SERVER_WAIT
+ test -s "$WINEPREFIX/system.reg" || fail REGISTRY
+ timeout -k 5s 15s wine cmd /c exit 0 >/dev/null 2>&1 || fail COMMAND
  echo WINE_GATE_HIL=PREFIX_OK
  wine notepad >/dev/null 2>&1 &
  app=$!
  ready=0
  for i in $(seq 1 80); do
    if xdotool search --onlyvisible --class notepad >/dev/null 2>&1; then ready=1; break; fi
+   kill -0 "$app" 2>/dev/null || fail NOTEPAD_EXIT
    sleep .5
  done
- test "$ready" = 1
+ test "$ready" = 1 || fail WINDOW
  echo WINE_GATE_HIL=WINDOW_OK
- wait "$app"
+ wait "$app" || fail NOTEPAD_WAIT
  `
  container:=must("create_fixture","docker","create","--name",name,"--cgroup-parent",parent,
   "--network","none","--user","1000:1000","--cap-drop","ALL","--security-opt","no-new-privileges",
@@ -118,13 +126,33 @@ func TestWine11GateStopHIL(t *testing.T){
   if line=="0::"+rel || strings.HasPrefix(line,"0::"+rel+"/"){matched=true}
  }
  if !matched{t.Fatal("engine process outside admitted scope")}
- deadline:=time.Now().Add(220*time.Second)
+ // Emit only exact allowlisted synthetic receipts; never print raw logs.
+ stages:=map[string]bool{}
+ allowed:=[]string{"VERSION_OK","X11_OK","BOOT_OK","PREFIX_OK","WINDOW_OK",
+  "FAIL_IDENTITY","FAIL_PACKAGE","FAIL_VERSION","FAIL_X11","FAIL_PREFIX_DIRECTORY",
+  "FAIL_PREFIX_WRITABLE","FAIL_WINEBOOT","FAIL_SERVER_WAIT","FAIL_REGISTRY",
+  "FAIL_COMMAND","FAIL_NOTEPAD_EXIT","FAIL_WINDOW","FAIL_NOTEPAD_WAIT"}
+ observeStages:=func(){
+  out,err:=call("docker","logs","--tail","100",container)
+  if err!=nil{return}
+  for _,line:=range strings.Split(out,"\n"){
+   for _,stage:=range allowed{
+    if line=="WINE_GATE_HIL="+stage && !stages[stage]{
+     stages[stage]=true
+     t.Log("WINE_GATE_HIL receipt="+stage)
+    }
+   }
+  }
+ }
+ deadline:=time.Now().Add(260*time.Second)
  for {
-  out,err:=call("docker","logs","--tail","20",container)
-  if err==nil && strings.Contains(out,"WINE_GATE_HIL=VERSION_OK") &&
-   strings.Contains(out,"WINE_GATE_HIL=PREFIX_OK") && strings.Contains(out,"WINE_GATE_HIL=WINDOW_OK"){break}
+  observeStages()
+  if stages["VERSION_OK"] && stages["PREFIX_OK"] && stages["WINDOW_OK"]{break}
   if time.Now().After(deadline){t.Fatal("Wine11 prefix/window qualification failed")}
-  if must("running","docker","inspect","--format","{{.State.Running}}",container)!="true"{t.Fatal("fixture exited before readiness")}
+  if must("running","docker","inspect","--format","{{.State.Running}}",container)!="true"{
+   observeStages()
+   t.Fatal("fixture exited before readiness; see allowlisted stage receipts")
+  }
   time.Sleep(time.Second)
  }
  if p,err:=cgroupPopulated(dir,id);err!=nil || !p{t.Fatal("live Wine scope not observed")}
