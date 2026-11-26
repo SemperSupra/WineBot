@@ -3,6 +3,7 @@
 package main
 
 import (
+ "errors"
  "os"
  "os/exec"
  "path/filepath"
@@ -114,4 +115,79 @@ func TestLifecycleCrashBoundaries(t *testing.T) {
    })
   }
  }
+}
+
+// Synthetic boolean proofs and transition driver exist only in test builds.
+type scopeEmptyProof struct {
+ Generation int64
+ Scope string
+ GateClosed, NoPending, NoLive bool
+}
+
+func lifecycleTransition(root string,uid uint32,expected int64,event,scope string,proof scopeEmptyProof,fault func(string)) (lifecycleRecord,error) {
+ var zero lifecycleRecord
+ dir,lock,err:=acquire(root,uid)
+ if err!=nil{return zero,err}
+ defer dir.Close();defer lock.Close()
+ s,err:=lifecycleRead(root,uid)
+ if err!=nil{return zero,err}
+ if s.Generation!=expected{return zero,errors.New("stale generation")}
+ // Re-establish directory durability after an ambiguous preceding rename.
+ if err=dir.Sync();err!=nil{return zero,err}
+ switch event {
+ case "reserve":
+  if s.Phase!="IDLE" || expected>=maxGeneration || !identifier.MatchString(scope){return zero,errors.New("reserve refused")}
+  s.Generation++;s.Scope=scope;s.Phase="RESERVED"
+ case "launch_intent":
+  if s.Phase!="RESERVED" || scope!=s.Scope{return zero,errors.New("launch refused")}
+  s.Phase="RUNNING"
+ case "quarantine":
+  if (s.Phase!="RESERVED" && s.Phase!="RUNNING" && s.Phase!="QUARANTINED") || scope!=s.Scope{return zero,errors.New("quarantine refused")}
+  s.Phase="QUARANTINED"
+ case "reconcile":
+  if s.Phase!="QUARANTINED" || scope!=s.Scope || proof.Generation!=s.Generation ||
+   proof.Scope!=s.Scope || !proof.GateClosed || !proof.NoPending || !proof.NoLive{return zero,errors.New("reconcile refused")}
+  s.Phase="IDLE";s.Scope=""
+ default:return zero,errors.New("unknown lifecycle transition")
+ }
+ // Synthetic transition tests obey the same sticky STOP invariant.
+ if event!="quarantine"{
+  sd,sl,err:=acquireStop(root,uid)
+  if err!=nil{return zero,err}
+  defer sd.Close();defer sl.Close()
+  if err=requireNoDurableStop(root,uid);err!=nil{return zero,err}
+ }
+ if err=lifecycleWrite(root,dir,s,fault);err!=nil{return zero,err}
+ return s,nil
+}
+
+func TestLifecycleStickyStopRejectsSyntheticRelease(t *testing.T){
+ root:=lifecycleTestRoot(t);uid:=uint32(os.Geteuid())
+ if err:=lifecycleProvision(root,uid);err!=nil{t.Fatal(err)}
+ lifecycleMust(t,root,0,"reserve","scope-a",scopeEmptyProof{})
+ if err:=requestDurableStop(root,uid,1,"scope-a");err!=nil{t.Fatal(err)}
+ if _,err:=lifecycleTransition(root,uid,1,"launch_intent","scope-a",scopeEmptyProof{},nil);err==nil{t.Fatal("latched STOP bypassed")}
+ lifecycleMust(t,root,1,"quarantine","scope-a",scopeEmptyProof{})
+ if _,err:=lifecycleTransition(root,uid,1,"reconcile","scope-a",scopeEmptyProof{1,"scope-a",true,true,true},nil);err==nil{t.Fatal("latched STOP released by boolean proof")}
+ s,err:=lifecycleRead(root,uid)
+ if err!=nil || s.Phase!="QUARANTINED"{t.Fatal("quarantine lost",err)}
+ // Even a lost journal does not permit reprovisioning a stopped volume.
+ if err=os.Remove(filepath.Join(root,lifecycleName));err!=nil{t.Fatal(err)}
+ if err=lifecycleProvision(root,uid);err==nil{t.Fatal("STOP bypassed via provisioning")}
+ if _,err=os.Stat(filepath.Join(root,lifecycleName));!os.IsNotExist(err){t.Fatal("journal recreated")}
+}
+
+func TestLifecycleStopCorruptionAndContention(t *testing.T){
+ root:=lifecycleTestRoot(t);uid:=uint32(os.Geteuid())
+ if err:=lifecycleProvision(root,uid);err!=nil{t.Fatal(err)}
+ d,l,err:=acquireStop(root,uid)
+ if err!=nil{t.Fatal(err)}
+ if _,err=lifecycleTransition(root,uid,0,"reserve","scope-a",scopeEmptyProof{},nil);err==nil{
+  l.Close();d.Close();t.Fatal("STOP lock contention admitted reserve")
+ }
+ l.Close();d.Close()
+ if err=os.WriteFile(filepath.Join(root,durableStopName),[]byte("{"),0600);err!=nil{t.Fatal(err)}
+ if _,err=lifecycleTransition(root,uid,0,"reserve","scope-a",scopeEmptyProof{},nil);err==nil{t.Fatal("corrupt STOP admitted reserve")}
+ s,err:=lifecycleRead(root,uid)
+ if err!=nil || s.Phase!="IDLE" || s.Generation!=0{t.Fatal("denied transition mutated journal",err)}
 }
