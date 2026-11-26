@@ -1,0 +1,133 @@
+name: ReactOS boot mode differential
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-reactos-v20d4.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind public run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-reactos-v20d4 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/download-artifact@v4
+        with:
+          name: virtio-reactos-v20d1
+          run-id: 45717353971
+          github-token: ${{ github.token }}
+          path: image
+      - name: Prepare immutable baseline and diagnostic boot menu derivative
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils xorriso
+          echo 'fa3a5e77b0a75701e3e854a0834f42a0dc7c2919830b877a5e4a24f2c987d350  image/candidate-bootcd.iso' | sha256sum -c -
+          xorriso -indev image/candidate-bootcd.iso -report_el_torito plain > receipts/original-boot.txt 2>&1
+          xorriso -osirrox on -indev image/candidate-bootcd.iso -extract /freeldr.ini original.ini
+          cp original.ini receipts/
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('original.ini').read_bytes()
+          assert re.search(rb'(?im)^DefaultOS=LiveImg_Debug\r?$',p)
+          p,n=re.subn(rb'(?im)^DefaultOS=LiveImg_Debug(?=\r?$)',b'DefaultOS=LiveImg',p)
+          assert n==1
+          Path('normal.ini').write_bytes(p)
+          PY
+          cp normal.ini receipts/
+          xorriso -indev image/candidate-bootcd.iso -outdev normal.iso -boot_image any replay -map normal.ini /freeldr.ini -commit -end > receipts/remaster.log 2>&1
+          xorriso -indev normal.iso -report_el_torito plain > receipts/normal-boot.txt 2>&1
+          sha256sum image/candidate-bootcd.iso normal.iso original.ini normal.ini > receipts/inputs.sha256
+      - name: Observe ordinary and debug boot paths
+        run: |
+          set -euo pipefail
+          cat > receipts/observe.py <<'PY'
+          import subprocess, pathlib, socket, time, json, re
+          from concurrent.futures import ThreadPoolExecutor
+          P=pathlib.Path; r=P('receipts')
+          def run(mode,iso):
+              disk=mode+'.qcow2'
+              subprocess.run(['qemu-img','create','-f','qcow2',disk,'4G'],check=True)
+              sock=mode+'.sock'
+              argv=['qemu-system-i386','-accel','tcg','-m','512','-smp','1','-display','none','-vga','std','-monitor','none','-serial','file:receipts/'+mode+'.serial','-debugcon','file:receipts/'+mode+'.debugcon','-qmp','unix:'+sock+',server=on,wait=off','-no-reboot','-cdrom',iso,'-boot','d','-drive','file='+disk+',if=ide','-netdev','user,id=n,restrict=on','-device','virtio-net-pci,netdev=n,romfile=']
+              (r/(mode+'-argv.json')).write_text(json.dumps(argv))
+              history=[]
+              with (r/(mode+'.qemu.log')).open('wb') as out:
+                  p=subprocess.Popen(argv,stdout=out,stderr=out)
+                  try:
+                      for _ in range(100):
+                          if P(sock).exists(): break
+                          assert p.poll() is None
+                          time.sleep(.1)
+                      with socket.socket(socket.AF_UNIX) as s:
+                          s.settimeout(15)
+                          s.connect(sock)
+                          f=s.makefile('rwb')
+                          hello=json.loads(f.readline())
+                          assert 'QMP' in hello
+                          def qmp(cmd,args=None):
+                              req={'execute':cmd,'id':len(history)}
+                              if args is not None: req['arguments']=args
+                              f.write(json.dumps(req).encode()+b'\n');f.flush()
+                              while True:
+                                  line=f.readline()
+                                  assert line
+                                  obj=json.loads(line)
+                                  if obj.get('id')==req['id']:
+                                      history.append({'request':req,'response':obj})
+                                      assert 'return' in obj,obj
+                                      return obj['return']
+                          qmp('qmp_capabilities')
+                          start=time.monotonic()
+                          for sec in (5,20,60,120):
+                              time.sleep(max(0,sec-(time.monotonic()-start)))
+                              qmp('query-status')
+                              qmp('screendump',{'filename':str((r/f'{mode}-{sec}.ppm').resolve())})
+                          qmp('quit')
+                  finally:
+                      if p.poll() is None:
+                          try:p.wait(timeout=10)
+                          except subprocess.TimeoutExpired:p.kill();p.wait()
+                      (r/(mode+'-qmp.json')).write_text(json.dumps(history,indent=2))
+              b=(r/(mode+'.serial')).read_bytes()
+              banner=b'ReactOS 0.4.17-x86-dev' in b and b'4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6' in b
+              witnesses=sorted({m.decode('ascii','replace') for m in re.findall(rb'\(ntoskrnl[^\r\n\x00]+',b)})
+              row={'mode':mode,'kernel_banner':banner,'serial_bytes':len(b),'witnesses':witnesses,'screenshots':4,'classification':'BOOT_DIAGNOSTIC_ONLY'}
+              (r/(mode+'-summary.json')).write_text(json.dumps(row,indent=2))
+              assert all((r/f'{mode}-{sec}.ppm').stat().st_size>100 for sec in (5,20,60,120))
+              return row
+          with ThreadPoolExecutor(max_workers=2) as pool:
+              a=pool.submit(run,'debug','image/candidate-bootcd.iso')
+              b=pool.submit(run,'normal','normal.iso')
+              rows=[a.result(),b.result()]
+          (r/'summary.json').write_text(json.dumps(rows,indent=2))
+          assert rows[0]['kernel_banner']
+          PY
+          python3 receipts/observe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-reactos-v20d4
+          path: receipts/
+          retention-days: 7
+      - name: Bind terminal receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$RESULT" in success|failure) state="$RESULT";; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-reactos-v20d4 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
