@@ -64,7 +64,15 @@ func TestWine11GateStopHIL(t *testing.T){
  defer dir.Close()
  id,err:=cgroupID(dir)
  if err!=nil{t.Fatal("scope identity failed")}
- image:=must("image_identity","docker","image","inspect","winebot-r046:local","--format","{{.Id}}")
+ variant:=os.Getenv("WINEBOT_WINE_GATE_VARIANT")
+ if variant==""{variant="package"}
+ imageTag:="winebot-r046:local"
+ switch variant{
+ case "package":
+ case "source":imageTag="winebot-r048:source"
+ default:t.Fatal("unknown runtime variant")
+ }
+ image:=must("image_identity","docker","image","inspect",imageTag,"--format","{{.Id}}")
  if !strings.HasPrefix(image,"sha256:") || len(image)!=71{t.Fatal("invalid local image identity")}
  g,err:=newWriterGate(root,0,0,dir,id)
  if err!=nil{t.Fatal("scope reservation failed",err)}
@@ -75,7 +83,17 @@ func TestWine11GateStopHIL(t *testing.T){
  fail() { printf "WINE_GATE_HIL=FAIL_%s\n" "$1"; exit 1; }
  export WINEDLLOVERRIDES=mscoree,mshtml=
  test "$(id -u)" = 1000 || fail IDENTITY
- test "$(dpkg-query -W -f='${Version}' winehq-stable)" = '11.0.0.0~trixie-1' || fail PACKAGE
+ case "$WINEBOT_FIXTURE_VARIANT" in
+ package)
+   test "$(dpkg-query -W -f='${Version}' winehq-stable)" = '11.0.0.0~trixie-1' || fail PACKAGE
+   ;;
+ source)
+   export WINEARCH=wow64
+   test "$(command -v wine)" = /opt/winebot-wine/11.0/bin/wine || fail SOURCE_PATH
+   test "$(wine --version)" = wine-11.0 || fail VERSION
+   ;;
+ *) fail VARIANT ;;
+ esac
  wine --version | grep -Eq '^wine-11[.]0([[:space:]]|$)' || fail VERSION
  echo WINE_GATE_HIL=VERSION_OK
  Xvfb "$DISPLAY" -screen 0 1024x768x24 -noreset >/dev/null 2>&1 &
@@ -108,7 +126,7 @@ func TestWine11GateStopHIL(t *testing.T){
  `
  container:=must("create_fixture","docker","create","--name",name,"--cgroup-parent",parent,
   "--network","none","--user","1000:1000","--cap-drop","ALL","--security-opt","no-new-privileges",
-  "--pids-limit","256","--memory","2g","--init","--entrypoint","/bin/sh",image,"-c",script)
+  "--pids-limit","256","--memory","2g","--init","--env","WINEBOT_FIXTURE_VARIANT="+variant,"--entrypoint","/bin/sh",image,"-c",script)
  if len(container)!=64{t.Fatal("invalid container identity")}
  defer exec.Command("docker","rm","-f",container).Run()
  if err=e.run(func(context.Context)error{
@@ -129,7 +147,7 @@ func TestWine11GateStopHIL(t *testing.T){
  // Emit only exact allowlisted synthetic receipts; never print raw logs.
  stages:=map[string]bool{}
  allowed:=[]string{"VERSION_OK","X11_OK","BOOT_OK","PREFIX_OK","WINDOW_OK",
-  "FAIL_IDENTITY","FAIL_PACKAGE","FAIL_VERSION","FAIL_X11","FAIL_PREFIX_DIRECTORY",
+  "FAIL_IDENTITY","FAIL_PACKAGE","FAIL_SOURCE_PATH","FAIL_VARIANT","FAIL_VERSION","FAIL_X11","FAIL_PREFIX_DIRECTORY",
   "FAIL_PREFIX_WRITABLE","FAIL_WINEBOOT","FAIL_SERVER_WAIT","FAIL_REGISTRY",
   "FAIL_COMMAND","FAIL_NOTEPAD_EXIT","FAIL_WINDOW","FAIL_NOTEPAD_WAIT"}
  observeStages:=func(){
