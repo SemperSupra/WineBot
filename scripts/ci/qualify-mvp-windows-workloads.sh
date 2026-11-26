@@ -69,7 +69,62 @@ wait_health() {
   done
   return 1
 }
+# Live HTTP delivery across the actual runtime boundary, without TestClient.
+# Fixed local destination, bounded reads, no redirects, no raw output.
+verify_live_interfaces() {
+  python3 - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+opener = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), NoRedirect()
+)
+token = os.environ["WINEBOT_API_TOKEN"]
+def request(path, authenticated=True):
+    headers = {"X-API-Key": token} if authenticated else {}
+    req = urllib.request.Request("http://127.0.0.1:8000" + path, headers=headers)
+    with opener.open(req, timeout=15) as response:
+        data = response.read(2 * 1024 * 1024 + 1)
+        assert len(data) <= 2 * 1024 * 1024
+        return data, response.headers
+
+try:
+    try:
+        request("/handshake", False)
+    except urllib.error.HTTPError as err:
+        assert err.code == 401
+    else:
+        raise AssertionError("missing authentication refusal")
+    _, health_headers = request("/health")
+    raw, headers = request("/handshake")
+    handshake = json.loads(raw)
+    version = json.loads(request("/version")[0])
+    assert handshake["status"] == "ready"
+    assert handshake["api_version"] == version["api_version"]
+    assert handshake["build_version"] == version["version"]
+    assert handshake["schema_versions"]["artifact"] == version["artifact_schema_version"]
+    assert handshake["schema_versions"]["event"] == version["event_schema_version"]
+    assert headers["X-WineBot-API-Version"] == handshake["api_version"]
+    assert headers["X-Request-ID"] and health_headers["X-Request-ID"]
+    assert isinstance(handshake["capabilities"], list) and handshake["capabilities"]
+    html, ui_headers = request("/ui/", False)
+    assert ui_headers.get_content_type() == "text/html"
+    assert b"<title>WineBot Dashboard</title>" in html
+    assert "no-store" in ui_headers.get("Cache-Control", "")
+except Exception:
+    raise SystemExit("MVP_LIVE_INTERFACE=FAIL")
+print("MVP_LIVE_INTERFACE=PASS")
+PY
+}
+
 wait_health || fail health_initial
+verify_live_interfaces || fail live_interface_initial
 docker compose -f compose/layered.yml exec -T winebot-interactive wine --version \
   2>/dev/null | grep -Eq '^wine-11([.]|$)' || fail wrong_wine_version
 echo 'MVP_WORKLOAD stage=wine11_layered_ready'
@@ -224,6 +279,7 @@ echo 'MVP_WORKLOAD stage=quiesced_before_recreate'
 docker compose -f compose/layered.yml up -d --force-recreate --no-build \
   winebot-interactive >/dev/null 2>&1 || fail recreate
 wait_health || fail recreate_health
+verify_live_interfaces || fail live_interface_after_recreate
 docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
   grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt ||
     { echo "MVP_WORKLOAD_REPLAY_CAUSE=editor_data_missing"; exit 40; }
