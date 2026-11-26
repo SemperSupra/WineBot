@@ -56,6 +56,8 @@ def main() -> None:
     if active.returncode:
         fail("real_window_focus")
 
+    original_text = PROOF.read_text()
+
     with ExitStack() as stack:
         stack.enter_context(patch.dict(os.environ, {
             "API_TOKEN": HEADER["X-API-Key"],
@@ -81,12 +83,33 @@ def main() -> None:
         # Use the same in-process route harness as the proven HTTP unit tests.
         # Entering TestClient lifespan would mutate unrelated real service state.
         client = TestClient(app)
-        def key(keys: str):
-            return client.post(
-                "/input/key",
-                json={"keys": keys, "window_id": window, "backend": "xdotool"},
-                headers=HEADER,
-            )
+        def key(keys: str, *, targeted: bool = True):
+            payload = {"keys": keys, "backend": "xdotool"}
+            if targeted:
+                payload["window_id"] = window
+            return client.post("/input/key", json=payload, headers=HEADER)
+
+        def focused_differential() -> str:
+            # Diagnostic only: same real broker and editor, different X11
+            # delivery primitive. Never waive the original targeted failure.
+            # This is an isolated disposable desktop; focus checks are not an
+            # atomic target-binding guarantee for a shared production desktop.
+            for chord in ("ctrl+End", "y", "ctrl+s"):
+                observed = subprocess.run(
+                    ["xdotool", "getactivewindow"], capture_output=True,
+                    text=True, timeout=5, check=False,
+                )
+                if observed.returncode or observed.stdout.strip() != window:
+                    return "focused_xtest_focus_mismatch"
+                if key(chord, targeted=False).status_code != 200:
+                    return "focused_xtest_dispatch_failed"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                # z may have been inserted but not saved by directed delivery.
+                if PROOF.read_text() in (original_text + "y", original_text + "zy"):
+                    return "focused_xtest_pass"
+                time.sleep(0.25)
+            return "focused_xtest_save_failed"
 
         if key("z").status_code != 423:
             fail("unguarded_input")
@@ -115,6 +138,11 @@ def main() -> None:
                 break
             time.sleep(0.25)
         else:
+            try:
+                outcome = focused_differential()
+            except Exception:
+                outcome = "focused_xtest_probe_error"
+            print("IC1_BROKER_DIFFERENTIAL=" + outcome, flush=True)
             fail("real_wine_save_postcondition")
         stopped = client.post(
             "/sessions/ic1-broker-live/user_intent",

@@ -80,7 +80,7 @@ jobs:
           basedir="$(dirname "$exe")/baseset"
           mkdir -p "$basedir"
           find "$work/gfx" -type f \( -iname '*.tar' -o -iname '*.obg' -o -iname '*.grf' \) \
-            -exec cp -n '{}' "$basedir" \;
+            -exec cp --update=none '{}' "$basedir" \;
           test -n "$(find "$basedir" -type f -print -quit)" ||
             { echo 'MVP_WORKLOAD stage=gfx_missing'; exit 1; }
           test -z "$(find apps/mvp-ic1 -type l -print -quit)" ||
