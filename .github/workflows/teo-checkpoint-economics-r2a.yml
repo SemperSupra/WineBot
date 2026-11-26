@@ -1,0 +1,291 @@
+name: SQLite paired checkpoint economics R2a
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-checkpoint-economics-r2a.yml]
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Build isolated guest from public distro packages
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd sqlite3 e2fsprogs libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          dpkg-query -W qemu-system-x86 linux-image-virtual sqlite3 e2fsprogs > receipts/packages.txt
+          /usr/bin/sqlite3 --version > receipts/sqlite-version.txt
+          k=$(find /boot -maxdepth 1 -name 'vmlinuz-*generic' -printf '%f\n' | sort -V | tail -1)
+          test -n "$k"
+          ver=$(echo "$k" | sed 's/^vmlinuz-//')
+          echo "$ver" > receipts/kernel-release.txt
+          sudo cp "/boot/$k" kernel.bin
+          sudo chown "$(id -u):$(id -g)" kernel.bin
+          chmod u+r kernel.bin
+          mkdir -p root/{bin,dev,proc,sys,modules,mnt,tmp,usr/bin}
+          cp "$(command -v busybox)" root/bin/busybox
+          for app in /usr/bin/sqlite3; do
+            cp -L --parents "$app" root
+            ldd "$app" >> receipts/ldd.txt
+            ldd "$app" | awk '$2=="=>" && $3 ~ /^\// {print $3} $1 ~ /^\// {print $1}' | sort -u | while read -r lib; do cp -L --parents "$lib" root; done
+          done
+          ! grep -q 'not found' receipts/ldd.txt
+          for m in virtio_pci virtio_blk ext4; do modprobe -S "$ver" --show-depends "$m"; done > receipts/module-dependencies.txt
+          awk '$1=="insmod" && !seen[$2]++ {print $2}' receipts/module-dependencies.txt > module-paths.txt
+          : > root/modules/load
+          while IFS= read -r src; do
+            base=$(basename "$src" | sed -E 's/\.(zst|xz|gz)$//')
+            case "$src" in
+              *.ko.zst) zstd -dc "$src" > "root/modules/$base";;
+              *.ko.xz) xz -dc "$src" > "root/modules/$base";;
+              *.ko.gz) gzip -dc "$src" > "root/modules/$base";;
+              *.ko) cp "$src" "root/modules/$base";;
+              *) exit 1;;
+            esac
+            echo "/modules/$base" >> root/modules/load
+          done < module-paths.txt
+          find root/modules -type f -exec sha256sum {} \; > receipts/modules.sha256
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          while IFS= read -r m; do $B insmod "$m"; done < /modules/load
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DEVICE $d"
+            $B readlink "$d/driver" || true
+            if [ -r "$d/features" ]; then echo "FEATURES $($B cat "$d/features")"; fi
+          done
+          $B mount -t ext4 /dev/vda /mnt
+          /usr/bin/sqlite3 -batch -bail /mnt/app.db <<'SQL'
+          PRAGMA journal_mode=WAL;
+          PRAGMA synchronous=FULL;
+          CREATE TABLE items(id INTEGER PRIMARY KEY, v TEXT NOT NULL);
+          BEGIN;
+          WITH RECURSIVE seq(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM seq WHERE i<1000)
+          INSERT INTO items SELECT i,printf('item-%06d',i) FROM seq;
+          COMMIT;
+          BEGIN;
+          UPDATE items SET v='modified' WHERE id=500;
+          ROLLBACK;
+          PRAGMA wal_checkpoint(TRUNCATE);
+          PRAGMA integrity_check;
+          SELECT count(*),sum(id),sum(v=printf('item-%06d',id)) FROM items;
+          SQL
+          $B sync
+          $B stty -F /dev/ttyS0 raw -echo
+          exec 3</dev/ttyS0
+          echo TEO_READY
+          IFS= read -r branch <&3
+          case "$branch" in alpha|bravo) ;; *) exit 2;; esac
+          /usr/bin/sqlite3 -batch -bail /mnt/app.db <<SQL
+          PRAGMA synchronous=FULL;
+          BEGIN;
+          UPDATE items SET v='$branch' WHERE id=500;
+          COMMIT;
+          PRAGMA wal_checkpoint(TRUNCATE);
+          PRAGMA integrity_check;
+          SELECT v FROM items WHERE id=500;
+          SQL
+          $B sync
+          $B umount /mnt
+          echo TEO_SQLITE_PASS
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz /usr/bin/sqlite3 "$(command -v qemu-system-x86_64)" > receipts/binaries.sha256
+          truncate -s 128M base.raw
+          mkfs.ext4 -q -F -U 00000000-0000-4000-8000-000000000001 base.raw
+          sha256sum base.raw > receipts/base.sha256
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+      - name: Save SQLite state and restore independent writable branches
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,json,os,pathlib,random,selectors,shutil,socket,subprocess,time
+          p=pathlib.Path("receipts")
+          def sha(f):
+              with open(f,"rb") as s:return hashlib.file_digest(s,"sha256").hexdigest()
+          class VM:
+              def __init__(self,name,disk,paused=False):
+                  self.name=name; self.t0=time.monotonic(); self.seq=0; self.buf=b""
+                  self.err=(p/f"{name}.stderr").open("wb"); self.out=(p/f"{name}.serial").open("wb")
+                  self.qlog=(p/f"{name}.qmp.jsonl").open("w")
+                  args=["qemu-system-x86_64","-machine","q35","-cpu","Nehalem","-accel","tcg,thread=single","-smp","1","-m","768","-display","none","-monitor","none","-nic","none","-no-reboot","-serial","stdio","-kernel","kernel.bin","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 nokaslr","-blockdev",f"driver=file,node-name=file0,filename={disk}","-blockdev","driver=qcow2,node-name=snap,file=file0","-device","virtio-blk-pci,drive=snap","-qmp",f"unix:{name}.sock,server=on,wait=off"]
+                  if paused:args+=["-S"]
+                  self.proc=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err,bufsize=0)
+                  self.sock=socket.socket(socket.AF_UNIX); self.sock.settimeout(10)
+                  deadline=time.monotonic()+10
+                  while True:
+                      try:self.sock.connect(f"{name}.sock");break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if self.proc.poll() is not None or time.monotonic()>deadline:raise
+                          time.sleep(.02)
+                  self.f=self.sock.makefile("rwb")
+                  assert "QMP" in self.recv()
+                  self.cmd("qmp_capabilities")
+                  self.sel=selectors.DefaultSelector();self.sel.register(self.proc.stdout,selectors.EVENT_READ)
+                  self.event("process",pid=self.proc.pid)
+              def event(self,kind,**kw):
+                  with (p/f"{self.name}.events.jsonl").open("a") as f:f.write(json.dumps({"kind":kind,"seconds":time.monotonic()-self.t0,**kw})+"\n")
+              def recv(self):
+                  row=json.loads(self.f.readline());self.qlog.write(json.dumps({"recv":row})+"\n");self.qlog.flush();return row
+              def cmd(self,op,**args):
+                  self.seq+=1; req={"execute":op,"id":self.seq,"arguments":args}
+                  self.qlog.write(json.dumps({"send":req})+"\n");self.qlog.flush()
+                  self.f.write(json.dumps(req).encode()+b"\n");self.f.flush()
+                  while True:
+                      r=self.recv()
+                      if r.get("id")==self.seq:
+                          if "error" in r:raise RuntimeError(r)
+                          return r["return"]
+              def snapshot(self,op,job):
+                  start=time.monotonic()
+                  self.cmd(op,**{"job-id":job,"tag":"base","vmstate":"snap","devices":["snap"]})
+                  deadline=start+30
+                  while time.monotonic()<deadline:
+                      rows=[x for x in self.cmd("query-jobs") if x["id"]==job]
+                      if rows and rows[0]["status"]=="concluded":
+                          assert len(rows)==1 and "error" not in rows[0] and rows[0]["current-progress"]==rows[0]["total-progress"]==1,rows
+                          self.cmd("job-dismiss",id=job)
+                          assert not any(x["id"]==job for x in self.cmd("query-jobs"))
+                          return time.monotonic()-start
+                      time.sleep(.02)
+                  raise TimeoutError(job)
+              def pump(self,marker=None):
+                  deadline=time.monotonic()+90
+                  while time.monotonic()<deadline:
+                      if marker is not None and marker in self.buf:return
+                      for key,_ in self.sel.select(.1):
+                          b=os.read(key.fd,65536)
+                          if b:self.out.write(b);self.out.flush();self.buf+=b
+                          else:self.sel.unregister(key.fileobj)
+                      if self.proc.poll() is not None and not self.sel.get_map():
+                          assert marker is None and self.proc.returncode==0
+                          return
+                  raise TimeoutError((self.name,marker))
+              def send(self,token):
+                  for b in token:
+                      assert os.write(self.proc.stdin.fileno(),bytes([b]))==1
+                      self.event("host_write",byte=b);time.sleep(.02)
+              def quit(self):
+                  self.cmd("quit");assert self.proc.wait(timeout=10)==0
+              def close(self):
+                  if self.proc.poll() is None:
+                      self.proc.kill();self.proc.wait()
+                  self.sel.close();self.f.close();self.sock.close();self.out.close();self.err.close();self.qlog.close()
+          def create(path):
+              subprocess.run(["qemu-img","convert","-f","raw","-O","qcow2","base.raw",path],check=True)
+          def extract(arm,disk):
+              with (p/f"{arm}.image-check").open("w") as out:subprocess.run(["qemu-img","check",disk],stdout=out,stderr=subprocess.STDOUT,check=True)
+              raw=f"{arm}.raw"
+              subprocess.run(["qemu-img","convert","-O","raw",disk,raw],check=True)
+              db=p/f"{arm}.db"
+              with (p/f"{arm}.debugfs").open("w") as out:subprocess.run(["debugfs","-R",f"dump /app.db {db}",raw],stdout=out,stderr=subprocess.STDOUT,check=True)
+              assert db.stat().st_size>0
+              h=sha(raw);pathlib.Path(raw).unlink()
+              return {"db_sha256":sha(db),"disk_sha256":h}
+          tokens={"a":b"alpha\n","b":b"bravo\n"};results={}
+          rawhash=sha("base.raw")
+          start=time.monotonic();create("base.qcow2");prep=time.monotonic()-start
+          v=VM("producer","base.qcow2")
+          try:
+              v.pump(b"TEO_READY");ready=time.monotonic()-v.t0
+              v.cmd("stop");assert not v.cmd("query-status")["running"]
+              save=v.snapshot("snapshot-save","save0");v.quit()
+          finally:v.close()
+          producer_total=time.monotonic()-start
+          basehash=sha("base.qcow2")
+          subprocess.run(["qemu-img","snapshot","-l","base.qcow2"],check=True,stdout=(p/"snapshots.txt").open("w"))
+          results["producer"]={"prep_s":prep,"ready_s":ready,"save_s":save,"total_s":producer_total,"bytes":os.stat("base.qcow2").st_size,"sha256":basehash}
+          results["producer"].update(extract("producer","base.qcow2"))
+          rng=random.Random(2601)
+          schedule=[]
+          for i in range(6):
+              token_name="a" if i%2==0 else "b"
+              order=["cold","restore"];rng.shuffle(order)
+              schedule.append({"pair":i,"token":token_name,"order":order})
+          (p/"schedule.json").write_text(json.dumps(schedule,indent=2))
+          for pair in schedule:
+              i=pair["pair"];token=tokens[pair["token"]]
+              for mode in pair["order"]:
+                  arm=f"{mode}-{i}";disk=arm+".qcow2"
+                  start=time.monotonic()
+                  if mode=="cold":create(disk)
+                  else:
+                      shutil.copyfile("base.qcow2",disk)
+                      assert sha(disk)==basehash
+                  prep=time.monotonic()-start
+                  v=VM(arm,disk,mode=="restore")
+                  try:
+                      load=None;ready=None
+                      if mode=="restore":
+                          load=v.snapshot("snapshot-load",f"load-{i}")
+                          assert not v.cmd("query-status")["running"]
+                          v.cmd("cont")
+                      else:
+                          v.pump(b"TEO_READY");ready=time.monotonic()-v.t0
+                      v.send(token);v.pump()
+                      results[arm]={"prep_s":prep,"ready_s":ready,"load_s":load,"vm_s":time.monotonic()-v.t0,"total_s":time.monotonic()-start}
+                  finally:v.close()
+                  results[arm].update(extract(arm,disk))
+                  pathlib.Path(disk).unlink()
+                  assert sha("base.qcow2")==basehash and sha("base.raw")==rawhash
+          (p/"results.json").write_text(json.dumps(results,indent=2))
+          PY
+          python3 receipts/drive.py
+      - name: Independently verify all database rows and branch isolation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,sqlite3
+          p=pathlib.Path("receipts");out={}
+          schedule=json.loads((p/"schedule.json").read_text());results=json.loads((p/"results.json").read_text())
+          assert len(schedule)==6 and [x["pair"] for x in schedule]==list(range(6))
+          arms=[("producer",None)]+[(f"{mode}-{x['pair']}","alpha" if x["token"]=="a" else "bravo") for x in schedule for mode in x["order"]]
+          for arm,token in arms:
+              c=sqlite3.connect(f"file:{p}/{arm}.db?mode=ro&immutable=1",uri=True)
+              assert c.execute("pragma integrity_check").fetchall()==[("ok",)]
+              rows=c.execute("select id,v from items order by id").fetchall();c.close()
+              expected=[(i,token if i==500 and token else f"item-{i:06d}") for i in range(1,1001)]
+              assert rows==expected
+              lines=(p/f"{arm}.serial").read_text(errors="replace").splitlines()
+              if token:
+                  assert lines.count("TEO_SQLITE_PASS")==1 and token in lines and "ok" in lines
+                  ev=[json.loads(x) for x in (p/f"{arm}.events.jsonl").read_text().splitlines()]
+                  assert bytes(x["byte"] for x in ev if x["kind"]=="host_write")==token.encode()+b"\n"
+                  if arm.startswith("restore"):assert "TEO_READY" not in lines
+              else:assert lines.count("TEO_READY")==1 and "TEO_SQLITE_PASS" not in lines
+              out[arm]={"rows":len(rows),"row500":rows[499][1],"logical_sha256":hashlib.sha256(json.dumps(rows).encode()).hexdigest()}
+          import statistics,math
+          ratios=[];savings=[]
+          for i in range(6):
+              cold=f"cold-{i}";restore=f"restore-{i}"
+              assert out[cold]==out[restore]
+              c=results[cold]["total_s"];r=results[restore]["total_s"]
+              assert c>0 and r>0
+              ratios.append(c/r);savings.append(c-r)
+          init=results["producer"]["total_s"];saving=statistics.median(savings)
+          cost={"initial_checkpoint_s":init,"paired_speedups":ratios,"median_speedup":statistics.median(ratios),"median_saved_s":saving,"break_even_reuses_strict":math.floor(init/saving)+1 if saving>0 else None,"scope":"same runner; image prep + hash + VM; excludes package/kernel build and remote transfer, retained DB oracle outside measured intervals"}
+          (p/"cost.json").write_text(json.dumps(cost,indent=2));print(json.dumps(cost))
+          (p/"oracle.json").write_text(json.dumps(out,indent=2))
+          PY
+          sha256sum -c receipts/base.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teo-checkpoint-economics-r2a
+          path: receipts/
+          retention-days: 1
