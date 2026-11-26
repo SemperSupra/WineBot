@@ -1,0 +1,144 @@
+name: ReactOS original LiveCD NetKVM activation
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-reactos-v20d5.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind public run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-reactos-v20d5 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/download-artifact@v4
+        with:
+          name: virtio-reactos-v20d1
+          run-id: 45717353971
+          github-token: ${{ github.token }}
+          path: image
+      - name: Verify original image and native QEMU capabilities
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils xorriso
+          echo 'fa3a5e77b0a75701e3e854a0834f42a0dc7c2919830b877a5e4a24f2c987d350  image/candidate-bootcd.iso' | sha256sum -c -
+          cp image/driver-hashes.txt receipts/
+          xorriso -indev image/candidate-bootcd.iso -find / -name '*netkvm*' -exec lsdl -- > receipts/netkvm-inventory.txt 2>&1
+          qemu-system-i386 --version > receipts/qemu-version.txt
+          qemu-system-i386 -trace help > receipts/trace-help.txt 2>&1
+          printf '%s\n' virtqueue_pop virtqueue_fill > receipts/events
+          for n in virtqueue_pop virtqueue_fill; do grep -Eq "^$n([[:space:]]|$)" receipts/trace-help.txt; done
+      - name: Observe native VirtIO driver activation on original ISO
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import subprocess,pathlib,socket,time,json,re,struct
+          P=pathlib.Path; r=P('receipts')
+          def pcap_counts(path):
+              b=path.read_bytes()
+              assert len(b)>=24,'missing pcap header'
+              endian={b'\xd4\xc3\xb2\xa1':'<',b'\xa1\xb2\xc3\xd4':'>',b'\x4d\x3c\xb2\xa1':'<',b'\xa1\xb2\x3c\x4d':'>'}[b[:4]]
+              assert struct.unpack_from(endian+'I',b,20)[0]==1
+              i=24; total=0; tx=0
+              while i<len(b):
+                  assert i+16<=len(b)
+                  _,_,n,_=struct.unpack_from(endian+'IIII',b,i);i+=16
+                  assert i+n<=len(b)
+                  f=b[i:i+n];i+=n;total+=1
+                  if len(f)>=14 and f[6:12]==bytes.fromhex('525400123456'):tx+=1
+              return total,tx
+          def run(mode,legacy):
+              disk=mode+'.qcow2';sock=mode+'.sock'
+              subprocess.run(['qemu-img','create','-f','qcow2',disk,'4G'],check=True)
+              argv=['qemu-system-i386','-accel','tcg','-m','512','-smp','1','-display','none','-vga','std','-monitor','none','-serial','file:receipts/'+mode+'.serial','-debugcon','file:receipts/'+mode+'.debugcon','-qmp','unix:'+sock+',server=on,wait=off','-no-reboot','-cdrom','image/candidate-bootcd.iso','-boot','d','-drive','file='+disk+',if=ide','-netdev','user,id=n,restrict=on','-device','virtio-net-pci,id=nic0,netdev=n,romfile=,mac=52:54:00:12:34:56,packed=off,disable-legacy='+('off' if legacy else 'on'),'-object','filter-dump,id=cap,netdev=n,file=receipts/'+mode+'.pcap','-trace','events=receipts/events','-D','receipts/'+mode+'.trace']
+              (r/(mode+'-argv.json')).write_text(json.dumps(argv,indent=2))
+              history=[];snapshots=[];p=None;error=None
+              with (r/(mode+'.qemu.log')).open('wb') as out:
+                  p=subprocess.Popen(argv,stdout=out,stderr=out)
+                  try:
+                      for _ in range(100):
+                          if P(sock).exists():break
+                          assert p.poll() is None
+                          time.sleep(.1)
+                      with socket.socket(socket.AF_UNIX) as s:
+                          s.settimeout(15);s.connect(sock);f=s.makefile('rwb')
+                          assert 'QMP' in json.loads(f.readline())
+                          def qmp(cmd,args=None,required=True):
+                              req={'execute':cmd,'id':len(history)}
+                              if args is not None:req['arguments']=args
+                              f.write(json.dumps(req).encode()+b'\n');f.flush()
+                              while True:
+                                  line=f.readline();assert line
+                                  obj=json.loads(line)
+                                  if obj.get('id')==req['id']:
+                                      history.append({'request':req,'response':obj})
+                                      if required:assert 'return' in obj,obj
+                                      return obj.get('return')
+                          qmp('qmp_capabilities')
+                          cmds={c['name'] for c in qmp('query-commands')}
+                          start=time.monotonic()
+                          for sec,key in [(120,'n'),(150,'l'),(180,None),(240,None)]:
+                              time.sleep(max(0,sec-(time.monotonic()-start)))
+                              qmp('query-status')
+                              qmp('screendump',{'filename':str((r/f'{mode}-{sec}.ppm').resolve())})
+                              status=[]
+                              if 'x-query-virtio' in cmds and 'x-query-virtio-status' in cmds:
+                                  for dev in qmp('x-query-virtio'):
+                                      state=qmp('x-query-virtio-status',{'path':dev['path']},required=False)
+                                      if state is not None:status.append({'device':dev,'state':state})
+                              snapshots.append({'second':sec,'virtio':status})
+                              # English resource accelerators: Next, then Run Live CD.
+                              # These are bounded UI actions on a disposable guest, not a proof of screen state.
+                              if key:qmp('send-key',{'keys':[{'type':'qcode','data':'alt'},{'type':'qcode','data':key}],'hold-time':100})
+                          qmp('quit')
+                  except Exception as e:
+                      error=repr(e)
+                  finally:
+                      if p.poll() is None:
+                          try:p.wait(timeout=10)
+                          except subprocess.TimeoutExpired:p.kill();p.wait()
+                      (r/(mode+'-qmp.json')).write_text(json.dumps(history,indent=2))
+              (r/(mode+'-status.json')).write_text(json.dumps(snapshots,indent=2))
+              ready=any('DRIVER_OK' in json.dumps(d['state'].get('status',{})) for x in snapshots for d in x['virtio'])
+              t=(r/(mode+'.trace')).read_text(errors='replace')
+              raw=(r/(mode+'.serial')).read_bytes()
+              total,tx=pcap_counts(r/(mode+'.pcap'))
+              row={'mode':mode,'error':error,'driver_ok':ready,'frames':total,'guest_tx_frames':tx,'pop':len(re.findall(r'\bvirtqueue_pop\b',t)),'fill':len(re.findall(r'\bvirtqueue_fill\b',t)),'guest_submit_markers':raw.count(b'OBS submit'),'guest_consume_markers':raw.count(b'OBS consume'),'kernel_banner':b'ReactOS 0.4.17' in raw}
+              row['activation_witness']=error is None and ready and tx>0 and row['pop']>0 and row['fill']>0
+              (r/(mode+'-summary.json')).write_text(json.dumps(row,indent=2))
+              return row
+          rows=[]
+          for mode,legacy in [('transitional',True),('modern',False)]:
+              try:rows.append(run(mode,legacy))
+              except Exception as e:rows.append({'mode':mode,'error':repr(e),'activation_witness':False})
+              (r/'summary.json').write_text(json.dumps(rows,indent=2))
+          assert all(x['activation_witness'] for x in rows),rows
+          PY
+          python3 receipts/run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-reactos-v20d5
+          path: receipts/
+          retention-days: 7
+      - name: Bind terminal receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$RESULT" in success|failure) state="$RESULT";; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-reactos-v20d5 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
