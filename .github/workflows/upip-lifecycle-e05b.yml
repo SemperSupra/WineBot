@@ -1,0 +1,261 @@
+name: VirtIO quiescence and capture closure E05b
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-lifecycle-e05b.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/upip-e05b -f description='Public lifecycle experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Recover pinned public executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts simple log kernel root/{bin,dev,proc,sys}
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15069398884/zip > simple.zip
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15028588120/zip > log.zip
+          echo '446ef34df108998c1a2dd016b7ab03107c1826752f7d144cef45079853d1d375  simple.zip' | sha256sum -c -
+          echo '8a1fc3c431c0aa500301a4ff79b48d11e2facfe2112bab2036c39894ce90a57d  log.zip' | sha256sum -c -
+          unzip -q simple.zip -d simple
+          unzip -q log.zip -d log
+          (cd simple && sha256sum -c SHA256SUMS)
+          echo 'af5001a9a1c8e1d90436455b8f69ea4be8cd3ddbf6081b98a1d886dc2b24f5e6  log/candidate-qemu-system-x86_64' | sha256sum -c -
+          cmp simple/candidate.patch log/candidate.patch
+          test "$(cat simple/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod +x simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64
+      - name: Recover prior public guest kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-guest-boot-v18c4
+          run-id: 45641159935
+          github-token: ${{ github.token }}
+          path: kernel
+      - name: Prepare bounded sequential block workload
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static cpio gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          echo 'c3b467db358cb512cb9dc4640acae5758499a771f826caaaae100a16f449a7d0  kernel/bzImage' | sha256sum -c -
+          for q in simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64; do
+            "$q" --version
+            ldd "$q" | tee -a receipts/ldd.txt
+          done
+          ! grep -q 'not found' receipts/ldd.txt
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > receipts/workload.c <<'C'
+          #define _GNU_SOURCE
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          int main(int argc,char**argv){
+            if(argc!=2 || (strcmp(argv[1],"0") && strcmp(argv[1],"1")))return 10;
+            int base=128+1024*atoi(argv[1]);
+            unsigned char *buf=NULL;
+            if(posix_memalign((void **)&buf,4096,4096))return 2;
+            int fd=open("/dev/vda",O_RDWR|O_DIRECT);if(fd<0)return 3;
+            for(int i=0;i<1024;i++){
+              memset(buf,(i%251)+1,512);
+              if(pwrite(fd,buf,512,(off_t)(i+base)*512)!=512)return 4;
+            }
+            if(fsync(fd))return 5;
+            for(int i=0;i<1024;i+=127){
+              if(pread(fd,buf,512,(off_t)(i+base)*512)!=512)return 6;
+              for(int j=0;j<512;j++)if(buf[j]!=(i%251)+1)return 7;
+            }
+            free(buf);if(close(fd))return 8;
+            printf("GUEST_PASS phase=%s writes=1024\n",argv[1]);return 0;
+          }
+          C
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -static receipts/workload.c -o root/workload
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DRIVER $($B readlink "$d/driver")"
+            echo "FEATURES $($B cat "$d/features")"
+          done
+          echo 2 > /sys/block/vda/queue/nomerges
+          /workload 0
+          echo PHASE_ONE_READY
+          $B sleep 5
+          /workload 1
+          echo PHASE_TWO_READY
+          while :; do $B sleep 1; done
+          SH
+          chmod 755 root/init
+          cp root/init receipts/init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel/bzImage initramfs.gz root/workload simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64 > receipts/pins.txt
+      - name: Exercise paused capture closure and deliberate coverage gap
+        run: |
+          set -euo pipefail
+          cat > receipts/lifecycle.py <<'PY'
+          import hashlib,struct,zipfile,re,pathlib,json
+          P=pathlib.Path
+          N={'virtqueue_host_advance':9,'virtqueue_buffer_pop':6,'virtqueue_buffer_fill_attempt':6}
+          DROP=2**64-2
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def decode(raw):
+              pos=0;ids={};seen=set();events=[];drops=0;active={};adv=[];offsets=[]
+              def take(n):
+                  nonlocal pos
+                  assert 0<=n<=len(raw)-pos
+                  x=raw[pos:pos+n];pos+=n;return x
+              def read(f):return struct.unpack('<'+f,take(struct.calcsize('<'+f)))
+              assert read('QQQ')==(2**64-1,0xf2b177cb0aa429b4,4)
+              while pos<len(raw):
+                  typ,=read('Q')
+                  if typ==0:
+                      k,n=read('QI');assert 0<n<=512 and k<DROP
+                      name=take(n).decode('ascii')
+                      assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) and k not in ids and name not in seen
+                      ids[k]=name;seen.add(name)
+                  elif typ==1:
+                      k,t,n,pid=read('QQII');assert t>0 and pid>0 and 24<=n<=4096
+                      start=pos;payload=take(n-24)
+                      if k==DROP:
+                          assert len(payload)==8
+                          d,=struct.unpack('<Q',payload);assert d>0;drops+=d;continue
+                      name=ids[k];assert name in N and len(payload)==8*N[name]
+                      a=struct.unpack('<'+'Q'*N[name],payload);events.append((name,a))
+                      if name=='virtqueue_host_advance':
+                          q,p,o,old,new,x,y,oi,ni=a
+                          assert q<=65535 and p in (0,1) and o==0 and old<=65535 and new<=65535 and x in (0,1) and y in (0,1) and (p or x==y) and oi<2**32 and ni<2**32 and ni<oi
+                          adv.append(a);offsets.append(start)
+                      else:
+                          dev,q,elem,bid,nd,p=a;assert dev and elem and q<=65535 and bid<=65535 and 0<nd<2**32 and p in (0,1)
+                          key=(dev,q,bid)
+                          if name.endswith('_pop'):assert key not in active;active[key]=(elem,nd,p)
+                          else:assert active.pop(key)==(elem,nd,p)
+                  else:raise AssertionError('record type')
+              assert N.keys()<=seen and not active and drops==0
+              assert sum(n=='virtqueue_buffer_pop' for n,a in events)==sum(n=='virtqueue_buffer_fill_attempt' for n,a in events)==len(adv)
+              assert all(a[5]==0 for n,a in events if n!='virtqueue_host_advance')
+              return adv,offsets
+          
+          
+          import subprocess,socket,time,os
+          R=P('receipts').resolve()
+          initial=bytes(4*1024*1024);expected=bytearray(initial)
+          for phase in range(2):
+              for i in range(1024):
+                  start=(128+1024*phase+i)*512
+                  expected[start:start+512]=bytes([(i%251)+1])*512
+          events=R/'events';events.write_text('\n'.join(N)+'\n')
+          rows=[]
+          for name in ('complete','early'):
+              disk=P(name+'.raw').resolve();disk.write_bytes(initial)
+              trace=R/(name+'.trace');serial=R/(name+'.serial');sock=P(name+'.qmp').resolve()
+              argv=[str(P('simple/qemu-system-x86_64').resolve()),'-L',str(P('simple/pc-bios').resolve()),'-accel','tcg','-machine','pc','-m','512','-smp','1','-nodefaults','-nic','none','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel','kernel/bzImage','-initrd','initramfs.gz','-append','console=ttyS0 rdinit=/init panic=-1 quiet','-drive',f'file={disk},format=raw,if=none,id=d,cache=none','-device','virtio-blk-pci,drive=d,disable-legacy=on,packed=off','-trace',f'events={events},file={trace}','-qmp',f'unix:{sock},server=on,wait=off']
+              (R/(name+'.argv.json')).write_text(json.dumps(argv))
+              transcript=[]
+              def record(x):
+                  transcript.append(x)
+                  (R/(name+'.qmp.json')).write_text(json.dumps(transcript,indent=2))
+              with serial.open('wb') as out:
+                  proc=subprocess.Popen(argv,stdout=out,stderr=out)
+                  try:
+                      deadline=time.monotonic()+30
+                      while not sock.exists():
+                          assert proc.poll() is None and time.monotonic()<deadline
+                          time.sleep(.02)
+                      s=socket.socket(socket.AF_UNIX);s.settimeout(15);s.connect(str(sock));f=s.makefile('rwb')
+                      record({'greeting':json.loads(f.readline())})
+                      def qmp(cmd,args=None):
+                          request={'execute':cmd,'id':len(transcript)}
+                          if args is not None:request['arguments']=args
+                          record({'send':request});f.write((json.dumps(request)+'\n').encode());f.flush()
+                          while True:
+                              line=f.readline();assert line,(cmd,'EOF')
+                              reply=json.loads(line);record({'recv':reply})
+                              if reply.get('id')==request['id']:
+                                  assert 'return' in reply,reply
+                                  return reply['return']
+                      def wait_marker(marker):
+                          end=time.monotonic()+45
+                          while marker not in serial.read_text(errors='replace'):
+                              assert proc.poll() is None and time.monotonic()<end,marker
+                              time.sleep(.02)
+                      def stop():
+                          qmp('stop');assert qmp('query-status')['status']=='paused'
+                      def disable():
+                          for event in N:
+                              qmp('trace-event-set-state',{'name':event,'enable':False})
+                              assert qmp('trace-event-get-state',{'name':event})==[{'name':event,'state':'disabled'}]
+                      def hmp(cmd):
+                          reply=qmp('human-monitor-command',{'command-line':cmd})
+                          assert isinstance(reply,str) and not re.search(r'unknown command|error|invalid',reply,re.I),reply
+                          return reply
+                      qmp('qmp_capabilities')
+                      for event in N:
+                          assert qmp('trace-event-get-state',{'name':event})==[{'name':event,'state':'enabled'}]
+                      wait_marker('PHASE_ONE_READY');stop()
+                      assert 'PHASE_TWO_READY' not in serial.read_text(errors='replace')
+                      if name=='early':disable()
+                      qmp('cont');wait_marker('PHASE_TWO_READY');stop()
+                      if name=='complete':disable()
+                      hmp('trace-file flush');hmp('trace-file off')
+                      status=hmp('trace-file')
+                      assert re.search(r'\boff\b',status,re.I),status
+                      closed=trace.read_bytes();record({'closed_bytes':len(closed),'closed_sha':sha(closed),'hmp_status':status})
+                      qmp('quit');assert proc.wait(timeout=15)==0
+                      assert trace.read_bytes()==closed
+                      f.close();s.close()
+                  finally:
+                      if proc.poll() is None:
+                          proc.kill();proc.wait(timeout=10)
+              txt=serial.read_text(errors='replace');assert txt.count('GUEST_PASS phase=0 writes=1024')==txt.count('GUEST_PASS phase=1 writes=1024')==1
+              assert txt.count('PHASE_ONE_READY')==txt.count('PHASE_TWO_READY')==1
+              assert disk.read_bytes()==expected
+              adv,_=decode(closed)
+              assert all(a[1]==0 and a[5]==a[6] for a in adv)
+              row=dict(name=name,advance=len(adv),disk_sha=sha(disk.read_bytes()),trace_sha=sha(closed),trace_bytes=len(closed),reported_drops=0)
+              rows.append(row);print('ARM '+json.dumps(row),flush=True)
+              (R/'summary.json').write_text(json.dumps(rows,indent=2));disk.unlink()
+          assert rows[0]['advance']==2069 and rows[1]['advance']==1035,rows
+          # Both streams are internally balanced and report zero drops; only complete matches the independent fixture oracle.
+          assert rows[0]['advance']-rows[1]['advance']==1034
+          print('E05B PASS complete=2069 early=1035 early_capture=REFUSE')
+          PY
+          python3 receipts/lifecycle.py
+      - name: Limit retained evidence
+        if: always()
+        run: |
+          mkdir -p receipts
+          test "$(du -sb receipts | cut -f1)" -lt 20000000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upip-e05b-native-lifecycle
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/upip-e05b -f description='Public lifecycle wrapper' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
