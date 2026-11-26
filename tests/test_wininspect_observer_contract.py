@@ -119,7 +119,7 @@ def test_malformed_event_envelope_fails_closed(monkeypatch, payload):
 class Socket:
     def __init__(self, response):
         self.data = bytearray()
-        for message in ({"type": "hello", "name": "NEVER_RETURN_IDENTITY"}, response):
+        for message in ({"type": "hello", "version": "0.4.0", "name": "NEVER_RETURN_IDENTITY"}, response):
             raw = json.dumps(message).encode("utf-8")
             self.data += struct.pack("!I", len(raw)) + raw
 

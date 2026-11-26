@@ -302,3 +302,38 @@ class TestKeyTranslationConformance:
         assert "{^}" in _xdotool_to_ahk_keys("^")
         assert "{!}" in _xdotool_to_ahk_keys("!")
         assert "{#}" in _xdotool_to_ahk_keys("#")
+
+
+
+@pytest.mark.parametrize("backend", ["xdotool", "auto"])
+def test_unresolved_xdotool_title_never_dispatches_to_focus(backend):
+    """A requested target that did not resolve is not permission for global input."""
+    import asyncio
+
+    from api.routers.input import _send_keys
+
+    with patch("api.routers.input._desktop_absent", return_value=True), patch(
+        "api.routers.input.run_async_command"
+    ) as command:
+        result = asyncio.run(_send_keys("z", None, "missing", backend, "/tmp", 2))
+    assert result["ok"] is False
+    assert result["error"] == "xdotool_target_unresolved"
+    command.assert_not_called()
+
+
+@pytest.mark.parametrize("window_id,expected", [
+    (None, ["xdotool", "key", "z"]),
+    ("12345", ["xdotool", "key", "--window", "12345", "z"]),
+])
+def test_xdotool_delivery_mode_not_silently_changed(window_id, expected):
+    import asyncio
+
+    from api.routers.input import _send_keys
+
+    with patch("api.routers.input.run_async_command") as command:
+        command.return_value = {"ok": True}
+        result = asyncio.run(
+            _send_keys("z", window_id, None, "xdotool", "/tmp", 2)
+        )
+    assert result["ok"] is True
+    command.assert_awaited_once_with(expected, timeout=2)

@@ -14,6 +14,9 @@ from api.utils.process import find_processes, manage_process
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1985
+# Wire protocol and product release are independent. Never infer either from
+# the other; the actual provider artifact is a separate qualification gate.
+WININSPECT_PROTOCOL_VERSION = "0.4.0"
 DEFAULT_TIMEOUT_SECONDS = 3.0
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 READ_ONLY_METHODS = {
@@ -278,6 +281,10 @@ def _write_frame(sock: socket.socket, payload: dict[str, Any]) -> None:
 def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     if method not in READ_ONLY_METHODS and method not in MUTATION_METHODS:
         raise WinInspectError(f"WinInspect method is not allowed by WineBot: {method}")
+    # Deny a caller-supplied protocol override before process or socket effects.
+    if params is not None and "protocol_version" in params:
+        if params["protocol_version"] != WININSPECT_PROTOCOL_VERSION:
+            raise WinInspectError("WinInspect request protocol mismatch")
     state = ensure_daemon(start=True)
     if not state.get("running"):
         raise WinInspectError(str(state.get("error") or "WinInspect daemon is not running"))
@@ -287,20 +294,26 @@ def request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
         "id": request_id,
         "method": method,
         "params": {
-            "protocol_version": "0.4.0",
             **(params or {}),
+            "protocol_version": WININSPECT_PROTOCOL_VERSION,
         },
     }
     with socket.create_connection((host(), port()), timeout=timeout_seconds()) as sock:
         sock.settimeout(timeout_seconds())
         hello = _read_frame(sock)
+        if (hello.get("type") != "hello"
+                or hello.get("version") != WININSPECT_PROTOCOL_VERSION):
+            # Do not expose untrusted version/identity data or send RPC bytes.
+            raise WinInspectError("WinInspect hello protocol mismatch")
         _write_frame(sock, payload)
         response = _read_frame(sock)
 
     if response.get("id") != request_id:
         # Never expose untrusted daemon hello identity in API-visible errors.
         raise WinInspectError("WinInspect response correlation failed")
-    if not response.get("ok"):
+    if type(response.get("ok")) is not bool:
+        raise WinInspectError("WinInspect response status invalid")
+    if response["ok"] is False:
         error = response.get("error") or {}
         if isinstance(error, dict):
             code = error.get("code")
