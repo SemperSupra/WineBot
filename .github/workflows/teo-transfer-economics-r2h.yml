@@ -1,0 +1,151 @@
+name: TEO checkpoint transfer economics R2h
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-transfer-economics-r2h.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      raw_id: ${{ steps.raw.outputs.artifact-id }}
+      z1_id: ${{ steps.z1.outputs.artifact-id }}
+      z3_id: ${{ steps.z3.outputs.artifact-id }}
+    steps:
+      - name: Recover exact prior public checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts prior payload/raw payload/z1 payload/z3
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15088816386/zip > prior.zip
+          echo '67bdd5e83310408b4ca0633215d0ae3d105464954d8bc1d89ea03b9db550fd12  prior.zip' | sha256sum -c -
+          unzip -q prior.zip -d prior
+          mapfile -t images < <(find prior -type f -name '*.qcow2')
+          test "${#images[@]}" = 1
+          cp "${images[0]}" checkpoint.qcow2
+          echo '71aafa6ecf2f0b205abc98e1898f14a4ee8ed37067d84da5c14812fb1d79d018  checkpoint.qcow2' | sha256sum -c -
+          test "$(stat -c %s checkpoint.qcow2)" = 40697856
+          command -v zstd
+          zstd --version > receipts/zstd.txt
+          sha256sum /proc/sys/kernel/random/boot_id | cut -d' ' -f1 > receipts/boot-sha.txt
+      - name: Package one identical checkpoint three ways
+        run: |
+          set -euo pipefail
+          cat > receipts/pack.py <<'PY'
+          import hashlib,json,pathlib,subprocess,time,random
+          p=pathlib.Path
+          def sha(f):
+              with f.open("rb") as fd:return hashlib.file_digest(fd,"sha256").hexdigest()
+          src=p("checkpoint.qcow2"); expect=sha(src)
+          modes=["raw","z1","z3"]; random.Random(2602).shuffle(modes)
+          records=[]
+          for mode in modes:
+              dst=p("payload")/mode/"checkpoint.payload"
+              t=time.monotonic_ns()
+              if mode=="raw":
+                  import shutil;shutil.copyfile(src,dst)
+              else:
+                  subprocess.run(["zstd","-q","-"+mode[-1],"-T1",str(src),"-o",str(dst)],check=True)
+              elapsed=time.monotonic_ns()-t
+              t=time.monotonic_ns();digest=sha(dst);hash_ns=time.monotonic_ns()-t
+              assert dst.stat().st_size<=src.stat().st_size
+              records.append(dict(mode=mode,bytes=dst.stat().st_size,sha256=digest,pack_ns=elapsed,hash_ns=hash_ns))
+              (dst.parent/"manifest.json").write_text(json.dumps(dict(mode=mode,source_sha256=expect,source_bytes=src.stat().st_size,payload_sha256=digest,payload_bytes=dst.stat().st_size,producer_boot=p("receipts/boot-sha.txt").read_text().strip())))
+          assert sha(src)==expect
+          p("receipts/pack.json").write_text(json.dumps(records,indent=2))
+          print(json.dumps(records))
+          PY
+          python3 receipts/pack.py
+      - name: Upload raw payload without secondary compression
+        id: raw
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-r2h-raw
+          path: payload/raw/
+          compression-level: 0
+          retention-days: 1
+      - name: Upload zstd level 1 payload without secondary compression
+        id: z1
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-r2h-z1
+          path: payload/z1/
+          compression-level: 0
+          retention-days: 1
+      - name: Upload zstd level 3 payload without secondary compression
+        id: z3
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-r2h-z3
+          path: payload/z3/
+          compression-level: 0
+          retention-days: 1
+      - name: Retain producer receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-r2h-producer
+          path: receipts/
+          retention-days: 1
+  consume:
+    needs: produce
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        mode: [raw,z1,z3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Download, verify and unpack one exact transferred artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ matrix.mode }}
+          RAW_ID: ${{ needs.produce.outputs.raw_id }}
+          Z1_ID: ${{ needs.produce.outputs.z1_id }}
+          Z3_ID: ${{ needs.produce.outputs.z3_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          cat > receipts/consume.py <<'PY'
+          import hashlib,json,os,pathlib,shutil,subprocess,time,zipfile
+          p=pathlib.Path; mode=os.environ["MODE"]; assert mode in ("raw","z1","z3")
+          id=os.environ[{"raw":"RAW_ID","z1":"Z1_ID","z3":"Z3_ID"}[mode]]
+          assert id.isdecimal()
+          def sha(f):
+              with f.open("rb") as fd:return hashlib.file_digest(fd,"sha256").hexdigest()
+          t=time.monotonic_ns()
+          with p("download.zip").open("wb") as fd:subprocess.run(["gh","api",f"repos/SemperSupra/WineBot/actions/artifacts/{id}/zip"],stdout=fd,check=True,timeout=180)
+          download=time.monotonic_ns()-t
+          assert 0<p("download.zip").stat().st_size<50*1024*1024
+          t=time.monotonic_ns()
+          with zipfile.ZipFile("download.zip") as z:
+              assert set(z.namelist())=={"checkpoint.payload","manifest.json"}
+              assert z.testzip() is None
+              m=json.loads(z.read("manifest.json"))
+              assert m["mode"]==mode and m["source_bytes"]==40697856
+              assert m["source_sha256"]=="71aafa6ecf2f0b205abc98e1898f14a4ee8ed37067d84da5c14812fb1d79d018"
+              with z.open("checkpoint.payload") as src,p("checkpoint.payload").open("wb") as dst:shutil.copyfileobj(src,dst)
+          extract=time.monotonic_ns()-t
+          t=time.monotonic_ns(); assert sha(p("checkpoint.payload"))==m["payload_sha256"] and p("checkpoint.payload").stat().st_size==m["payload_bytes"];payload_hash=time.monotonic_ns()-t
+          t=time.monotonic_ns()
+          if mode=="raw":shutil.copyfile("checkpoint.payload","checkpoint.qcow2")
+          else:subprocess.run(["zstd","-q","-d","checkpoint.payload","-o","checkpoint.qcow2"],check=True,timeout=60)
+          unpack=time.monotonic_ns()-t
+          t=time.monotonic_ns(); assert sha(p("checkpoint.qcow2"))==m["source_sha256"] and p("checkpoint.qcow2").stat().st_size==m["source_bytes"];source_hash=time.monotonic_ns()-t
+          boot=sha(p("/proc/sys/kernel/random/boot_id"));assert boot!=m["producer_boot"]
+          r=dict(mode=mode,artifact_id=id,producer_boot=m["producer_boot"],consumer_boot=boot,wire_bytes=p("download.zip").stat().st_size,wire_sha256=sha(p("download.zip")),download_ns=download,zip_extract_crc_ns=extract,payload_hash_ns=payload_hash,unpack_ns=unpack,source_hash_ns=source_hash,manifest=m)
+          p("receipts/result.json").write_text(json.dumps(r,indent=2));print(json.dumps(r))
+          PY
+          python3 receipts/consume.py
+      - name: Retain consumer receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-r2h-consumer-${{ matrix.mode }}
+          path: receipts/
+          retention-days: 1
