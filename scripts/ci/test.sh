@@ -32,6 +32,7 @@ pytest \
   tests/test_ci_unit_isolation.py \
   tests/test_winepath_startup_retry.py \
   tests/test_wininspect_error_redaction.py \
+  tests/test_wininspect_observer_contract.py \
   tests/test_ci_vnext_evidence.py \
   tests/test_lifecycle_cancel_window.py \
   tests/test_health_system_memory.py \
@@ -39,4 +40,5 @@ pytest \
   tests/test_mvp_control_safety.py \
   tests/test_mvp_control_api.py \
   tests/test_mvp_mouse_lease.py \
-  tests/test_mvp_inflight_cancel.py
+  tests/test_mvp_inflight_cancel.py \
+  tests/test_handover_restart_recovery.py

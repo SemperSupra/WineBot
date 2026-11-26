@@ -243,6 +243,12 @@ class InputBroker:
     async def check_access(self) -> bool:
         """Returns True if agent is allowed to execute."""
         with self._lock:
+            # Emergency stop overrides implicit headless/agent-only grants.
+            # This check must run before every early-return mode shortcut.
+            if self.state.user_intent == UserIntent.STOP_NOW:
+                if self.state.control_mode == ControlMode.AGENT:
+                    self.revoke_agent("user_stop_now")
+                return False
             if self.state.effective_control_mode == ControlPolicyMode.HUMAN_ONLY:
                 return False
             if self.state.effective_control_mode == ControlPolicyMode.AGENT_ONLY:
