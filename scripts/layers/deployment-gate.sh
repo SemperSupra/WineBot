@@ -27,7 +27,7 @@ esac
   fail control_root_permissions
 if [ ! -e "$lock" ]; then
   [ ! -L "$lock" ] || fail lock_identity_invalid
-  (umask 077; : > "$lock") 2>/dev/null || fail lock_unavailable
+  (umask 077; set -C; : > "$lock") 2>/dev/null || fail lock_unavailable
 fi
 [ -f "$lock" ] && [ ! -L "$lock" ] || fail lock_identity_invalid
 [ "$(stat -c '%u:%g:%a:%h' "$lock" 2>/dev/null)" = 0:0:600:1 ] ||
@@ -39,6 +39,13 @@ flock -n -x 9 >/dev/null 2>&1 || fail lock_contended
 [ ! -L "$lock" ] &&
   [ "$(stat -c '%d:%i' "$lock")" = "$(stat -Lc '%d:%i' /proc/self/fd/9)" ] ||
   fail lock_identity_invalid
+# An updated trusted provisioner atomically selects its authority using
+# a nonempty sentinel at this pathname. Never truncate or adopt that inode.
+[ ! -s "$lock" ] || fail trusted_authority_selected
+# Refuse earlier trusted journal volumes as well, including symlink evidence.
+for marker in "$root/.winebot-lifecycle-v1.json" "$root/.winebot-stop-v1.json"; do
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] || fail trusted_authority_selected
+done
 # Probe before claiming healthy; readiness only after the exclusive lease.
 : > /run/winebot-deployment-ready || fail readiness_unavailable
 echo 'DEPLOYMENT_GATE stage=admitted'
