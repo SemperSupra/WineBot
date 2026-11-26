@@ -1,0 +1,156 @@
+name: SQLite disk-bearing deterministic replay R1e
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-sqlite-replay-r1e.yml]
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Build isolated guest from public distro packages
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd sqlite3 e2fsprogs libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          dpkg-query -W qemu-system-x86 linux-image-virtual sqlite3 fio e2fsprogs > receipts/packages.txt
+          /usr/bin/sqlite3 --version > receipts/sqlite-version.txt
+          k=$(find /boot -maxdepth 1 -name 'vmlinuz-*generic' -printf '%f\n' | sort -V | tail -1)
+          test -n "$k"
+          ver=$(echo "$k" | sed 's/^vmlinuz-//')
+          echo "$ver" > receipts/kernel-release.txt
+          sudo cp "/boot/$k" kernel.bin
+          sudo chown "$(id -u):$(id -g)" kernel.bin
+          chmod u+r kernel.bin
+          mkdir -p root/{bin,dev,proc,sys,modules,mnt,tmp,usr/bin}
+          cp "$(command -v busybox)" root/bin/busybox
+          for app in /usr/bin/sqlite3; do
+            cp -L --parents "$app" root
+            ldd "$app" >> receipts/ldd.txt
+            ldd "$app" | awk '$2=="=>" && $3 ~ /^\// {print $3} $1 ~ /^\// {print $1}' | sort -u | while read -r lib; do cp -L --parents "$lib" root; done
+          done
+          ! grep -q 'not found' receipts/ldd.txt
+          for m in virtio_pci virtio_blk ext4; do modprobe -S "$ver" --show-depends "$m"; done > receipts/module-dependencies.txt
+          awk '$1=="insmod" && !seen[$2]++ {print $2}' receipts/module-dependencies.txt > module-paths.txt
+          : > root/modules/load
+          while IFS= read -r src; do
+            base=$(basename "$src" | sed -E 's/\.(zst|xz|gz)$//')
+            case "$src" in
+              *.ko.zst) zstd -dc "$src" > "root/modules/$base";;
+              *.ko.xz) xz -dc "$src" > "root/modules/$base";;
+              *.ko.gz) gzip -dc "$src" > "root/modules/$base";;
+              *.ko) cp "$src" "root/modules/$base";;
+              *) exit 1;;
+            esac
+            echo "/modules/$base" >> root/modules/load
+          done < module-paths.txt
+          find root/modules -type f -exec sha256sum {} \; > receipts/modules.sha256
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          while IFS= read -r m; do $B insmod "$m"; done < /modules/load
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DEVICE $d"
+            $B readlink "$d/driver" || true
+            if [ -r "$d/features" ]; then echo "FEATURES $($B cat "$d/features")"; fi
+          done
+          $B mount -t ext4 /dev/vda /mnt
+          /usr/bin/sqlite3 -batch -bail /mnt/app.db <<'SQL'
+          PRAGMA journal_mode=WAL;
+          PRAGMA synchronous=FULL;
+          CREATE TABLE items(id INTEGER PRIMARY KEY, v TEXT NOT NULL);
+          BEGIN;
+          WITH RECURSIVE seq(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM seq WHERE i<1000)
+          INSERT INTO items SELECT i,printf('item-%06d',i) FROM seq;
+          COMMIT;
+          BEGIN;
+          UPDATE items SET v='modified' WHERE id=500;
+          ROLLBACK;
+          PRAGMA wal_checkpoint(TRUNCATE);
+          PRAGMA integrity_check;
+          SELECT count(*),sum(id),sum(v=printf('item-%06d',id)) FROM items;
+          SQL
+          $B sync
+          $B umount /mnt
+          echo TEO_SQLITE_PASS
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz /usr/bin/sqlite3 "$(command -v qemu-system-x86_64)" > receipts/binaries.sha256
+          truncate -s 128M base.raw
+          mkfs.ext4 -q -F -U 00000000-0000-4000-8000-000000000001 base.raw
+          sha256sum base.raw > receipts/base.sha256
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+      - name: Execute SQLite transactions using recorded block events
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,json,pathlib,subprocess,time
+          p=pathlib.Path("receipts")
+          def sha(path):
+              with open(path,"rb") as f: return hashlib.file_digest(f,"sha256").hexdigest()
+          base=sha("base.raw"); results={}
+          for arm,mode in [("record","record"),("replay1","replay"),("replay2","replay")]:
+              disk=f"{arm}.qcow2"
+              subprocess.run(["qemu-img","create","-f","qcow2","-F","raw","-b",str(pathlib.Path("base.raw").resolve()),disk],check=True)
+              args=["qemu-system-x86_64","-machine","q35","-cpu","Nehalem","-accel","tcg,thread=single","-smp","1","-m","768","-display","none","-monitor","none","-serial","stdio","-nic","none","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 nokaslr quiet","-drive",f"file={disk},format=qcow2,if=none,id=hd0","-drive","driver=blkreplay,if=none,image=hd0,id=hdrr","-device","virtio-blk-pci,drive=hdrr","-icount",f"shift=5,rr={mode},rrfile=receipts/record.bin"]
+              start=time.monotonic()
+              with (p/f"{arm}.serial").open("wb") as out,(p/f"{arm}.stderr").open("wb") as err:
+                  subprocess.run(args,stdin=subprocess.DEVNULL,stdout=out,stderr=err,timeout=180,check=True)
+              elapsed=time.monotonic()-start
+              assert sha("base.raw")==base
+              if mode=="record": rr=sha(p/"record.bin")
+              else: assert sha(p/"record.bin")==rr
+              with (p/f"{arm}.image-check").open("w") as out: subprocess.run(["qemu-img","check",disk],stdout=out,stderr=subprocess.STDOUT,check=True)
+              raw=f"{arm}.raw"
+              subprocess.run(["qemu-img","convert","-O","raw",disk,raw],check=True)
+              db=p/f"{arm}.db"
+              with (p/f"{arm}.debugfs").open("w") as out: subprocess.run(["debugfs","-R",f"dump /app.db {db}",raw],stdout=out,stderr=subprocess.STDOUT,check=True)
+              assert db.stat().st_size>0
+              rawhash=sha(raw)
+              pathlib.Path(raw).unlink()
+              results[arm]={"seconds":elapsed,"database_sha256":sha(db),"disk_sha256":rawhash,"record_sha256":rr}
+          (p/"measurements.json").write_text(json.dumps(results,indent=2))
+          PY
+          python3 receipts/drive.py
+      - name: Score guest and independent host database oracle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,sqlite3
+          p=pathlib.Path("receipts"); results={}
+          for arm in ("record","replay1","replay2"):
+              lines=(p/f"{arm}.serial").read_text(errors="replace").splitlines()
+              assert lines.count("TEO_SQLITE_PASS")==1 and "1000|500500|1000" in lines and "ok" in lines
+              con=sqlite3.connect(f"file:{p}/{arm}.db?mode=ro&immutable=1",uri=True)
+              assert con.execute("pragma integrity_check").fetchall()==[("ok",)]
+              rows=con.execute("select id,v from items order by id").fetchall(); con.close()
+              expected=[(i,f"item-{i:06d}") for i in range(1,1001)]
+              assert rows==expected
+              results[arm]={"rows":len(rows),"sum":sum(x[0] for x in rows),"logical_sha256":hashlib.sha256(json.dumps(rows).encode()).hexdigest()}
+          assert len({x["logical_sha256"] for x in results.values()})==1
+          (p/"oracle.json").write_text(json.dumps(results,indent=2))
+          print(json.dumps(results,indent=2))
+          PY
+          sha256sum -c receipts/base.sha256
+      - name: Retain bounded public-safe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-deterministic-replay-r1e
+          path: receipts/
+          retention-days: 7
