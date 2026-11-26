@@ -109,11 +109,15 @@ func TestWine11GateStopHIL(t *testing.T){
    timeout 30s sh -c 'while :; do :; done' &
    timeout 30s sh -c 'while :; do :; done' &
    # Bounded synthetic child pressure; the kernel must deny excess forks.
-   i=0
-   while [ "$i" -lt 280 ]; do
-     sleep 30 &
-     i=$((i+1))
-   done
+   # A fork failure must not abort the main Wine-owning shell.
+   (
+     i=0
+     while [ "$i" -lt 280 ]; do
+       sleep 30 &
+       i=$((i+1))
+     done
+     wait
+   ) &
  fi
  wait "$app" || fail NOTEPAD_WAIT
  `
