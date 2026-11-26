@@ -1,0 +1,194 @@
+name: QEMU synthetic memory reverse watchpoints R2d
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-reverse-watchpoint-r2d.yml]
+permissions:
+  contents: read
+jobs:
+  reverse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Install distro tools
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils gdb nasm
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          gdb --version > receipts/gdb-version.txt
+          sha256sum "$(command -v qemu-system-x86_64)" "$(command -v gdb)" > receipts/binaries.sha256
+          cat > receipts/boot.asm <<'ASM'
+          bits 16
+          org 0x7c00
+          jmp 0x0000:entry
+          entry:
+              cli
+              xor ax,ax
+              mov ds,ax
+              mov es,ax
+              mov ss,ax
+              mov sp,0x7000
+              mov word [0x6000],0
+              times 0x20-($-$) db 0x90
+              mov word [0x6000],0x1111
+              times 0x30-($-$) db 0x90
+              mov word [0x6000],0x2222
+              times 0x40-($-$) db 0x90
+              mov word [0x6000],0x3333
+              times 0x60-($-$) db 0x90
+              jmp $
+              times 510-($-$) db 0
+              dw 0xaa55
+          ASM
+          nasm -f bin -l receipts/boot.lst receipts/boot.asm -o receipts/boot.bin
+          test "$(stat -c %s receipts/boot.bin)" = 512
+          cp receipts/boot.bin boot.raw
+          truncate -s 16M boot.raw
+          qemu-img convert -f raw -O qcow2 boot.raw snapshot.qcow2
+          sha256sum receipts/boot.bin > receipts/boot.sha256
+      - name: Record original guest and qualify GDB memory watchpoints
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,json,pathlib,socket,subprocess,time
+          p=pathlib.Path("receipts")
+          base=["qemu-system-x86_64","-machine","q35","-accel","tcg,thread=single","-smp","1","-m","128","-display","none","-serial","none","-monitor","none","-nic","none","-boot","order=c","-drive","file=snapshot.qcow2,if=none,format=qcow2,id=hd0","-drive","driver=blkreplay,if=none,image=hd0,id=hdrr","-device","ide-hd,drive=hdrr"]
+          def launch(mode,extra):
+              log=(p/f"{mode}.stderr").open("wb")
+              proc=subprocess.Popen(base+["-icount",f"shift=7,rr={mode},rrfile=receipts/record.bin,rrsnapshot=init","-qmp",f"unix:{mode}.sock,server=on,wait=off"]+extra,stdout=subprocess.DEVNULL,stderr=log)
+              log.close()
+              return proc
+          def connect(mode,proc):
+              s=socket.socket(socket.AF_UNIX); deadline=time.monotonic()+15
+              while time.monotonic()<deadline:
+                  if proc.poll() is not None: raise RuntimeError("early exit")
+                  try: s.connect(f"{mode}.sock"); break
+                  except (FileNotFoundError,ConnectionRefusedError): time.sleep(.05)
+              else: raise TimeoutError("qmp connect")
+              s.settimeout(15); f=s.makefile("rwb")
+              def recv():
+                  row=json.loads(f.readline())
+                  with (p/f"{mode}.qmp.jsonl").open("a") as out: out.write(json.dumps({"recv":row})+"\n")
+                  return row
+              assert "QMP" in recv()
+              def cmd(command,**args):
+                  req={"execute":command,"arguments":args}
+                  with (p/f"{mode}.qmp.jsonl").open("a") as out: out.write(json.dumps({"send":req})+"\n")
+                  f.write(json.dumps(req).encode()+b"\n");f.flush()
+                  while True:
+                      r=recv()
+                      if "error" in r: raise RuntimeError(r)
+                      if "return" in r: return r["return"]
+              cmd("qmp_capabilities")
+              return s,f,cmd
+          def cleanup(proc):
+              if proc.poll() is None:
+                  proc.terminate()
+                  try:proc.wait(timeout=5)
+                  except subprocess.TimeoutExpired:proc.kill();proc.wait()
+          rec=launch("record",[])
+          try:
+              s,f,c=connect("record",rec)
+              with s,f:
+                  deadline=time.monotonic()+30
+                  while time.monotonic()<deadline:
+                      mem=c("human-monitor-command",**{"command-line":"xp /1hx 0x6000"})
+                      if "0x3333" in mem.lower():break
+                      time.sleep(.05)
+                  else:raise TimeoutError("guest final value not observed")
+                  c("stop")
+                  assert not c("query-status")["running"]
+                  (p/"record-memory.txt").write_text(mem)
+                  c("quit")
+              assert rec.wait(timeout=10)==0
+          finally:cleanup(rec)
+          rr=p/"record.bin"; before=hashlib.sha256(rr.read_bytes()).hexdigest()
+          assert rr.stat().st_size>0
+          subprocess.run(["qemu-img","snapshot","-l","snapshot.qcow2"],check=True,stdout=(p/"snapshots.txt").open("w"))
+          assert "init" in (p/"snapshots.txt").read_text()
+          script=p/"gdb.cmd"
+          script.write_text("""set pagination off
+          set confirm off
+          set architecture i386:x86-64
+          target remote 127.0.0.1:12345
+          python
+          import gdb,json,re
+          def pc(): return int(gdb.parse_and_eval("$pc"))
+          def val(): return int.from_bytes(bytes(gdb.selected_inferior().read_memory(0x6000,2)),"little")
+          def row(): return {"pc":pc(),"value":val()}
+          b=gdb.Breakpoint("*0x7c20",type=gdb.BP_HARDWARE_BREAKPOINT)
+          gdb.execute("continue",to_string=True)
+          assert pc()==0x7c20 and val()==0
+          b.delete()
+          wp=gdb.Breakpoint("*(unsigned short*)0x6000",type=gdb.BP_WATCHPOINT,wp_class=gdb.WP_WRITE)
+          forward=[]
+          for i in range(3):
+              gdb.execute("continue",to_string=True)
+              forward.append(row())
+              print("TEO_WATCH_FORWARD "+json.dumps(forward[-1]),flush=True)
+          assert [x["value"] for x in forward]==[0x1111,0x2222,0x3333]
+          assert all(x["pc"] in (a,a+6) for x,a in zip(forward,(0x7c20,0x7c30,0x7c40)))
+          wp.delete()
+          end=gdb.Breakpoint("*0x7c60",type=gdb.BP_HARDWARE_BREAKPOINT)
+          gdb.execute("continue",to_string=True)
+          assert pc()==0x7c60 and val()==0x3333
+          end.delete()
+          wp=gdb.Breakpoint("*(unsigned short*)0x6000",type=gdb.BP_WATCHPOINT,wp_class=gdb.WP_WRITE)
+          reverse=[]
+          for i in range(3):
+              gdb.execute("reverse-continue",to_string=True)
+              reverse.append(row())
+              print("TEO_WATCH_REVERSE "+json.dumps(reverse[-1]),flush=True)
+          assert [x["value"] for x in reverse]==[0x2222,0x1111,0]
+          assert all(x["pc"] in (a,a+6) for x,a in zip(reverse,(0x7c40,0x7c30,0x7c20)))
+          wp.delete()
+          print("TEO_WATCH_PASS "+json.dumps({"forward":forward,"reverse":reverse}),flush=True)
+          end
+          disconnect
+          quit
+          """)
+          rep=launch("replay",["-gdb","tcp:127.0.0.1:12345","-S"])
+          try:
+              s,f,c=connect("replay",rep)
+              with s,f:
+                  with (p/"gdb.log").open("wb") as out:
+                      subprocess.run(["gdb","-nx","-batch","-x",str(script)],stdout=out,stderr=subprocess.STDOUT,timeout=120,check=True)
+                  status=c("query-status")
+                  if status["running"]: c("stop")
+                  assert not c("query-status")["running"]
+                  c("quit")
+              assert rep.wait(timeout=10)==0
+          finally:cleanup(rep)
+          assert before==hashlib.sha256(rr.read_bytes()).hexdigest()
+          (p/"record.sha256").write_text(before+"\n")
+          PY
+          python3 receipts/drive.py
+      - name: Independently verify authored instruction bytes and watchpoint transitions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,json,hashlib
+          p=pathlib.Path("receipts"); b=(p/"boot.bin").read_bytes()
+          assert len(b)==512 and b[-2:]==b"\x55\xaa"
+          for off,v in [(0x20,0x1111),(0x30,0x2222),(0x40,0x3333)]:
+              assert b[off:off+6]==b"\xc7\x06\x00\x60"+v.to_bytes(2,"little")
+          assert b[0x60:0x62]==b"\xeb\xfe"
+          lines=(p/"gdb.log").read_text().splitlines()
+          def rows(tag):return [json.loads(x[len(tag):]) for x in lines if x.startswith(tag)]
+          f=rows("TEO_WATCH_FORWARD ");r=rows("TEO_WATCH_REVERSE ")
+          assert len(f)==len(r)==3
+          assert [x["value"] for x in f]==[4369,8738,13107] and [x["value"] for x in r]==[8738,4369,0]
+          assert all(x["pc"] in (a,a+6) for x,a in zip(f,(0x7c20,0x7c30,0x7c40)))
+          assert all(x["pc"] in (a,a+6) for x,a in zip(r,(0x7c40,0x7c30,0x7c20)))
+          assert hashlib.sha256((p/"record.bin").read_bytes()).hexdigest()==(p/"record.sha256").read_text().strip()
+          (p/"watch-score.json").write_text(json.dumps({"forward":f,"reverse":r},indent=2))
+          PY
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-reverse-watchpoint-r2d
+          path: receipts/
+          retention-days: 1
