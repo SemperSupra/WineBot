@@ -185,6 +185,10 @@ docker compose -f compose/layered.yml exec -T \
       IC1_BROKER_CAUSE=*) printf '%s\n' "$cause" ;;
       *) echo 'IC1_BROKER_CAUSE=unclassified' ;;
     esac
+    differential="$(grep -Eo 'IC1_BROKER_DIFFERENTIAL=(focused_xtest_pass|focused_xtest_focus_mismatch|focused_xtest_dispatch_failed|focused_xtest_save_failed|focused_xtest_probe_error)' "$RUNNER_TEMP/ic1-broker-local.log" | tail -1 || true)"
+    case "$differential" in
+      IC1_BROKER_DIFFERENTIAL=*) printf '%s\n' "$differential" ;;
+    esac
     fail broker_real_keyboard
   }
 grep -Fq 'IC1_BROKER=real_wine_keyboard_and_stop_pass' "$RUNNER_TEMP/ic1-broker-local.log" || fail broker_receipt_missing
