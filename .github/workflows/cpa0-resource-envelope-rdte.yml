@@ -1,0 +1,24 @@
+name: CPA0 Effective Resource Envelope RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ci/qualify-cpa0-resource-envelope.sh'
+      - '.github/workflows/cpa0-resource-envelope-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cpa0-kernel-enforcement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify effective kernel limits and bounded containment
+        run: |
+          bash -n scripts/ci/qualify-cpa0-resource-envelope.sh
+          bash scripts/ci/qualify-cpa0-resource-envelope.sh
