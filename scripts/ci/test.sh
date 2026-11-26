@@ -37,6 +37,7 @@ pytest \
   tests/test_lifecycle_cancel_window.py \
   tests/test_health_system_memory.py \
   tests/test_disposable_layer_contract.py \
+  tests/test_layered_volume_preflight.py \
   tests/test_mvp_control_safety.py \
   tests/test_mvp_control_api.py \
   tests/test_mvp_mouse_lease.py \
