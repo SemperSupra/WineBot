@@ -1,0 +1,122 @@
+name: FDR SVC5 external effect crash window
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-external-crash-svc5.yml]
+permissions: {}
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Qualify actual independent effect and journal crash window
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts
+          cat > fixture.py <<'PY'
+          import contextlib, fcntl, hashlib, json, os, sqlite3, subprocess, sys, tempfile
+          from pathlib import Path
+          R=Path("receipts")
+          TOKEN=b"op-1\n"
+
+          @contextlib.contextmanager
+          def lock(root):
+              with (root/"receiver.lock").open("ab") as f:
+                  fcntl.flock(f,fcntl.LOCK_EX)
+                  try: yield
+                  finally: fcntl.flock(f,fcntl.LOCK_UN)
+
+          def read(root):
+              b=(root/"effect").read_bytes()
+              assert b==TOKEN*(len(b)//len(TOKEN))
+              return len(b)//len(TOKEN)
+
+          def append(root):
+              with (root/"effect").open("ab",buffering=0) as f:
+                  assert f.write(TOKEN)==len(TOKEN)
+                  os.fsync(f.fileno())
+
+          def connect(root):
+              c=sqlite3.connect(root/"journal.db")
+              c.execute("PRAGMA synchronous=FULL")
+              return c
+
+          def state(root):
+              with contextlib.closing(connect(root)) as c:
+                  assert c.execute("PRAGMA integrity_check").fetchall()==[("ok",)]
+                  return c.execute("SELECT state FROM intent WHERE id=1").fetchone()[0]
+
+          def set_done(root):
+              with contextlib.closing(connect(root)) as c:
+                  c.execute("UPDATE intent SET state='DONE' WHERE id=1")
+                  c.commit()
+
+          def crash(root,cut):
+              with lock(root),contextlib.closing(connect(root)) as c:
+                  c.execute("BEGIN IMMEDIATE")
+                  c.execute("UPDATE intent SET state='DONE' WHERE id=1")
+                  if cut=="before": os._exit(77)
+                  append(root)
+                  if cut=="after": os._exit(78)
+                  c.commit()
+                  os._exit(79)
+
+          def run():
+              cases=[("before","current","APPLIED",1,"DONE"),
+                     ("after","current","RECONCILED",1,"DONE"),
+                     ("after","missing","QUARANTINE",1,"INTENT"),
+                     ("after","stale","QUARANTINE",1,"INTENT"),
+                     ("after","naive","UNSAFE_DUPLICATE",2,"DONE"),
+                     ("after","incomplete","QUARANTINE",1,"INTENT")]
+              with tempfile.TemporaryDirectory() as d:
+                  for rep in range(3):
+                      for cut,mode,expected,count,final in cases:
+                          label=f"{rep}-{cut}-{mode}"
+                          root=Path(d)/label; root.mkdir()
+                          (root/"effect").touch()
+                          with contextlib.closing(connect(root)) as c:
+                              c.execute("CREATE TABLE intent(id INTEGER PRIMARY KEY,state TEXT NOT NULL)")
+                              c.execute("INSERT INTO intent VALUES(1,'INTENT')")
+                              c.commit()
+                          assert read(root)==0 and state(root)=="INTENT"
+                          p=subprocess.run([sys.executable,__file__,"crash",str(root),cut],timeout=5)
+                          assert p.returncode==({"before":77,"after":78}[cut])
+                          before=read(root)
+                          assert before==(cut=="after") and state(root)=="INTENT"
+                          with lock(root):
+                              # These are experiment admission labels, not authenticated proofs.
+                              if mode=="current":
+                                  if read(root)==0:
+                                      append(root); decision="APPLIED"
+                                  else: decision="RECONCILED"
+                                  set_done(root)
+                              elif mode=="naive":
+                                  append(root); set_done(root); decision="UNSAFE_DUPLICATE"
+                              else: decision="QUARANTINE"
+                          after=read(root); journal=state(root)
+                          assert (decision,after,journal)==(expected,count,final)
+                          raw=(root/"effect").read_bytes()
+                          (R/(label+".effect")).write_bytes(raw)
+                          # Backup captures committed SQLite state, not uncommitted page cache.
+                          with contextlib.closing(connect(root)) as c,contextlib.closing(sqlite3.connect(R/(label+".db"))) as dst:
+                              c.backup(dst)
+                          row=dict(rep=rep,cut=cut,mode=mode,exit=p.returncode,before=before,after=after,journal=journal,decision=decision,authority="NONE",effect_sha256=hashlib.sha256(raw).hexdigest())
+                          print(json.dumps(row),flush=True)
+              print("SVC5_SCOPED_PASS",flush=True)
+
+          if __name__=="__main__":
+              if len(sys.argv)>1: crash(Path(sys.argv[2]),sys.argv[3])
+              else: run()
+          PY
+          cp fixture.py receipts/
+          sha256sum fixture.py
+          python3 -u fixture.py | tee receipts/results.ndjson
+      - name: Retain raw effect and journal witnesses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdr-svc5a-crash-window
+          path: receipts/
+          retention-days: 2
+          if-no-files-found: warn
