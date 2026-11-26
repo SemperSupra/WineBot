@@ -15,6 +15,7 @@ fail() {
   fail source_unavailable
 
 prefix="winebot-hil-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+export COMPOSE_PROJECT_NAME="$prefix"
 export WINEBOT_APP_VOLUME="$prefix-apps"
 export WINEBOT_PREFIX_VOLUME="$prefix-prefix"
 export WINEBOT_HOME_VOLUME="$prefix-home"
@@ -27,20 +28,26 @@ export WINEBOT_VNC_PASSWORD=synthetic-hil-local-only-password
 volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
   "$WINEBOT_SHARED_VOLUME")
+created_volumes=()
+compose_started=0
 cleanup() {
-  docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
-  for volume in "${volumes[@]}"; do
+  if [ "$compose_started" = 1 ]; then
+    docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
+  fi
+  for volume in "${created_volumes[@]}"; do
     docker volume rm "$volume" >/dev/null 2>&1 || true
   done
   docker image rm winebot:layered-hil winebot-base:layered-hil winebot-apps:layered-hil >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 for volume in "${volumes[@]}"; do
+  if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
   docker volume create "$volume" >/dev/null 2>&1 || fail create_synthetic_volume
+  created_volumes+=("$volume")
 done
 
-# The base and Wine init come exclusively from qualified Wine11 exact SHA.
-# This is a declared composite experiment, never source-exact promotion.
+# Build the separately pinned Wine11 base and the committed candidate initializer.
+# The external base remains an independently qualified dependency.
 docker build --file ../wine11-candidate/docker/base.Dockerfile --target final \
   --tag winebot-base:layered-hil ../wine11-candidate >/dev/null 2>&1 ||
   fail wine11_base_build
@@ -63,6 +70,7 @@ export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect --format '{{.Id}}' wineb
 docker run --rm --network none --read-only --user 1000:1000 \
   --entrypoint /bin/bash "$WINEBOT_RUNTIME_IMAGE" /scripts/internal/require-wine11.sh \
   || fail wine11_runtime_admission
+bash scripts/layers/preflight.sh --check-volumes || fail volume_identity_admission
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
   fail compose_invalid
 # Qualify the OCI image's actual script contract without mutating external volumes.
@@ -120,6 +128,7 @@ classify_startup() {
     esac
   done
 }
+compose_started=1
 if ! docker compose -f compose/layered.yml up --no-build -d winebot-interactive >/dev/null 2>&1; then
   classify_startup
   fail startup
