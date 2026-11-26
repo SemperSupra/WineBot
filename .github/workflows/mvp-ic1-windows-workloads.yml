@@ -8,6 +8,9 @@ on:
       - '.github/workflows/mvp-ic1-windows-workloads.yml'
       - 'scripts/ci/qualify-mvp-windows-workloads.sh'
       - 'scripts/ci/qualify-mvp-broker-real-keyboard.py'
+      - 'scripts/init/20-setup-wine.sh'
+      - 'scripts/internal/require-wine11.sh'
+      - 'docker/entrypoint.sh'
 permissions:
   contents: read
 concurrency:
@@ -96,7 +99,9 @@ jobs:
           test "$(grep -Fc '# OpenTTD 15.3 source documents' scripts/ci/qualify-mvp-windows-workloads.sh)" -eq 1
           test "$(tail -n 1 scripts/ci/qualify-mvp-windows-workloads.sh)" = "echo 'MVP_WORKLOAD stage=bounded_qualification_pass'"
           python3 -m py_compile scripts/ci/qualify-mvp-broker-real-keyboard.py
-          test -f ../wine11-candidate/scripts/init/20-setup-wine.sh
+          bash -n scripts/init/20-setup-wine.sh
+          bash -n scripts/internal/require-wine11.sh
+          python3 -m unittest discover -s tests -p 'test_disposable_layer_contract.py' -v
           echo 'MVP_WORKLOAD stage=harness_syntax_pass'
       - name: Run disposable app and game within exact layered Wine11
         working-directory: layered
