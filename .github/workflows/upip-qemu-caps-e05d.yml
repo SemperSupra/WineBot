@@ -1,0 +1,231 @@
+name: VirtIO QEMU resource containment E05d
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-qemu-caps-e05d.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  contained:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/upip-e05d -f description='QEMU resource experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Recover pinned public executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts simple log kernel root/{bin,dev,proc,sys}
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15069398884/zip > simple.zip
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15028588120/zip > log.zip
+          echo '446ef34df108998c1a2dd016b7ab03107c1826752f7d144cef45079853d1d375  simple.zip' | sha256sum -c -
+          echo '8a1fc3c431c0aa500301a4ff79b48d11e2facfe2112bab2036c39894ce90a57d  log.zip' | sha256sum -c -
+          unzip -q simple.zip -d simple
+          unzip -q log.zip -d log
+          (cd simple && sha256sum -c SHA256SUMS)
+          echo 'af5001a9a1c8e1d90436455b8f69ea4be8cd3ddbf6081b98a1d886dc2b24f5e6  log/candidate-qemu-system-x86_64' | sha256sum -c -
+          cmp simple/candidate.patch log/candidate.patch
+          test "$(cat simple/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod +x simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64
+      - name: Recover prior public guest kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-guest-boot-v18c4
+          run-id: 45641159935
+          github-token: ${{ github.token }}
+          path: kernel
+      - name: Prepare bounded sequential block workload
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static cpio gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          echo 'c3b467db358cb512cb9dc4640acae5758499a771f826caaaae100a16f449a7d0  kernel/bzImage' | sha256sum -c -
+          for q in simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64; do
+            "$q" --version
+            ldd "$q" | tee -a receipts/ldd.txt
+          done
+          ! grep -q 'not found' receipts/ldd.txt
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > receipts/workload.c <<'C'
+          #define _GNU_SOURCE
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          int main(void){
+            unsigned char *buf=NULL;
+            if(posix_memalign((void **)&buf,4096,4096))return 2;
+            int fd=open("/dev/vda",O_RDWR|O_DIRECT);if(fd<0)return 3;
+            for(int i=0;i<4096;i++){
+              memset(buf,(i%251)+1,512);
+              if(pwrite(fd,buf,512,(off_t)((i%128)+128)*512)!=512)return 4;
+            }
+            if(fsync(fd))return 5;
+            for(int i=3968;i<4096;i+=127){
+              if(pread(fd,buf,512,(off_t)(i+128)*512)!=512)return 6;
+              for(int j=0;j<512;j++)if(buf[j]!=(i%251)+1)return 7;
+            }
+            free(buf);if(close(fd))return 8;
+            puts("GUEST_PASS writes=4096");return 0;
+          }
+          C
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -static receipts/workload.c -o root/workload
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DRIVER $($B readlink "$d/driver")"
+            echo "FEATURES $($B cat "$d/features")"
+          done
+          echo 2 > /sys/block/vda/queue/nomerges
+          if /workload; then echo RDTE_INIT_PASS; else echo RDTE_INIT_FAIL; fi
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel/bzImage initramfs.gz root/workload simple/qemu-system-x86_64 log/candidate-qemu-system-x86_64 > receipts/pins.txt
+      - name: Run contained QEMU and deliberate file ceiling
+        run: |
+          set -euo pipefail
+          cat > receipts/caps.py <<'PY'
+          import hashlib,struct,zipfile,re,pathlib,json
+          P=pathlib.Path
+          N={'virtqueue_host_advance':9,'virtqueue_buffer_pop':6,'virtqueue_buffer_fill_attempt':6}
+          DROP=2**64-2
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def decode(raw):
+              pos=0;ids={};seen=set();events=[];drops=0;active={};adv=[];offsets=[]
+              def take(n):
+                  nonlocal pos
+                  assert 0<=n<=len(raw)-pos
+                  x=raw[pos:pos+n];pos+=n;return x
+              def read(f):return struct.unpack('<'+f,take(struct.calcsize('<'+f)))
+              assert read('QQQ')==(2**64-1,0xf2b177cb0aa429b4,4)
+              while pos<len(raw):
+                  typ,=read('Q')
+                  if typ==0:
+                      k,n=read('QI');assert 0<n<=512 and k<DROP
+                      name=take(n).decode('ascii')
+                      assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) and k not in ids and name not in seen
+                      ids[k]=name;seen.add(name)
+                  elif typ==1:
+                      k,t,n,pid=read('QQII');assert t>0 and pid>0 and 24<=n<=4096
+                      start=pos;payload=take(n-24)
+                      if k==DROP:
+                          assert len(payload)==8
+                          d,=struct.unpack('<Q',payload);assert d>0;drops+=d;continue
+                      name=ids[k];assert name in N and len(payload)==8*N[name]
+                      a=struct.unpack('<'+'Q'*N[name],payload);events.append((name,a))
+                      if name=='virtqueue_host_advance':
+                          q,p,o,old,new,x,y,oi,ni=a
+                          assert q<=65535 and p in (0,1) and o==0 and old<=65535 and new<=65535 and x in (0,1) and y in (0,1) and (p or x==y) and oi<2**32 and ni<2**32 and ni<oi
+                          adv.append(a);offsets.append(start)
+                      else:
+                          dev,q,elem,bid,nd,p=a;assert dev and elem and q<=65535 and bid<=65535 and 0<nd<2**32 and p in (0,1)
+                          key=(dev,q,bid)
+                          if name.endswith('_pop'):assert key not in active;active[key]=(elem,nd,p)
+                          else:assert active.pop(key)==(elem,nd,p)
+                  else:raise AssertionError('record type')
+              assert N.keys()<=seen and not active and drops==0
+              assert sum(n=='virtqueue_buffer_pop' for n,a in events)==sum(n=='virtqueue_buffer_fill_attempt' for n,a in events)==len(adv)
+              return adv,offsets
+          
+          
+          import subprocess,os,sys,resource,time,signal
+          R=P('receipts').resolve()
+          mode=sys.argv[1];assert mode in ('good','capped')
+          scope=next(l.split(':',2)[2] for l in P('/proc/self/cgroup').read_text().splitlines() if l.startswith('0::'))
+          assert 'upip-e05d-' in scope
+          cg=P('/sys/fs/cgroup')/scope.lstrip('/')
+          def read(n):return (cg/n).read_text().strip()
+          def stats(n):return {k:int(v) for k,v in (l.split() for l in read(n).splitlines())}
+          caps=dict(memory=read('memory.max'),swap=read('memory.swap.max'),pids=read('pids.max'),cpu=read('cpu.max'),file=resource.getrlimit(resource.RLIMIT_FSIZE))
+          assert caps==dict(memory='1610612736',swap='0',pids='48',cpu='50000 100000',file=((16 if mode=='good' else 1)*1048576,)*2),caps
+          initial=bytes(4*1024*1024);expected=bytearray(initial)
+          for i in range(4096):
+              offset=(128+i%128)*512
+              expected[offset:offset+512]=bytes([(i%251)+1])*512
+          events=R/'events';events.write_text('\n'.join(N)+'\n')
+          disk=P(mode+'.raw').resolve()
+          # Create the preallocated disk outside the limited service.
+          assert disk.read_bytes()==initial
+          trace=R/(mode+'.trace');serial=R/(mode+'.serial')
+          q=P('simple/qemu-system-x86_64').resolve()
+          argv=[str(q),'-L',str(P('simple/pc-bios').resolve()),'-accel','tcg','-machine','pc','-m','512','-smp','1','-nodefaults','-nic','none','-display','none','-monitor','none','-serial','stdio','-no-reboot','-kernel','kernel/bzImage','-initrd','initramfs.gz','-append','console=ttyS0 rdinit=/init panic=-1 quiet','-drive',f'file={disk},format=raw,if=none,id=d,cache=none','-device','virtio-blk-pci,drive=d,disable-legacy=on,packed=off','-trace',f'events={events},file={trace}']
+          (R/(mode+'.argv.json')).write_text(json.dumps(argv))
+          before=stats('cpu.stat');mem_before=stats('memory.events');start=time.monotonic_ns()
+          with serial.open('wb') as f:
+              proc=subprocess.Popen(argv,stdout=f,stderr=f)
+              child_scope=P(f'/proc/{proc.pid}/cgroup').read_text()
+              assert scope in child_scope
+              try:code=proc.wait(timeout=90)
+              except subprocess.TimeoutExpired:
+                  proc.kill();proc.wait();code=proc.returncode
+          elapsed=time.monotonic_ns()-start;after=stats('cpu.stat');mem_after=stats('memory.events')
+          raw=trace.read_bytes();txt=serial.read_text(errors='replace');disk_bytes=disk.read_bytes()
+          decoded=False;count=None
+          try:
+              adv,_=decode(raw);decoded=True;count=len(adv)
+          except (AssertionError,KeyError,UnicodeError,struct.error):pass
+          guest_ok=code==0 and txt.count('GUEST_PASS writes=4096')==1 and 'RDTE_INIT_PASS' in txt and disk_bytes==expected
+          accepted=guest_ok and decoded and count>=4096
+          row=dict(mode=mode,scope=scope,child_scope=child_scope,caps=caps,code=code,guest_ok=guest_ok,disk_sha=sha(disk_bytes),expected_sha=sha(expected),trace_sha=sha(raw),trace_bytes=len(raw),decoded=decoded,advance=count,accepted=accepted,cpu_before=before,cpu_after=after,memory_before=mem_before,memory_after=mem_after,elapsed_ns=elapsed)
+          (R/(mode+'.json')).write_text(json.dumps(row,indent=2));print('ARM '+json.dumps(row),flush=True)
+          # Developmental floor only; exact observed count comparison is a separate check.
+          if mode=='good':
+              assert guest_ok and decoded and count>=4096 and after['nr_throttled']>before['nr_throttled'],row
+          else:
+              assert len(raw)==1048576 and not (guest_ok and decoded and count>=4096),row
+          PY
+          truncate -s 4M good.raw
+          truncate -s 4M capped.raw
+          for mode in good capped; do
+            cap=16M
+            if test "$mode" = capped; then cap=1M; fi
+            sudo systemd-run --unit="upip-e05d-$GITHUB_RUN_ID-$mode" --wait --pipe --collect --uid="$(id -u)" --working-directory="$PWD" --property=MemoryMax=1536M --property=MemorySwapMax=0 --property=TasksMax=48 --property=CPUQuota=50% --property=RuntimeMaxSec=110s --property=LimitFSIZE="$cap" /usr/bin/python3 "$PWD/receipts/caps.py" "$mode"
+          done
+          python3 - <<'PY'
+          import json,pathlib
+          r=pathlib.Path('receipts')
+          good=json.loads((r/'good.json').read_text());bad=json.loads((r/'capped.json').read_text())
+          assert good['guest_ok'] and good['decoded'] and good['advance']>=4096
+          assert bad['trace_bytes']==1048576 and (not bad['decoded'] or bad['advance']<good['advance'] or not bad['guest_ok'])
+          print('E05D PASS bounded good and capped refusal')
+          PY
+      - name: Limit retained evidence
+        if: always()
+        run: |
+          mkdir -p receipts
+          test "$(du -sb receipts | cut -f1)" -lt 20000000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upip-e05d-qemu-caps
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/upip-e05d -f description='Public QEMU caps wrapper' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
