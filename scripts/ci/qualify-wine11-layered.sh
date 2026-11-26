@@ -44,7 +44,8 @@ done
 docker build --file ../wine11-candidate/docker/base.Dockerfile --target final \
   --tag winebot-base:layered-hil ../wine11-candidate >/dev/null 2>&1 ||
   fail wine11_base_build
-cp ../wine11-candidate/scripts/init/20-setup-wine.sh scripts/init/20-setup-wine.sh
+# The initializer now belongs to the candidate tree. Never replace it at test time.
+git diff --exit-code -- scripts/init/20-setup-wine.sh >/dev/null || fail candidate_source_modified
 docker build --file docker/Dockerfile --target intent-rel \
   --build-arg BASE_IMAGE=winebot-base:layered-hil \
   --build-arg BUILD_INTENT=rel \
@@ -58,6 +59,10 @@ export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect --format '{{.Id}}' wineb
 [[ "$WINEBOT_RUNTIME_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] &&
   [[ "$WINEBOT_APP_BUNDLE_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] ||
   fail image_identity_invalid
+# Verify the selected local image before starting any dependent state service.
+docker run --rm --network none --read-only --user 1000:1000 \
+  --entrypoint /bin/bash "$WINEBOT_RUNTIME_IMAGE" /scripts/internal/require-wine11.sh \
+  || fail wine11_runtime_admission
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
   fail compose_invalid
 # Qualify the OCI image's actual script contract without mutating external volumes.
