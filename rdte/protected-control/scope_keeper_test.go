@@ -52,6 +52,25 @@ func TestScopeKeeperRealSupervisorDeath(t *testing.T){
  if err!=nil{t.Fatal(err)}
  bad:=id;bad.Inode^=1
  if _,err=retainScope(g,dir,bad);err==nil{t.Fatal("bad scope identity admitted")}
+ // A second valid, empty cgroup must not be accepted under the
+ // first gate's generation, even with its own correct identity.
+ other,err:=os.MkdirTemp("/sys/fs/cgroup","winebot-unrelated-fixture-")
+ if err!=nil{t.Fatal(err)}
+ defer os.Remove(other)
+ otherDir,err:=os.Open(other)
+ if err!=nil{t.Fatal(err)}
+ defer otherDir.Close()
+ otherID,err:=cgroupID(otherDir)
+ if err!=nil || otherID==id{t.Fatal("independent fixture identity unavailable")}
+ if p,err:=cgroupPopulated(otherDir,otherID);err!=nil || p{t.Fatal("independent fixture not empty",err)}
+ if substitute,err:=retainScope(g,otherDir,otherID);err==nil{
+  substitute.close()
+  t.Fatal("valid unrelated scope substituted")
+ }
+ if substitute,err:=retainScope(g,otherDir,id);err==nil{
+  substitute.close()
+  t.Fatal("unrelated descriptor accepted with original identity")
+ }
  k,err:=retainScope(g,dir,id)
  if err!=nil{t.Fatal(err)}
  defer k.close()
@@ -93,4 +112,15 @@ func TestScopeKeeperRealSupervisorDeath(t *testing.T){
 func TestScopeKeeperLostCustodyRefuses(t *testing.T){
  k:=&scopeKeeper{root:filepath.Join(t.TempDir(),"absent")}
  if _,err:=k.quarantineAndObserve();err==nil{t.Fatal("lost custody accepted")}
+}
+
+func TestScopeKeeperRejectsUnboundGate(t *testing.T){
+ root:=lifecycleTestRoot(t);uid:=uint32(os.Geteuid())
+ if err:=lifecycleProvision(root,uid);err!=nil{t.Fatal(err)}
+ g,err:=reserveWriterGate(root,uid,0,func()(bool,error){return false,nil})
+ if err!=nil{t.Fatal(err)}
+ if k,err:=retainScope(g,nil,cgroupIdentity{});err==nil{
+  k.close()
+  t.Fatal("unbound gate admitted custody")
+ }
 }

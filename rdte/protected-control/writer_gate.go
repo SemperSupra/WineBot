@@ -20,6 +20,8 @@ type writerGate struct {
  generation int64
  scope string
  observe func() (bool,error)
+ scopeDir *os.File
+ scopeID cgroupIdentity
  uncertain bool
  retired bool
 }
@@ -27,9 +29,14 @@ type writerGate struct {
 func newWriterGate(root string,uid uint32,expected int64,dir *os.File,id cgroupIdentity)(*writerGate,error){
  // The caller retains a fresh, protected scope descriptor throughout this
  // handle's lifetime. The caller must not close or reuse it concurrently.
- return reserveWriterGate(root,uid,expected,func()(bool,error){
+ if dir==nil{return nil,errors.New("missing scope descriptor")}
+ g,err:=reserveWriterGate(root,uid,expected,func()(bool,error){
   return cgroupPopulated(dir,id)
  })
+ if err!=nil{return nil,err}
+ g.scopeDir=dir
+ g.scopeID=id
+ return g,nil
 }
 
 // Internal observation seam for deterministic tests. Never exposed to IPC.

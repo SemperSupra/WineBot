@@ -22,8 +22,9 @@ type scopeKeeper struct {
  dir *os.File
 }
 
-// The trusted caller must supply the exact descriptor used for the gate,
-// not an arbitrary same-name scope. This is not a guest-facing API.
+// Bind retention to the admitted gate's descriptor, never a fresh scope
+// selected by a caller. A supplied descriptor is only a consistency check.
+// This is not a guest-facing API.
 func retainScope(g *writerGate,dir *os.File,id cgroupIdentity)(*scopeKeeper,error){
  g.mu.Lock();defer g.mu.Unlock()
  d,l,err:=acquire(g.root,g.uid)
@@ -32,9 +33,12 @@ func retainScope(g *writerGate,dir *os.File,id cgroupIdentity)(*scopeKeeper,erro
  s,err:=lifecycleRead(g.root,g.uid)
  if err!=nil{return nil,err}
  if !g.bound(s) || s.Phase!="RESERVED"{return nil,errors.New("scope retention refused")}
+ if dir==nil || g.scopeDir==nil || id!=g.scopeID{return nil,errors.New("scope binding rejected")}
  actual,err:=cgroupID(dir)
- if err!=nil || actual!=id{return nil,errors.New("scope identity rejected")}
- fd,_,errno:=syscall.Syscall(syscall.SYS_FCNTL,dir.Fd(),uintptr(syscall.F_DUPFD_CLOEXEC),0)
+ if err!=nil || actual!=g.scopeID{return nil,errors.New("scope identity rejected")}
+ actual,err=cgroupID(g.scopeDir)
+ if err!=nil || actual!=g.scopeID{return nil,errors.New("admitted scope identity lost")}
+ fd,_,errno:=syscall.Syscall(syscall.SYS_FCNTL,g.scopeDir.Fd(),uintptr(syscall.F_DUPFD_CLOEXEC),0)
  if errno!=0{return nil,errno}
  retained:=os.NewFile(fd,"trusted retained scope")
  actual,err=cgroupID(retained)
