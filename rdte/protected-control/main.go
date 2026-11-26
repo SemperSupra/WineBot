@@ -163,6 +163,10 @@ func main() {
  if os.Geteuid()!=0 {fmt.Fprintln(os.Stderr,"CONTROL_OWNER=REJECTED");os.Exit(73)}
  args:=os.Args[1:]
  switch {
+ case len(args)>0 && (args[0]=="lifecycle-status" || args[0]=="lifecycle-stop"):
+  if err:=runLifecycleOperator(trustedRoot,0,args,os.Stdout);err!=nil{
+   fmt.Fprintln(os.Stderr,"LIFECYCLE_OPERATOR=UNKNOWN_OR_REJECTED");os.Exit(73)
+  }
  case len(args)==1 && args[0]=="serve":
   // Never mount this root-only socket into Wine guest or FastAPI process.
   if err:=serveControl(trustedRoot,0,0,0);err!=nil {
