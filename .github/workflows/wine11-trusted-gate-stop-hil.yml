@@ -1,0 +1,51 @@
+name: Wine 11 Trusted Gate STOP HIL
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/wine_gate_hil_test.go'
+      - '.github/workflows/wine11-trusted-gate-stop-hil.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  wine11-gate-stop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: gate
+      - name: Checkout separately qualified WineHQ 11.0 package build definition
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          persist-credentials: false
+          ref: 8c5ed8019a3518cf534b158662755172bfce7c59
+          path: runtime
+      - name: Build ephemeral package-pinned Wine image without publishing or cache upload
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! docker build --target base-system -f docker/base.Dockerfile -t winebot-r046:local . >"$RUNNER_TEMP/wine-r046-build.log" 2>&1; then
+            echo 'WINE_GATE_HIL stage=base_build_failed'
+            exit 1
+          fi
+          echo 'WINE_GATE_HIL stage=base_built'
+      - name: Build exact Go test
+        working-directory: gate
+        run: go test -c -o "$RUNNER_TEMP/wine-gate.test" ./rdte/protected-control
+      - name: Run real Wine GUI and persistent STOP against disposable scope
+        run: sudo -n env WINEBOT_REAL_WINE_GATE=1 "$RUNNER_TEMP/wine-gate.test" -test.run '^TestWine11GateStopHIL$' -test.timeout=10m -test.v
+      - name: Remove raw build diagnostics
+        if: always()
+        run: rm -f "$RUNNER_TEMP/wine-r046-build.log"
