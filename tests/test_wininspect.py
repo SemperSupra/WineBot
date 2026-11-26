@@ -50,7 +50,7 @@ class FakeSocket:
 def test_wininspect_request_uses_length_prefixed_json():
     fake = FakeSocket(
         [
-            {"type": "hello", "version": "0.3.0"},
+            {"type": "hello", "version": "0.4.0"},
             {
                 "id": "winebot-abc123456789",
                 "ok": True,
@@ -70,7 +70,7 @@ def test_wininspect_request_uses_length_prefixed_json():
     sent_payload = json.loads(fake.sent[4 : 4 + sent_length].decode("utf-8"))
     assert sent_payload["id"] == "winebot-abc123456789"
     assert sent_payload["method"] == "daemon.capabilities"
-    assert sent_payload["params"]["protocol_version"] == "0.3.0"
+    assert sent_payload["params"]["protocol_version"] == "0.4.0"
 
 
 def test_wininspect_blocks_mutating_methods():
