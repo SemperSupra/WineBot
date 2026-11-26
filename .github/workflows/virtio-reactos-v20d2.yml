@@ -1,0 +1,56 @@
+name: ReactOS candidate boot smoke
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-reactos-v20d2.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Bind run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-reactos-v20d2 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/download-artifact@v4
+        with:
+          name: virtio-reactos-v20d1
+          run-id: 45717353971
+          github-token: ${{ github.token }}
+          path: image
+      - name: Boot candidate with disposable disk
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 qemu-utils
+          iso=$(find image -name candidate-bootcd.iso -print -quit)
+          test -n "$iso"
+          sha256sum "$iso" > receipts/iso.sha256
+          qemu-img create -f qcow2 disk.qcow2 4G
+          set +e
+          timeout 180 qemu-system-i386 -accel tcg -m 512 -smp 1 -display none -monitor none -serial file:receipts/serial.log -no-reboot -cdrom "$iso" -boot d -drive file=disk.qcow2,if=ide -netdev user,id=n,restrict=on -device virtio-net-pci,netdev=n,romfile= >receipts/qemu.log 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > receipts/exit.txt
+          test "$rc" = 124
+          test -s receipts/serial.log
+          grep -Ei 'ReactOS|FreeLoader|ntoskrnl' receipts/serial.log > receipts/boot-witness.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-reactos-v20d2
+          path: receipts/
+      - name: Terminal receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          case "$RESULT" in success|failure) state="$RESULT";; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-reactos-v20d2 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
