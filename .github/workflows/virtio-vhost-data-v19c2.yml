@@ -1,0 +1,227 @@
+name: VirtIO isolated TAP versus kernel vhost-net data plane
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-vhost-data-v19c2.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind execution and find prior public run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-vhost-data-v19c2 -f description='Public Linux guest experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Retrieve exact public source-built executables
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-source-binaries-v17b
+          run-id: 45625601744
+          github-token: ${{ github.token }}
+          path: binaries
+      - name: Verify independent executable and firmware pins
+        run: |
+          set -euo pipefail
+          cat > receipts/expected.sha256 <<'EOF'
+          4d567f217c247a9d39f3d5e364992dbf16e2eb624fc1eee09c70828aae40dda5  binaries/stock-qemu-system-x86_64
+          af5001a9a1c8e1d90436455b8f69ea4be8cd3ddbf6081b98a1d886dc2b24f5e6  binaries/candidate-qemu-system-x86_64
+          ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650  binaries/pc-bios/bios-256k.bin
+          cdf057a71b07e3b52b19cbe210bdefa59250d01a9810b960f7fe1f98eed95a27  binaries/pc-bios/kvmvapic.bin
+          9c49e255340c78fc12e54ed043462bca02fb7fca29b7cfab62ff88a5344b6950  binaries/pc-bios/linuxboot_dma.bin
+          08c3841ff05a3d374817035181743ec8fbb9f05d04e63d00cb5298a9acac2cb6  binaries/candidate.patch
+          EOF
+          sha256sum -c receipts/expected.sha256
+          test "$(cat binaries/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod u+x binaries/*qemu-system-x86_64
+          cp binaries/candidate.patch binaries/upstream-sha.txt receipts/
+      - name: Retrieve qualified guest kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-guest-boot-v18c4
+          run-id: 45641159935
+          github-token: ${{ github.token }}
+          path: guest-kernel
+      - name: Install public packages and construct guest
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          binaries/candidate-qemu-system-x86_64 --version > receipts/qemu-version.txt
+          ldd binaries/candidate-qemu-system-x86_64 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          dpkg-query -W qemu-system-x86 qemu-utils busybox-static linux-image-virtual > receipts/packages.txt
+          echo 'c3b467db358cb512cb9dc4640acae5758499a771f826caaaae100a16f449a7d0  guest-kernel/bzImage' | sha256sum -c -
+          cp guest-kernel/bzImage kernel.bin
+          mkdir -p root/{bin,dev,proc,sys}
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          $B ip link set lo up
+          T=/sys/kernel/tracing
+          $B mount -t tracefs tracefs "$T"
+          echo 1 > "$T/events/virtio_observe/virtio_buffer/enable"
+          echo 1 > "$T/tracing_on"
+          echo NIC_UP > "$T/trace_marker"
+          $B ip link set eth0 up
+          $B ip addr add 192.0.2.2/24 dev eth0
+          for d in /sys/bus/virtio/devices/*; do echo "FEATURES $($B cat "$d/features")"; done
+          echo HTTP_READY
+          $B sleep 5
+          echo HTTP_START > "$T/trace_marker"
+          $B wget -O /payload http://192.0.2.1:18081/payload
+          $B sha256sum /payload
+          echo HTTP_END > "$T/trace_marker"
+          echo NET_WORKLOAD_PASS
+          $B sleep 10
+          echo 0 > "$T/tracing_on"
+          echo GUEST_TRACE_BEGIN
+          $B cat "$T/trace"
+          echo GUEST_TRACE_END
+          $B cat "$T/per_cpu/cpu0/stats"
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+      - name: Isolated TAP and kernel-vhost comparison
+        run: |
+          set -euo pipefail
+          mkdir -p fixture
+          python3 -c 'from pathlib import Path; Path("fixture/payload").write_bytes(bytes(range(256))*256)'
+          sha256sum fixture/payload > receipts/payload.sha256
+          sudo apt-get install -y -qq --no-install-recommends iproute2 acl
+          uname -a > receipts/host-kernel.txt
+          sudo modprobe tun 2>&1 | tee receipts/tun-preflight.txt || true
+          sudo modprobe vhost_net 2>&1 | tee receipts/vhost-preflight.txt || true
+          ls -l /dev/net/tun /dev/vhost-net >> receipts/vhost-preflight.txt 2>&1 || true
+          test -c /dev/net/tun
+          user=$(id -un)
+          sudo setfacl -m "u:$user:rw" /dev/net/tun
+          if test -c /dev/vhost-net; then sudo setfacl -m "u:$user:rw" /dev/vhost-net; fi
+          ns=rdte-vhost-data
+          sudo ip netns add "$ns"
+          cleanup() { sudo ip netns del "$ns" || true; }
+          trap cleanup EXIT
+          sudo ip netns exec "$ns" ip tuntap add dev tap0 mode tap user "$user"
+          sudo ip netns exec "$ns" ip addr add 192.0.2.1/24 dev tap0
+          sudo ip netns exec "$ns" ip link set lo up
+          sudo ip netns exec "$ns" ip link set tap0 up
+          sudo ip netns exec "$ns" ip -j address > receipts/namespace-addresses.json
+          sudo ip netns exec "$ns" ip -j route > receipts/namespace-routes.json
+          test -z "$(sudo ip netns exec "$ns" ip route show default)"
+          cat > receipts/run.py <<'PY'
+          import pathlib,subprocess,re,json,hashlib,time,socket,os,http.server,threading,functools
+          P=pathlib.Path; r=P("receipts")
+          expected=hashlib.sha256(P("fixture/payload").read_bytes()).hexdigest()
+          assert not subprocess.check_output(["ip","route","show","default"]).strip()
+          handler=functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(P("fixture").resolve()))
+          server=http.server.ThreadingHTTPServer(("192.0.2.1",18081),handler)
+          worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+          results=[]
+          def arm(accelerated):
+              name="kernel-vhost" if accelerated else "userspace-tap"
+              row={"name":name,"requested_vhost":accelerated,"status":"NOT_EXERCISED"}
+              if accelerated and not os.access("/dev/vhost-net",os.R_OK|os.W_OK):
+                  row["reason"]="kernel vhost device missing or inaccessible"
+                  return row
+              q=str(P("binaries/candidate-qemu-system-x86_64").resolve())
+              sock=str(P(name+".sock").resolve())
+              events=r/(name+".events")
+              events.write_text("virtqueue_buffer_pop\nvirtqueue_buffer_fill_attempt\nvirtqueue_host_advance\nvhost_dev_start_in\nvhost_dev_start_out\nvhost_virtqueue_start_in\nvhost_virtqueue_start_out\n")
+              trace=r/(name+".trace");log=r/(name+".serial")
+              argv=[q,"-L",str(P("binaries/pc-bios").resolve()),"-accel","tcg","-machine","pc","-m","512","-smp","1","-nodefaults","-display","none","-monitor","none","-serial","stdio","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 quiet","-qmp","unix:"+sock+",server=on,wait=off","-netdev","tap,id=n,ifname=tap0,script=no,downscript=no,vhost="+("on" if accelerated else "off"),"-device","virtio-net-pci,id=nic0,netdev=n,romfile=,disable-legacy=on,packed=off,mac=52:54:00:12:34:56","-trace","events="+str(events),"-D",str(trace)]
+              (r/(name+"-argv.json")).write_text(json.dumps(argv,indent=2))
+              history=[];states=[];err=None
+              with log.open("wb") as out:
+                  p=subprocess.Popen(argv,stdout=out,stderr=out)
+                  try:
+                      for _ in range(100):
+                          if P(sock).exists():break
+                          assert p.poll() is None,"QEMU exited before QMP"
+                          time.sleep(.1)
+                      with socket.socket(socket.AF_UNIX) as s:
+                          s.settimeout(10);s.connect(sock);f=s.makefile("rwb")
+                          assert "QMP" in json.loads(f.readline())
+                          def qmp(cmd,args=None):
+                              req={"execute":cmd,"id":len(history)}
+                              if args is not None:req["arguments"]=args
+                              f.write(json.dumps(req).encode()+b"\n");f.flush()
+                              while True:
+                                  line=f.readline();assert line
+                                  obj=json.loads(line)
+                                  if obj.get("id")==req["id"]:
+                                      history.append({"request":req,"response":obj})
+                                      assert "return" in obj,obj
+                                      return obj["return"]
+                          qmp("qmp_capabilities")
+                          devs=qmp("x-query-virtio")
+                          dev=[d for d in devs if d["path"]=="/machine/peripheral/nic0/virtio-backend"]
+                          assert len(dev)==1,devs
+                          def await_marker(marker):
+                              end=time.monotonic()+60
+                              while time.monotonic()<end:
+                                  if marker in log.read_text(errors="replace"):return
+                                  assert p.poll() is None,"guest exited before marker"
+                                  time.sleep(.1)
+                              raise TimeoutError(marker)
+                          for marker in ("HTTP_READY","NET_WORKLOAD_PASS"):
+                              await_marker(marker)
+                              state=qmp("x-query-virtio-status",{"path":dev[0]["path"]})
+                              states.append({"marker":marker,"state":state})
+                          p.wait(timeout=40)
+                  except Exception as e:err=repr(e)
+                  finally:
+                      if p.poll() is None:p.kill();p.wait()
+                      (r/(name+"-qmp.json")).write_text(json.dumps(history,indent=2))
+                      (r/(name+"-states.json")).write_text(json.dumps(states,indent=2))
+              text=log.read_text(errors="replace");t=trace.read_text(errors="replace") if trace.exists() else ""
+              guest=text.split("GUEST_TRACE_BEGIN",1)[-1].split("GUEST_TRACE_END",1)[0]
+              events_guest=list(re.finditer(r"dev=(\d+) queue=(\d+) id=(\d+) packed=([01]) consume=([01]) len=(\d+)",guest))
+              features=re.findall(r"FEATURES ([01]+)",text)
+              ready=len(states)==2 and all("DRIVER_OK" in json.dumps(x["state"]["status"]) for x in states)
+              path_ok=len(states)==2 and all(x["state"]["vhost-started"]==accelerated for x in states)
+              starts=t.count("vhost_dev_start_out");queues=t.count("vhost_virtqueue_start_out")
+              row.update(exit=p.returncode,error=err,payload_ok=expected+"  /payload" in text,guest_pass="NET_WORKLOAD_PASS" in text,guest_events=len(events_guest),guest_consumes=sum(m.group(5)=="1" for m in events_guest),host_pop=t.count("virtqueue_buffer_pop"),host_fill=t.count("virtqueue_buffer_fill_attempt"),vhost_start=starts,vhost_queue_start=queues,driver_ready=ready,backend_confirmed=path_ok,split_negotiated=len(features)==1 and len(features[0])>34 and features[0][34]=="0")
+              row["status"]="PASS" if err is None and p.returncode==0 and row["payload_ok"] and row["guest_pass"] and row["guest_consumes"]>0 and ready and path_ok and row["split_negotiated"] and ((starts>0 and queues>=2) if accelerated else (starts==0 and row["host_pop"]>0 and row["host_fill"]>0)) else "FAIL"
+              return row
+          try:
+              for accelerated in (False,True):
+                  try:results.append(arm(accelerated))
+                  except Exception as e:results.append({"requested_vhost":accelerated,"status":"FAIL","error":repr(e)})
+                  (r/"summary.json").write_text(json.dumps(results,indent=2))
+          finally:server.shutdown();server.server_close()
+          assert len(results)==2 and all(x["status"]=="PASS" for x in results),results
+          PY
+          sudo ip netns exec "$ns" runuser -u "$user" -- python3 receipts/run.py 2>&1 | tee receipts/workload.log
+      - name: Retain public evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-vhost-data-v19c2
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-vhost-data-v19c2 -f description='Public Linux guest wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
