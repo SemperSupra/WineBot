@@ -309,6 +309,7 @@ class TestKeyTranslationConformance:
 def test_unresolved_xdotool_title_never_dispatches_to_focus(backend):
     """A requested target that did not resolve is not permission for global input."""
     import asyncio
+
     from api.routers.input import _send_keys
 
     with patch("api.routers.input._desktop_absent", return_value=True), patch(
@@ -326,6 +327,7 @@ def test_unresolved_xdotool_title_never_dispatches_to_focus(backend):
 ])
 def test_xdotool_delivery_mode_not_silently_changed(window_id, expected):
     import asyncio
+
     from api.routers.input import _send_keys
 
     with patch("api.routers.input.run_async_command") as command:
