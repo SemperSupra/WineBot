@@ -1,0 +1,98 @@
+name: ORF return attribution counterexample
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/orf-return-attribution-b09e2.yml]
+permissions:
+  contents: read
+jobs:
+  attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Native controlled call and tail-transfer fixture
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/synthetic-analysis-b05-20261125
+          mkdir receipts
+          cd receipts
+          cat > fixture.c <<'C'
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <inttypes.h>
+          #include <assert.h>
+          typedef void (*fn)(void);
+          extern void invoke(fn);
+          extern void thunk(void);
+          extern void nested(void);
+          extern char invoke_return, nested_return;
+          static uintptr_t seen;
+          __attribute__((noinline)) void target(void) {
+              seen=(uintptr_t)__builtin_return_address(0);
+          }
+          int main(void) {
+              fn cases[]={target,thunk,nested};
+              const char *names[]={"direct","tail","nested"};
+              for(unsigned rep=0;rep<3;rep++)
+              for(unsigned i=0;i<3;i++){
+                  seen=0;
+                  invoke(cases[i]);
+                  assert(seen);
+                  printf("{\"rep\":%u,\"case\":\"%s\",\"immediate\":%" PRIuPTR ",\"entry\":%" PRIuPTR ",\"return\":%" PRIuPTR ",\"outer_return\":%" PRIuPTR ",\"nested_return\":%" PRIuPTR "}\n",rep,names[i],(uintptr_t)cases[i],(uintptr_t)target,seen,(uintptr_t)&invoke_return,(uintptr_t)&nested_return);
+              }
+          }
+          C
+          cat > fixture.S <<'ASM'
+          .text
+          .globl invoke
+          .type invoke,@function
+          invoke:
+            sub $8,%rsp
+            call *%rdi
+          .globl invoke_return
+          invoke_return:
+            add $8,%rsp
+            ret
+          .size invoke,.-invoke
+          .globl thunk
+          .type thunk,@function
+          thunk:
+            jmp target
+          .size thunk,.-thunk
+          .globl nested
+          .type nested,@function
+          nested:
+            sub $8,%rsp
+            call target
+          .globl nested_return
+          nested_return:
+            add $8,%rsp
+            ret
+          .size nested,.-nested
+          .section .note.GNU-stack,"",@progbits
+          ASM
+          gcc -O2 -g -fno-pie -no-pie -Wall -Wextra -Werror fixture.c fixture.S -o fixture
+          gcc --version > compiler.txt
+          objdump -d fixture > disassembly.txt
+          nm -n fixture > symbols.txt
+          ./fixture > observed.jsonl
+          python3 - <<'PY'
+          import json
+          rows=[json.loads(l) for l in open("observed.jsonl")]
+          assert len(rows)==9
+          for i,r in enumerate(rows):
+              assert (r["rep"],r["case"])==(i//3,("direct","tail","nested")[i%3])
+              assert (r["return"]==r["outer_return"])==(r["case"]!="nested")
+              assert (r["immediate"]==r["entry"])==(r["case"]=="direct")
+              if r["case"]=="nested":assert r["return"]==r["nested_return"]
+          print("9 native cases: direct=3, tail false attribution=3, nested nonmatching=3")
+          PY
+          sha256sum fixture.c fixture.S fixture observed.jsonl disassembly.txt symbols.txt > SHA256SUMS
+      - name: Retain native evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orf-b09e2-return-attribution
+          path: receipts/
+          retention-days: 7
