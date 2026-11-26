@@ -22,14 +22,6 @@ type lifecycleRecord struct {
  Scope string `json:"scope"`
 }
 
-// This is a typed input to a TRUSTED caller, not authenticated evidence.
-// Never expose this structure as a guest request or infer it from guest PID.
-type scopeEmptyProof struct {
- Generation int64
- Scope string
- GateClosed, NoPending, NoLive bool
-}
-
 func lifecycleValid(s lifecycleRecord) bool {
  if s.Schema != lifecycleSchema || s.Generation < 0 { return false }
  switch s.Phase {
@@ -85,41 +77,13 @@ func lifecycleProvision(root string,uid uint32) error {
  dir,lock,err:=acquire(root,uid)
  if err!=nil{return err}
  defer dir.Close();defer lock.Close()
+ sd,sl,err:=acquireStop(root,uid)
+ if err!=nil{return err}
+ defer sd.Close();defer sl.Close()
+ if err=requireNoDurableStop(root,uid);err!=nil{return err}
  if _,err=os.Lstat(filepath.Join(root,lifecycleName));!os.IsNotExist(err){
   return errors.New("provision refused")
  }
  return lifecycleWrite(root,dir,lifecycleRecord{Schema:lifecycleSchema,Phase:"IDLE"},nil)
 }
 
-// The trusted actuator must close the actual launch gate BEFORE recording
-// quarantine, and prove it stayed closed until reconciliation. The journal
-// itself does not launch, cancel, observe or kill any real execution scope.
-func lifecycleTransition(root string,uid uint32,expected int64,event,scope string,proof scopeEmptyProof,fault func(string)) (lifecycleRecord,error) {
- var zero lifecycleRecord
- dir,lock,err:=acquire(root,uid)
- if err!=nil{return zero,err}
- defer dir.Close();defer lock.Close()
- s,err:=lifecycleRead(root,uid)
- if err!=nil{return zero,err}
- if s.Generation!=expected{return zero,errors.New("stale generation")}
- // Re-establish directory durability after an ambiguous preceding rename.
- if err=dir.Sync();err!=nil{return zero,err}
- switch event {
- case "reserve":
-  if s.Phase!="IDLE" || expected>=maxGeneration || !identifier.MatchString(scope){return zero,errors.New("reserve refused")}
-  s.Generation++;s.Scope=scope;s.Phase="RESERVED"
- case "launch_intent":
-  if s.Phase!="RESERVED" || scope!=s.Scope{return zero,errors.New("launch refused")}
-  s.Phase="RUNNING"
- case "quarantine":
-  if (s.Phase!="RESERVED" && s.Phase!="RUNNING" && s.Phase!="QUARANTINED") || scope!=s.Scope{return zero,errors.New("quarantine refused")}
-  s.Phase="QUARANTINED"
- case "reconcile":
-  if s.Phase!="QUARANTINED" || scope!=s.Scope || proof.Generation!=s.Generation ||
-   proof.Scope!=s.Scope || !proof.GateClosed || !proof.NoPending || !proof.NoLive{return zero,errors.New("reconcile refused")}
-  s.Phase="IDLE";s.Scope=""
- default:return zero,errors.New("unknown lifecycle transition")
- }
- if err=lifecycleWrite(root,dir,s,fault);err!=nil{return zero,err}
- return s,nil
-}
