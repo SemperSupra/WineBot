@@ -1,0 +1,107 @@
+name: Pinned QEMU runtime Linux replay R1i
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-pinned-replay-r1i.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare public kernel and original guest fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts root/bin
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 busybox-static cpio libfdt1 libslirp0 libpixman-1-0 libglib2.0-0t64 libgnutls30t64 liburing2 libaio1t64 libnuma1 libzstd1 libncursesw6
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-system-x86 busybox-static cpio > receipts/packages.txt
+          sha256sum "$(command -v qemu-system-x86_64)" > receipts/qemu.sha256
+          curl -fL --retry 2 --max-time 90 https://storage.tuxboot.com/buildroot/20241119/x86_64/bzImage -o kernel
+          echo 'f57bfc6553bcd6e0a54aab86095bf642b33b5571d14e3af1731b18c87ed5aef8  kernel' | sha256sum -c -
+          cp "$(command -v busybox)" root/bin/busybox
+          cp /dev/null receipts/init
+          cat > receipts/init <<'SH'
+          #!/bin/busybox sh
+          export PATH=/bin
+          echo TEO_BEGIN
+          /bin/busybox printf 'public-replay-fixture\n' | /bin/busybox sha256sum
+          echo TEO_END
+          /bin/busybox poweroff -f
+          SH
+          cp receipts/init root/init
+          chmod 755 root/init
+          mkdir -p root/dev root/proc root/sys
+          sudo mknod root/dev/console c 5 1
+          sudo mknod root/dev/null c 1 3
+          (cd root && find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --owner=0:0 --reproducible) > initramfs
+          sha256sum kernel initramfs receipts/init root/bin/busybox > receipts/inputs.sha256
+      - name: Reuse exact public pinned QEMU candidate build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15069398884/zip > candidate.zip
+          echo '446ef34df108998c1a2dd016b7ab03107c1826752f7d144cef45079853d1d375  candidate.zip' | sha256sum -c -
+          unzip -q candidate.zip -d candidate
+          (cd candidate && sha256sum -c SHA256SUMS) | tee receipts/candidate-manifest-check.txt
+          test "$(cat candidate/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod +x candidate/qemu-system-x86_64
+          ldd candidate/qemu-system-x86_64 > receipts/candidate-ldd.txt
+          ! grep -q 'not found' receipts/candidate-ldd.txt
+          candidate/qemu-system-x86_64 --version > receipts/candidate-version.txt
+          sha256sum candidate/qemu-system-x86_64 > receipts/candidate.sha256
+          cp candidate/upstream-sha.txt candidate/SHA256SUMS receipts/
+      - name: Compare isolated stock and candidate recording and replay
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,json,pathlib,subprocess,time
+          p=pathlib.Path("receipts")
+          results={}
+          base=["-machine","q35","-cpu","Nehalem","-accel","tcg,thread=single","-smp","1","-m","256","-nodefaults","-display","none","-monitor","none","-nic","none","-no-reboot","-kernel","kernel","-initrd","initramfs","-append","console=ttyS0 rdinit=/init panic=-1 nokaslr"]
+          for profile,exe in [("stock",["qemu-system-x86_64"]),("candidate",["./candidate/qemu-system-x86_64","-L","candidate/pc-bios"])]:
+              rr=p/f"{profile}.rr"
+              for arm,mode in [("record","record"),("replay1","replay"),("replay2","replay")]:
+                  name=profile+"-"+arm
+                  start=time.monotonic()
+                  with (p/f"{name}.stderr").open("wb") as err:
+                      subprocess.run(exe+base+["-serial",f"file:{p}/{name}.serial","-icount",f"shift=5,rr={mode},rrfile={rr}"],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=err,timeout=120,check=True)
+                  h=hashlib.sha256(rr.read_bytes()).hexdigest()
+                  if mode=="record": first=h
+                  else: assert first==h
+                  results[name]={"seconds":time.monotonic()-start,"rr_sha256":h}
+          (p/"measurements.json").write_text(json.dumps(results,indent=2))
+          PY
+          python3 receipts/drive.py
+      - name: Score each runtime against independent guest oracle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("receipts"); exp=hashlib.sha256(b"public-replay-fixture\n").hexdigest().encode(); results={}
+          for profile in ("stock","candidate"):
+              hashes=[]
+              for arm in ("record","replay1","replay2"):
+                  data=(p/f"{profile}-{arm}.serial").read_bytes(); lines=data.splitlines()
+                  assert lines.count(b"TEO_BEGIN")==lines.count(b"TEO_END")==1
+                  i=lines.index(b"TEO_BEGIN");assert lines[i+1].split()==[exp,b"-"] and lines[i+2]==b"TEO_END"
+                  assert b"reboot: Power down" in data
+                  hashes.append(hashlib.sha256(data).hexdigest())
+              results[profile]={"marker_pass":True,"complete_serial_equal":len(set(hashes))==1,"serial_hashes":hashes}
+              assert len(set(hashes))==1
+          (p/"oracle.json").write_text(json.dumps(results,indent=2))
+          print(json.dumps(results,indent=2))
+          PY
+      - name: Retain bounded public-safe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-pinned-replay-r1i
+          path: receipts/
+          retention-days: 7
