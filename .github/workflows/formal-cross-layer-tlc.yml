@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           cd formal/tla
-          for model in ControlLease SessionHandover ReleaseAdmission; do
+          for model in ControlLease SessionHandover ReleaseAdmission SessionWriterFence; do
             echo "TLC_MODEL=$model"
             timeout 90s java -Xmx768m -XX:+UseParallelGC \
               -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
@@ -95,6 +95,28 @@ jobs:
             exit 1
           fi
           echo "FORMAL_HANDOVER_NEGATIVE=SPLIT_OWNER_COUNTEREXAMPLE_CONFIRMED"
+      - name: Prove that two unfenced writers can commit a stale epoch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd formal/tla
+          if timeout 45s java -Xmx512m -XX:+UseParallelGC \
+              -cp "$RUNNER_TEMP/formal/tla2tools.jar" tlc2.TLC \
+              -workers 1 -deadlock -config SessionWriterFenceUnsafe.cfg \
+              SessionWriterFenceUnsafe.tla > "$RUNNER_TEMP/formal/unsafe-two-writer.log" 2>&1; then
+            echo "FORMAL_TWO_WRITER_NEGATIVE=FAILED_TO_DETECT_STALE_COMMIT"
+            exit 1
+          fi
+          if ! grep -Fq 'Invariant NoStaleWrite is violated' \
+               "$RUNNER_TEMP/formal/unsafe-two-writer.log"; then
+            echo "FORMAL_TWO_WRITER_NEGATIVE=NO_EXPECTED_COUNTEREXAMPLE"
+            # All input is versioned public synthetic model source; print
+            # only bounded diagnostic lines, never runner environment dumps.
+            grep -E '^(Error:|Invariant |Semantic errors|.*Error.*|.*SessionWriterFenceUnsafe.*)' \
+              "$RUNNER_TEMP/formal/unsafe-two-writer.log" | head -n 20 || true
+            exit 1
+          fi
+          echo "FORMAL_TWO_WRITER_NEGATIVE=STALE_COMMIT_COUNTEREXAMPLE_CONFIRMED"
       - name: Run dependency-free model contract tests
         shell: bash
         run: |
