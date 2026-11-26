@@ -5,6 +5,7 @@ on:
     paths:
       - 'rdte/protected-control/durable_stop*.go'
       - 'rdte/protected-control/writer_gate.go'
+      - 'rdte/protected-control/lifecycle_journal*.go'
       - '.github/workflows/durable-stop-enforcement-rdte.yml'
 
 permissions:
@@ -22,5 +23,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Compile non-test trusted reference
+        run: go build -o "$RUNNER_TEMP/protected-control" ./rdte/protected-control
       - name: Verify durable STOP and gate regression
-        run: go test -race -count=5 -timeout=150s ./rdte/protected-control -run '^(TestDurableStop|TestEmergency|TestWriterGate)'
+        run: go test -race -count=5 -timeout=150s ./rdte/protected-control -run '^(TestDurableStop|TestEmergency|TestWriterGate|TestLifecycle)'
