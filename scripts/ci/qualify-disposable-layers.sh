@@ -31,6 +31,11 @@ export WINEBOT_SHARED_VOLUME="$prefix-shared"
 export WINEBOT_API_TOKEN=synthetic-ci-only-token
 export WINEBOT_VNC_PASSWORD=synthetic-ci-only-password
 
+# Refuse preexisting names before any create or cleanup claim.
+for volume in "$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME" \
+  "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME" "$WINEBOT_SHARED_VOLUME"; do
+  if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
+done
 # Dry-run should fail with missing external volumes, never create state.
 if bash scripts/layers/preflight.sh --check >/dev/null 2>&1; then fail missing_volume_not_rejected; fi
 bash scripts/layers/preflight.sh --create >/dev/null 2>&1 || fail preflight_create
@@ -38,6 +43,20 @@ bash scripts/layers/preflight.sh --check >/dev/null 2>&1 || fail preflight_check
 volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
   "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
   "$WINEBOT_SHARED_VOLUME")
+# A distinct named volume with local bind options is not admissible custody.
+# The negative is only inspected, never mounted, on the public disposable VM.
+alias_volume="$prefix-option-negative"
+if docker volume inspect "$alias_volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
+alias_source="$(mktemp -d)"
+docker volume create --driver local --opt type=none --opt o=bind \
+  --opt "device=$alias_source" "$alias_volume" >/dev/null 2>&1 || fail alias_fixture_create
+volumes+=("$alias_volume")
+rmdir "$alias_source"
+if result="$(WINEBOT_SHARED_VOLUME="$alias_volume" bash scripts/layers/preflight.sh --check 2>&1)"; then
+  fail alias_fixture_admitted
+fi
+[[ "$result" = "LAYERED_PREFLIGHT stage=volume_alias_or_driver" ]] || fail alias_fixture_wrong_diagnostic
+echo 'LAYER_RDTE stage=real_local_option_refused'
 docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 || fail compose_invalid
 
 mkdir -p apps/ci-fixture
