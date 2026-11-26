@@ -1,0 +1,324 @@
+name: FDR HV4a durable receiver across guest rollback
+on:
+  push:
+    branches: [rdte/fdr-lua-cli-20261125]
+    paths: [.github/workflows/fdr-cross-boundary-hv4.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Public-only scope and prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/fdr-lua-cli-20261125
+          mkdir -p receipts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils seabios libglib2.0-0t64 libpixman-1-0 libfdt1 libzstd1 mtools
+      - name: Retrieve qualified public installed disk
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45550202697
+          github-token: ${{ github.token }}
+          name: obsros-r23-stock-installed-baseline
+          path: base
+      - name: Retrieve exact source-built QEMU
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45271561618
+          github-token: ${{ github.token }}
+          name: obsros-qemu-source-sensor-pio
+          path: source-qemu
+      - name: Run bounded cross-boundary intervention and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 base/guest.qcow2 11564d4433b411c0a31e3398953c6d174129d18c53e22c040ba39e1befe4d1ed source-qemu/build/qemu-system-i386 | sha256sum -c -
+          chmod a-w base/guest.qcow2
+          chmod u+x source-qemu/build/qemu-system-i386
+          sha256sum base/guest.qcow2 source-qemu/build/qemu-system-i386 > receipts/input.sha256
+          ldd source-qemu/build/qemu-system-i386 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          source-qemu/build/qemu-system-i386 --version > receipts/qemu-version.txt
+          source-qemu/build/qemu-system-i386 -trace help > receipts/trace-events.txt 2>&1
+          grep -qw memory_region_ops_read receipts/trace-events.txt
+          grep -qw memory_region_ops_write receipts/trace-events.txt
+          test -r /usr/share/seabios/bios-256k.bin
+          test -r /usr/share/seabios/vgabios-stdvga.bin
+          sha256sum /usr/share/seabios/bios-256k.bin /usr/share/seabios/vgabios-stdvga.bin > receipts/firmware.sha256
+          qemu-img check base/guest.qcow2 > receipts/base-check.txt
+          cp --reflink=auto base/guest.qcow2 guest.qcow2
+          chmod u+w guest.qcow2
+          cat > receiver.py <<'PY'
+          import hashlib,json,os,sqlite3,sys
+          from pathlib import Path
+          CONTROL=b"fdrhv3ready\r\n"
+          TOKEN=b"fdrhv3external\r\n"
+          raw=Path(sys.argv[1]).read_bytes()
+          offset=int(sys.argv[2])
+          cut=sys.argv[3]
+          assert raw.startswith(CONTROL) and offset>=len(CONTROL) and offset<=len(raw)
+          assert (offset-len(CONTROL))%len(TOKEN)==0
+          suffix=raw[offset:]
+          assert suffix==TOKEN*(len(suffix)//len(TOKEN))
+          c=sqlite3.connect("receiver.db")
+          c.execute("PRAGMA synchronous=FULL")
+          c.execute("CREATE TABLE IF NOT EXISTS effects(scope TEXT NOT NULL, op TEXT NOT NULL,payload TEXT NOT NULL, PRIMARY KEY(scope,op))")
+          c.commit()
+          decisions=[]
+          for _ in range(len(suffix)//len(TOKEN)):
+              c.execute("BEGIN IMMEDIATE")
+              key=("HV4A-FIXTURE","operation-1")
+              payload=hashlib.sha256(TOKEN).hexdigest()
+              old=c.execute("SELECT payload FROM effects WHERE scope=? AND op=?",key).fetchone()
+              if old is None:
+                  c.execute("INSERT INTO effects VALUES(?,?,?)",(*key,payload))
+                  decision="APPLIED"
+              else:
+                  assert old==(payload,)
+                  decision="DEDUP"
+              c.commit()
+              if cut=="after-commit":
+                  assert decision=="APPLIED"
+                  os._exit(77)
+              decisions.append(decision)
+          print(json.dumps(dict(decisions=decisions,authority="NONE")),flush=True)
+          c.close()
+          PY
+          cp receiver.py receipts/
+          cat > replay.py <<'PY'
+          import contextlib,hashlib,json,pathlib,socket,sqlite3,subprocess,sys,time
+          P=pathlib.Path
+          receipts=P("receipts")
+          log=(receipts/"qmp.ndjson").open("w",buffering=1)
+          def record(direction,obj):
+              log.write(json.dumps({"direction":direction,"monotonic_ns":time.monotonic_ns(),"message":obj})+"\n")
+          class QMP:
+              def __init__(self):
+                  self.s=socket.socket(socket.AF_UNIX)
+                  self.s.settimeout(5)
+                  end=time.monotonic()+15
+                  while True:
+                      try: self.s.connect("qmp.sock"); break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if time.monotonic()>end: raise
+                          time.sleep(.1)
+                  self.f=self.s.makefile("rb")
+                  self.i=0
+                  assert "QMP" in self.recv()
+                  self.call("qmp_capabilities")
+              def recv(self):
+                  b=self.f.readline(262145)
+                  if not b or len(b)>262144 or not b.endswith(b"\n"): raise ValueError("invalid frame")
+                  m=json.loads(b); record("recv",m); return m
+              def call(self,cmd,args=None,expect_error=False):
+                  self.i+=1
+                  m={"execute":cmd,"id":self.i}
+                  if args is not None: m["arguments"]=args
+                  record("send",m)
+                  self.s.sendall(json.dumps(m).encode()+b"\r\n")
+                  for _ in range(128):
+                      r=self.recv()
+                      if "event" in r: continue
+                      assert r.get("id")==self.i,r
+                      if expect_error:
+                          assert "error" in r,r
+                          return r["error"]
+                      if "error" in r: raise RuntimeError(r)
+                      assert "return" in r,r
+                      return r["return"]
+                  raise RuntimeError("event budget exceeded")
+              def job(self,cmd,job_id,tag,expect_error=False):
+                  args={"job-id":job_id,"tag":tag,"devices":["guest-disk"]}
+                  if cmd!="snapshot-delete": args["vmstate"]="guest-disk"
+                  self.call(cmd,args)
+                  end=time.monotonic()+90
+                  while time.monotonic()<end:
+                      jobs=self.call("query-jobs")
+                      matching=[j for j in jobs if j["id"]==job_id]
+                      if len(matching)==1 and matching[0]["status"]=="concluded":
+                          j=matching[0]; assert j["type"]==cmd,j
+                          (receipts/(job_id+".json")).write_text(json.dumps(j,indent=2))
+                          assert ("error" in j)==expect_error,j
+                          self.call("job-dismiss",{"id":job_id})
+                          return
+                      time.sleep(.1)
+                  raise TimeoutError(job_id)
+          qemu=P("source-qemu/build/qemu-system-i386").resolve()
+          args=[str(qemu),"-accel","tcg","-machine","pc","-cpu","pentium3","-smp","1","-m","768","-nic","none","-display","none","-vga","std","-L","/usr/share/seabios","-bios","/usr/share/seabios/bios-256k.bin","-serial","file:receipts/guest.serial","-serial","file:receipts/external.serial","-monitor","none","-qmp","unix:qmp.sock,server=on,wait=off","-blockdev","driver=file,node-name=guest-file,filename=guest.qcow2","-blockdev","driver=qcow2,node-name=guest-disk,file=guest-file","-device","ide-hd,drive=guest-disk","-boot","order=c","-no-reboot"]
+          (receipts/"argv.json").write_text(json.dumps(args))
+          def bounded_wait(p,seconds):
+              end=time.monotonic()+seconds
+              while time.monotonic()<end:
+                  assert p.poll() is None,"guest exited"
+                  for n in ("guest.serial","external.serial","qemu-stderr.txt"):
+                      path=receipts/n
+                      assert not path.exists() or path.stat().st_size<=8*1024*1024,"output cap"
+                  time.sleep(.25)
+          with (receipts/"qemu-stderr.txt").open("wb") as err:
+              p=subprocess.Popen(args,stdout=err,stderr=err)
+              try:
+                  q=QMP()
+                  available={v["name"] for v in q.call("query-commands")}
+                  assert {"snapshot-save","snapshot-load","snapshot-delete","send-key","screendump"}<=available
+                  blocks=q.call("query-block")
+                  writable=[b["inserted"]["node-name"] for b in blocks if b.get("inserted") and not b["inserted"]["ro"]]
+                  assert writable==["guest-disk"],blocks
+                  def frame(name): q.call("screendump",{"filename":str(receipts/(name+".ppm"))})
+                  bounded_wait(p,80)
+                  frame("boot")
+                  def keys(*names):
+                      q.call("send-key",{"keys":[{"type":"qcode","data":k} for k in names],"hold-time":60})
+                      time.sleep(.15)
+                  def marker_action(label,command):
+                      keys("meta_l","r")
+                      bounded_wait(p,2)
+                      frame(label+"-run-dialog")
+                      special={" ":("spc",),"/":("slash",),">":("shift","dot"),":":("shift","semicolon"),"\\":("backslash",),".":("dot",)}
+                      for ch in command:
+                          keys(*special.get(ch,(ch,)))
+                      frame(label+"-typed")
+                      keys("ret")
+                  serial=receipts/"external.serial"
+                  control=b"fdrhv3ready"
+                  marker_action("delivery-control","cmd /c echo fdrhv3ready>com2")
+                  bounded_wait(p,10)
+                  frame("delivery-control-post")
+                  data=serial.read_bytes()
+                  (receipts/"delivery-control.bin").write_bytes(data)
+                  (receipts/"delivery-control.json").write_text(json.dumps(dict(length=len(data),count=data.count(control))))
+                  assert data.count(control)==1,"COM2 delivery not established"
+                  q.call("stop")
+                  assert not q.call("query-status")["running"]
+                  frame("checkpoint")
+                  q.job("snapshot-save","save0","base")
+                  token=b"fdrhv3external"
+                  previous=b""
+                  observations=[]
+                  receiver_rows=[]
+                  def observe(label,expected):
+                      global previous
+                      # Read actual host-owned serial sink; no host injection of token.
+                      data=serial.read_bytes()
+                      row=dict(label=label,length=len(data),sha256=__import__("hashlib").sha256(data).hexdigest(),prefix_preserved=data.startswith(previous),count=data.count(token),expected=expected)
+                      observations.append(row)
+                      (receipts/"external-oracle.json").write_text(json.dumps(observations,indent=2))
+                      (receipts/(label+"-serial.bin")).write_bytes(data)
+                      print(json.dumps(row),flush=True)
+                      # Observe only actual delivered serial bytes; re-read A1 after lost receipt.
+                      offset=len(control) if label in ("base","a1","b_idle") else len(previous)
+                      mode="after-commit" if label=="a1" else "none"
+                      worker=subprocess.run([sys.executable,"receiver.py",str(receipts/(label+"-serial.bin")),str(offset),mode],capture_output=True,text=True,timeout=10)
+                      expected_exit=77 if label=="a1" else 0
+                      assert worker.returncode==expected_exit,(worker.returncode,worker.stdout,worker.stderr)
+                      if label=="a1":
+                          assert not worker.stdout
+                          decision="LOST_RECEIPT"
+                      else:
+                          out=json.loads(worker.stdout)
+                          assert out["authority"]=="NONE"
+                          assert out["decisions"]==([] if label=="base" else ["DEDUP"])
+                          decision="NO_DELIVERY" if label=="base" else "DEDUP"
+                      with contextlib.closing(sqlite3.connect("receiver.db")) as db,contextlib.closing(sqlite3.connect(receipts/(label+"-receiver.db"))) as dest:
+                          assert db.execute("PRAGMA integrity_check").fetchall()==[("ok",)]
+                          rows=db.execute("SELECT scope,op,payload FROM effects").fetchall()
+                          expect=[] if label=="base" else [("HV4A-FIXTURE","operation-1",hashlib.sha256(b"fdrhv3external\r\n").hexdigest())]
+                          assert rows==expect,rows
+                          db.backup(dest)
+                      rec=dict(label=label,offset=offset,delivered=data.count(token),effect_rows=len(rows),receiver_exit=worker.returncode,decision=decision,authority="NONE")
+                      receiver_rows.append(rec)
+                      (receipts/"receiver-oracle.json").write_text(json.dumps(receiver_rows,indent=2))
+                      print(json.dumps(rec),flush=True)
+                      previous=data
+                  observe("base",0)
+                  for idx,label,intervene in [(0,"a1",True),(1,"b_idle",False),(2,"a2",True)]:
+                      if idx:
+                          q.job("snapshot-load",f"load{idx}","base")
+                          assert not q.call("query-status")["running"]
+                      frame(label+"-restored-paused")
+                      q.call("cont")
+                      bounded_wait(p,2)
+                      frame(label+"-pre")
+                      if intervene:
+                          marker_action(label+"-file",r"cmd /c echo fdrhv2>c:\fdrhv2.txt")
+                          bounded_wait(p,4)
+                          marker_action(label+"-serial","cmd /c echo fdrhv3external>com2")
+                      bounded_wait(p,25)
+                      frame(label+"-post")
+                      q.call("stop")
+                      assert not q.call("query-status")["running"]
+                      q.job("snapshot-save","capture"+str(idx),label)
+                      observe(label,[1,1,2][idx])
+                  q.call("quit")
+                  p.wait(timeout=15)
+                  assert p.returncode==0
+              finally:
+                  if p.poll() is None:
+                      p.terminate()
+                      try: p.wait(timeout=10)
+                      except subprocess.TimeoutExpired: p.kill(); p.wait()
+          (receipts/"classification.txt").write_text("SNAPSHOTS_CAPTURED; OFFLINE_GUEST_FILESYSTEM_WITNESS_REQUIRED; NO_EXTERNAL_EFFECT_ROLLBACK_CLAIM\n")
+          PY
+          cp replay.py receipts/
+          timeout 620s python3 replay.py
+          qemu-img check guest.qcow2 > receipts/replay-disk-check.txt
+          qemu-img snapshot -l guest.qcow2 > receipts/snapshots.txt
+          cat > disk_witness.py <<'PY'
+          import json,pathlib,struct,subprocess
+          P=pathlib.Path
+          receipts=P("receipts")
+          results=[]
+          for tag,want in [("base",False),("a1",True),("b_idle",False),("a2",True)]:
+              raw=P("offline.raw")
+              try:
+                  subprocess.run(["qemu-img","convert","-l","snapshot.name="+tag,"-O","raw","-S","4k","guest.qcow2",str(raw)],check=True,timeout=90)
+                  with raw.open("rb") as f: mbr=f.read(512)
+                  (receipts/(tag+"-mbr.bin")).write_bytes(mbr)
+                  assert len(mbr)==512 and mbr[510:]==b"\x55\xaa"
+                  parts=[(mbr[446+16*i+4],*struct.unpack_from("<II",mbr,446+16*i+8)) for i in range(4)]
+                  fat=[(t,s,n) for t,s,n in parts if t in (1,4,6,11,12,14) and s and n]
+                  assert len(fat)==1 and (fat[0][1]+fat[0][2])*512<=raw.stat().st_size,parts
+                  image=str(raw)+"@@"+str(fat[0][1]*512)
+                  listing=subprocess.run(["mdir","-b","-i",image,"::/"],capture_output=True,timeout=15)
+                  (receipts/(tag+"-root.txt")).write_bytes(listing.stdout+listing.stderr)
+                  assert listing.returncode==0,listing.stderr
+                  listed=any(line.strip().upper().endswith(b"/FDRHV2.TXT") for line in listing.stdout.splitlines())
+                  marker=receipts/(tag+"-marker.bin")
+                  copy=subprocess.run(["mcopy","-i",image,"::/FDRHV2.TXT",str(marker)],capture_output=True,timeout=15)
+                  (receipts/(tag+"-mcopy.txt")).write_bytes(copy.stdout+copy.stderr)
+                  present=copy.returncode==0 and marker.is_file()
+                  data=marker.read_bytes() if present else None
+                  row=dict(tag=tag,partition=fat[0],listed=listed,present=present,mcopy_exit=copy.returncode,marker_hex=data.hex() if data is not None else None)
+                  row["expected"]=want
+                  row["pass"]=listed==want and present==want and (data==b"fdrhv2\r\n" if want else data is None)
+                  results.append(row)
+                  print(json.dumps(row),flush=True)
+              finally: raw.unlink(missing_ok=True)
+          (receipts/"disk-oracle.json").write_text(json.dumps(results,indent=2))
+          assert len(results)==4 and all(r["pass"] for r in results),results
+          print("HV3_GUEST_FILE_ORACLE_PASS",flush=True)
+          rows=json.loads((receipts/"external-oracle.json").read_text())
+          assert len(rows)==4 and all(r["prefix_preserved"] and r["count"]==r["expected"] for r in rows),rows
+          print("HV3_CROSS_BOUNDARY_SCOPED_PASS",flush=True)
+          receiver_rows=json.loads((receipts/"receiver-oracle.json").read_text())
+          assert [r["effect_rows"] for r in receiver_rows]==[0,1,1,1]
+          assert [r["receiver_exit"] for r in receiver_rows]==[0,77,0,0]
+          assert [r["delivered"] for r in receiver_rows]==[0,1,1,2]
+          print("HV4A_SCOPED_RECEIVER_RECOVERY_PASS",flush=True)
+          PY
+          cp disk_witness.py receipts/
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 base/guest.qcow2 | sha256sum -c -
+          timeout 400s python3 disk_witness.py
+      - name: Retain bounded replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdr-cross-boundary-hv4a-evidence
+          path: receipts/
+          retention-days: 2
+          if-no-files-found: warn
