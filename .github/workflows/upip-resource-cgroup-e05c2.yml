@@ -1,0 +1,86 @@
+name: VirtIO instrumentation process group resource caps E05c2
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/upip-resource-cgroup-e05c2.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  cgroup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/upip-e05c2 -f description='Public cgroup resource experiment' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Exercise isolated transient service limits
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cat > evidence/caps.py <<'PY'
+          import os,pathlib,subprocess,sys,time,json,errno
+          P=pathlib.Path
+          mode=sys.argv[1]
+          scope=next(x.split(':',2)[2] for x in P('/proc/self/cgroup').read_text().splitlines() if x.startswith('0::'))
+          cg=P('/sys/fs/cgroup')/scope.lstrip('/')
+          assert 'upip-e05c2-' in scope and cg.is_dir(),scope
+          def read(name):return (cg/name).read_text().strip()
+          def stats(name):return {k:int(v) for k,v in (l.split() for l in read(name).splitlines())}
+          row=dict(mode=mode,scope=scope,memory_max=read('memory.max'),pids_max=read('pids.max'),cpu_max=read('cpu.max'),swap_max=read('memory.swap.max'))
+          assert row['memory_max']=='100663296' and row['pids_max']=='12' and row['cpu_max']=='25000 100000' and row['swap_max']=='0',row
+          if mode=='pids':
+              before=stats('pids.events');children=[];refused=False
+              try:
+                  for i in range(20):
+                      try:children.append(subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(8)']))
+                      except OSError as e:
+                          assert e.errno==errno.EAGAIN,e
+                          refused=True;break
+                  current=int(read('pids.current'));after=stats('pids.events')
+                  assert refused and 0<len(children)<20 and current<=12 and after['max']>before['max']
+                  row.update(children=len(children),current=current,before=before,after=after,refused=refused)
+              finally:
+                  for p in children:
+                      if p.poll() is None:p.terminate()
+                  for p in children:p.wait(timeout=3)
+          elif mode=='cpu':
+              before=stats('cpu.stat');end=time.monotonic()+2
+              while time.monotonic()<end:pass
+              after=stats('cpu.stat')
+              assert after['nr_throttled']>before['nr_throttled'] and after['throttled_usec']>before['throttled_usec']
+              row.update(before=before,after=after)
+          elif mode=='memory':
+              before=stats('memory.events')
+              child=subprocess.Popen([sys.executable,'-I','-c','import time; x=bytearray(160*1024*1024);time.sleep(1)'])
+              code=child.wait(timeout=8);after=stats('memory.events')
+              assert code==-9 and after['oom_kill']>before['oom_kill'],(code,before,after)
+              row.update(code=code,before=before,after=after)
+          else:raise AssertionError(mode)
+          print(json.dumps(row),flush=True)
+          PY
+          test "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs
+          uname -a > evidence/environment.txt
+          systemd --version >> evidence/environment.txt
+          python3 --version >> evidence/environment.txt
+          for mode in pids cpu memory; do
+            unit="upip-e05c2-$GITHUB_RUN_ID-$mode"
+            sudo systemd-run --unit="$unit" --wait --pipe --collect --uid="$(id -u)" --property=MemoryMax=96M --property=MemorySwapMax=0 --property=TasksMax=12 --property=CPUQuota=25% --property=RuntimeMaxSec=15s --property=OOMPolicy=continue /usr/bin/python3 "$PWD/evidence/caps.py" "$mode" 2> "evidence/$mode.stderr" | tee "evidence/$mode.json"
+          done
+          python3 -c 'import json,pathlib; assert all(json.loads(pathlib.Path("evidence",m+".json").read_text())["mode"]==m for m in ("pids","cpu","memory"))'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upip-e05c2-cgroup
+          path: evidence/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/upip-e05c2 -f description='Public cgroup wrapper' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
