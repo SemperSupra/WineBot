@@ -32,3 +32,28 @@ jobs:
           GO111MODULE=off go build -o "$RUNNER_TEMP/winebot-protected-owner" ./rdte/protected-control
           test -x "$RUNNER_TEMP/winebot-protected-owner"
           echo 'PROTECTED_OWNER_RDTE=PASS'
+
+      - name: Verify actual lifecycle operator binary on disposable control volume
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d)"
+          trap 'sudo rm -rf -- "$root"' EXIT
+          sudo chown 0:0 "$root"
+          sudo chmod 0700 "$root"
+          sudo sh -c 'umask 077; printf "%s\n" "{\"schema\":\"winebot/writer-lifecycle/v1\",\"generation\":1,\"phase\":\"RESERVED\",\"scope\":\"fixture-scope\"}" > "$1/.winebot-lifecycle-v1.json"' sh "$root"
+          invoke() {
+            local uid="$1"
+            shift
+            docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user "$uid:$uid" --mount "type=bind,src=$root,dst=/winebot-control" --mount "type=bind,src=$RUNNER_TEMP/winebot-protected-owner,dst=/operator,readonly" debian@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a /operator "$@"
+          }
+          check_receipt() {
+            python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["generation"]==1 and r["scope"]=="fixture-scope" and r["termination"]=="UNKNOWN" and r["admission"]=="BLOCKED" and r["phase"]==sys.argv[1] and r["durable_stop"]==(sys.argv[2]=="true")' "$@"
+          }
+          invoke 0 lifecycle-status | check_receipt RESERVED false
+          if invoke 1000 lifecycle-stop 1 fixture-scope >/dev/null 2>&1; then exit 1; fi
+          if invoke 0 lifecycle-stop 2 fixture-scope >/dev/null 2>&1; then exit 1; fi
+          invoke 0 lifecycle-status | check_receipt RESERVED false
+          invoke 0 lifecycle-stop 1 fixture-scope | check_receipt STOP_REQUESTED true
+          invoke 0 lifecycle-status | check_receipt RESERVED true
+          echo 'LIFECYCLE_OPERATOR_RDTE=PASS'
