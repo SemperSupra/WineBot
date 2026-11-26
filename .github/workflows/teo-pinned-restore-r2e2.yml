@@ -1,0 +1,213 @@
+name: Pinned QEMU 11 candidate persistent checkpoint R2e2
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-pinned-restore-r2e2.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare public kernel and original guest fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p receipts root/bin
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils busybox-static cpio libfdt1 libslirp0 libpixman-1-0 libglib2.0-0t64 libgnutls30t64 liburing2 libaio1t64 libnuma1 libzstd1 libncursesw6
+          qemu-system-x86_64 --version > receipts/qemu-version.txt
+          dpkg-query -W qemu-system-x86 busybox-static cpio > receipts/packages.txt
+          sha256sum "$(command -v qemu-system-x86_64)" > receipts/qemu.sha256
+          curl -fL --retry 2 --max-time 90 https://storage.tuxboot.com/buildroot/20241119/x86_64/bzImage -o kernel
+          echo 'f57bfc6553bcd6e0a54aab86095bf642b33b5571d14e3af1731b18c87ed5aef8  kernel' | sha256sum -c -
+          cp "$(command -v busybox)" root/bin/busybox
+          cp /dev/null receipts/init
+          cat > receipts/init <<'SH'
+          #!/bin/busybox sh
+          set -e
+          export PATH=/bin
+          test -c /dev/ttyS0
+          exec 3</dev/ttyS0
+          /bin/busybox stty -F /dev/ttyS0 raw -echo
+          echo TEO_SEED
+          IFS= read -r seed <&3 || exit 1
+          echo TEO_READY
+          IFS= read -r line <&3 || exit 1
+          echo TEO_BEGIN
+          /bin/busybox printf '%s:%s\n' "$seed" "$line" | /bin/busybox sha256sum
+          echo TEO_END
+          /bin/busybox poweroff -f
+          SH
+          cp receipts/init root/init
+          chmod 755 root/init
+          mkdir -p root/dev root/proc root/sys
+          sudo mknod root/dev/console c 5 1
+          sudo mknod root/dev/null c 1 3
+          sudo mknod root/dev/ttyS0 c 4 64
+          (cd root && find . -print0 | LC_ALL=C sort -z | sudo cpio --null -o -H newc --owner=0:0 --reproducible) > initramfs
+          sha256sum kernel initramfs receipts/init root/bin/busybox > receipts/inputs.sha256
+      - name: Reuse exact public pinned QEMU candidate build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15069398884/zip > candidate.zip
+          echo '446ef34df108998c1a2dd016b7ab03107c1826752f7d144cef45079853d1d375  candidate.zip' | sha256sum -c -
+          unzip -q candidate.zip -d candidate
+          (cd candidate && sha256sum -c SHA256SUMS) | tee receipts/candidate-manifest-check.txt
+          test "$(cat candidate/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod +x candidate/qemu-system-x86_64
+          ldd candidate/qemu-system-x86_64 > receipts/candidate-ldd.txt
+          ! grep -q 'not found' receipts/candidate-ldd.txt
+          candidate/qemu-system-x86_64 --version > receipts/candidate-version.txt
+          sha256sum candidate/qemu-system-x86_64 > receipts/candidate.sha256
+          cp candidate/upstream-sha.txt candidate/SHA256SUMS receipts/
+      - name: Save once and restore in independent QEMU processes
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,json,os,pathlib,selectors,shutil,socket,subprocess,time
+          p=pathlib.Path("receipts")
+          def sha(f):
+              with open(f,"rb") as s:return hashlib.file_digest(s,"sha256").hexdigest()
+          class VM:
+              def __init__(self,name,disk,paused=False):
+                  self.name=name; self.t0=time.monotonic(); self.seq=0; self.buf=b""
+                  self.err=(p/f"{name}.stderr").open("wb"); self.out=(p/f"{name}.serial").open("wb")
+                  self.qlog=(p/f"{name}.qmp.jsonl").open("w")
+                  args=["./candidate/qemu-system-x86_64","-L","candidate/pc-bios","-machine","q35","-cpu","Nehalem","-accel","tcg,thread=single","-smp","1","-m","256","-nodefaults","-display","none","-monitor","none","-nic","none","-no-reboot","-serial","stdio","-kernel","kernel","-initrd","initramfs","-append","console=ttyS0 rdinit=/init panic=-1 nokaslr","-blockdev",f"driver=file,node-name=file0,filename={disk}","-blockdev","driver=qcow2,node-name=snap,file=file0","-qmp",f"unix:{name}.sock,server=on,wait=off"]
+                  if paused:args+=["-S"]
+                  self.proc=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err,bufsize=0)
+                  self.sock=socket.socket(socket.AF_UNIX); self.sock.settimeout(10)
+                  deadline=time.monotonic()+10
+                  while True:
+                      try:self.sock.connect(f"{name}.sock");break
+                      except (FileNotFoundError,ConnectionRefusedError):
+                          if self.proc.poll() is not None or time.monotonic()>deadline:raise
+                          time.sleep(.02)
+                  self.f=self.sock.makefile("rwb")
+                  assert "QMP" in self.recv()
+                  self.cmd("qmp_capabilities")
+                  self.sel=selectors.DefaultSelector();self.sel.register(self.proc.stdout,selectors.EVENT_READ)
+                  self.event("process",pid=self.proc.pid)
+              def event(self,kind,**kw):
+                  with (p/f"{self.name}.events.jsonl").open("a") as f:f.write(json.dumps({"kind":kind,"seconds":time.monotonic()-self.t0,**kw})+"\n")
+              def recv(self):
+                  row=json.loads(self.f.readline());self.qlog.write(json.dumps({"recv":row})+"\n");self.qlog.flush();return row
+              def cmd(self,op,**args):
+                  self.seq+=1; req={"execute":op,"id":self.seq,"arguments":args}
+                  self.qlog.write(json.dumps({"send":req})+"\n");self.qlog.flush()
+                  self.f.write(json.dumps(req).encode()+b"\n");self.f.flush()
+                  while True:
+                      r=self.recv()
+                      if r.get("id")==self.seq:
+                          if "error" in r:raise RuntimeError(r)
+                          return r["return"]
+              def snapshot(self,op,job):
+                  start=time.monotonic()
+                  self.cmd(op,**{"job-id":job,"tag":"base","vmstate":"snap","devices":["snap"]})
+                  deadline=start+30
+                  while time.monotonic()<deadline:
+                      rows=[x for x in self.cmd("query-jobs") if x["id"]==job]
+                      if rows and rows[0]["status"]=="concluded":
+                          assert len(rows)==1 and "error" not in rows[0] and rows[0]["current-progress"]==rows[0]["total-progress"]==1,rows
+                          self.cmd("job-dismiss",id=job)
+                          assert not any(x["id"]==job for x in self.cmd("query-jobs"))
+                          return time.monotonic()-start
+                      time.sleep(.02)
+                  raise TimeoutError(job)
+              def pump(self,marker=None):
+                  deadline=time.monotonic()+35
+                  while time.monotonic()<deadline:
+                      if marker is not None and marker in self.buf:return
+                      for key,_ in self.sel.select(.1):
+                          b=os.read(key.fd,65536)
+                          if b:self.out.write(b);self.out.flush();self.buf+=b
+                          else:self.sel.unregister(key.fileobj)
+                      if self.proc.poll() is not None and not self.sel.get_map():
+                          assert marker is None and self.proc.returncode==0
+                          return
+                  raise TimeoutError((self.name,marker))
+              def send(self,token):
+                  for b in token:
+                      assert os.write(self.proc.stdin.fileno(),bytes([b]))==1
+                      self.event("host_write",byte=b);time.sleep(.02)
+              def quit(self):
+                  self.cmd("quit");assert self.proc.wait(timeout=10)==0
+              def close(self):
+                  if self.proc.poll() is None:
+                      self.proc.kill();self.proc.wait()
+                  self.sel.close();self.f.close();self.sock.close();self.out.close();self.err.close();self.qlog.close()
+          def create(path):subprocess.run(["qemu-img","create","-f","qcow2",path,"64M"],check=True)
+          seed=b"public-state-seed\n"; tokens={"a":b"alpha\n","b":b"bravo\n"}; results={}
+          create("base.qcow2")
+          v=VM("producer","base.qcow2")
+          try:
+              v.pump(b"TEO_SEED");v.send(seed);v.pump(b"TEO_READY")
+              ready=time.monotonic()-v.t0
+              v.cmd("stop");assert not v.cmd("query-status")["running"]
+              save=v.snapshot("snapshot-save","save0")
+              assert not v.cmd("query-status")["running"]
+              v.quit()
+          finally:v.close()
+          basehash=sha("base.qcow2")
+          subprocess.run(["qemu-img","snapshot","-l","base.qcow2"],check=True,stdout=(p/"snapshots.txt").open("w"))
+          results["producer"]={"ready_s":ready,"save_s":save,"bytes":os.stat("base.qcow2").st_size,"sha256":basehash}
+          for name,token in tokens.items():
+              cold="cold-"+name;create(cold+".qcow2");v=VM(cold,cold+".qcow2")
+              try:
+                  v.pump(b"TEO_SEED");v.send(seed);v.pump(b"TEO_READY")
+                  ready=time.monotonic()-v.t0;v.send(token);v.pump()
+                  results[cold]={"ready_s":ready,"total_s":time.monotonic()-v.t0}
+              finally:v.close()
+              clone="restore-"+name;start=time.monotonic();shutil.copyfile("base.qcow2",clone+".qcow2");copy=time.monotonic()-start
+              assert sha(clone+".qcow2")==basehash
+              v=VM(clone,clone+".qcow2",True)
+              try:
+                  load=v.snapshot("snapshot-load","load-"+name)
+                  assert not v.cmd("query-status")["running"]
+                  v.cmd("cont");ready=time.monotonic()-v.t0
+                  v.send(token);v.pump()
+                  results[clone]={"copy_s":copy,"load_s":load,"ready_s":ready,"total_s":time.monotonic()-v.t0}
+              finally:v.close()
+              assert sha("base.qcow2")==basehash
+          assert os.stat("base.qcow2").st_size <= 64*1024*1024
+          shutil.copyfile("base.qcow2",p/"checkpoint.qcow2")
+          assert sha(p/"checkpoint.qcow2")==basehash
+          (p/"results.json").write_text(json.dumps(results,indent=2))
+          PY
+          python3 receipts/drive.py
+      - name: Independently score guest state and input isolation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("receipts"); scores={}
+          for arm,token in [("cold-a",b"alpha"),("restore-a",b"alpha"),("cold-b",b"bravo"),("restore-b",b"bravo")]:
+              lines=(p/f"{arm}.serial").read_bytes().splitlines()
+              expected=hashlib.sha256(b"public-state-seed:"+token+b"\n").hexdigest().encode()
+              assert lines.count(b"TEO_BEGIN")==lines.count(b"TEO_END")==1
+              i=lines.index(b"TEO_BEGIN");assert lines[i+1].split()==[expected,b"-"] and lines[i+2]==b"TEO_END"
+              events=[json.loads(x) for x in (p/f"{arm}.events.jsonl").read_text().splitlines()]
+              written=bytes(x["byte"] for x in events if x["kind"]=="host_write")
+              assert written==(b"public-state-seed\n" if arm.startswith("cold") else b"")+token+b"\n"
+              if arm.startswith("restore"):assert b"TEO_SEED" not in lines and b"TEO_READY" not in lines
+              scores[arm]={"expected":expected.decode(),"host_bytes":len(written),"pass":True}
+          assert scores["restore-a"]["expected"]!=scores["restore-b"]["expected"]
+          r=json.loads((p/"results.json").read_text()); assert hashlib.sha256((p/"checkpoint.qcow2").read_bytes()).hexdigest()==r["producer"]["sha256"]
+          assert (p/"checkpoint.qcow2").stat().st_size==r["producer"]["bytes"]
+          assert "11." in (p/"candidate-version.txt").read_text()
+          (p/"oracle.json").write_text(json.dumps(scores,indent=2))
+          print(json.dumps(scores,indent=2))
+          PY
+      - name: Retain public-safe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teo-pinned-restore-r2e2
+          path: receipts/
+          retention-days: 1
