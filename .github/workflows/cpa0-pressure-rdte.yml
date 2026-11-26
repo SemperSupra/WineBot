@@ -1,0 +1,27 @@
+name: CPA0 Durable STOP Under Pressure RDTE
+
+on:
+  pull_request:
+    paths:
+      - 'rdte/protected-control/cpa0_pressure_test.go'
+      - '.github/workflows/cpa0-pressure-rdte.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cpa0-pressure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GO111MODULE: 'off'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Compile exact bounded test
+        run: go test -c -o "$RUNNER_TEMP/cpa0-pressure.test" ./rdte/protected-control
+      - name: Verify actual CPU throttling, durable STOP and memory OOM
+        run: sudo -n env WINEBOT_REAL_CPA0_PRESSURE=1 "$RUNNER_TEMP/cpa0-pressure.test" -test.run '^TestCPA0DurableStopPressure$' -test.timeout=90s -test.v
