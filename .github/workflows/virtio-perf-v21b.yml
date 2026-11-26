@@ -1,0 +1,289 @@
+name: VirtIO repeated resource and latency qualification
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-perf-v21b.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  storage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-perf-v21b -f description='Public real storage workload' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Retrieve exact public source-built executables
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-source-binaries-v11
+          run-id: 45568656236
+          github-token: ${{ github.token }}
+          path: binaries
+      - name: Verify independent executable and firmware pins
+        run: |
+          set -euo pipefail
+          cat > receipts/expected.sha256 <<'EOF'
+          4d567f217c247a9d39f3d5e364992dbf16e2eb624fc1eee09c70828aae40dda5  binaries/stock-qemu-system-x86_64
+          8ba723b03c95781e9a47717fd1af3dcd1f634c0f989b6cead7a2fb6aaaa906b1  binaries/candidate-qemu-system-x86_64
+          ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650  binaries/pc-bios/bios-256k.bin
+          cdf057a71b07e3b52b19cbe210bdefa59250d01a9810b960f7fe1f98eed95a27  binaries/pc-bios/kvmvapic.bin
+          9c49e255340c78fc12e54ed043462bca02fb7fca29b7cfab62ff88a5344b6950  binaries/pc-bios/linuxboot_dma.bin
+          0583ddca4193250114edc878307dbba291095f28775b886c3bc227fc409998ed  binaries/candidate.patch
+          EOF
+          sha256sum -c receipts/expected.sha256
+          test "$(cat binaries/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod u+x binaries/*qemu-system-x86_64
+          cp binaries/candidate.patch binaries/upstream-sha.txt receipts/
+      - name: Construct Linux guest with real applications
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static linux-image-virtual cpio kmod zstd sqlite3 fio e2fsprogs libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          for q in binaries/*qemu-system-x86_64; do
+            "$q" --version
+            ldd "$q"
+            if ldd "$q" | grep -q 'not found'; then exit 1; fi
+          done > receipts/source-binary-versions.txt
+          binaries/stock-qemu-system-x86_64 -trace help > receipts/stock-trace-help.txt 2>&1
+          binaries/candidate-qemu-system-x86_64 -trace help > receipts/candidate-trace-help.txt 2>&1
+          ! grep -q '^virtqueue_host_advance' receipts/stock-trace-help.txt
+          grep -q '^virtqueue_host_advance' receipts/candidate-trace-help.txt
+          dpkg-query -W qemu-system-x86 linux-image-virtual sqlite3 fio e2fsprogs > receipts/packages.txt
+          /usr/bin/fio --version > receipts/fio-version.txt
+          /usr/bin/sqlite3 --version > receipts/sqlite-version.txt
+          k=$(find /boot -maxdepth 1 -name 'vmlinuz-*generic' -printf '%f\n' | sort -V | tail -1)
+          test -n "$k"
+          ver=$(echo "$k" | sed 's/^vmlinuz-//')
+          echo "$ver" > receipts/kernel-release.txt
+          sudo cp "/boot/$k" kernel.bin
+          sudo chown "$(id -u):$(id -g)" kernel.bin
+          chmod u+r kernel.bin
+          cat /proc/cpuinfo > receipts/runner-cpuinfo.txt
+          uname -a > receipts/runner-uname.txt
+          free -b > receipts/runner-memory.txt
+          mkdir -p root/{bin,dev,proc,sys,modules,mnt,tmp,usr/bin}
+          cp "$(command -v busybox)" root/bin/busybox
+          for app in /usr/bin/sqlite3 /usr/bin/fio; do
+            cp -L --parents "$app" root
+            ldd "$app" >> receipts/ldd.txt
+            ldd "$app" | awk '$2=="=>" && $3 ~ /^\// {print $3} $1 ~ /^\// {print $1}' | sort -u | while read -r lib; do cp -L --parents "$lib" root; done
+          done
+          ! grep -q 'not found' receipts/ldd.txt
+          for m in virtio_pci virtio_blk ext4; do modprobe -S "$ver" --show-depends "$m"; done > receipts/module-dependencies.txt
+          awk '$1=="insmod" && !seen[$2]++ {print $2}' receipts/module-dependencies.txt > module-paths.txt
+          : > root/modules/load
+          while IFS= read -r src; do
+            base=$(basename "$src" | sed -E 's/\.(zst|xz|gz)$//')
+            case "$src" in
+              *.ko.zst) zstd -dc "$src" > "root/modules/$base";;
+              *.ko.xz) xz -dc "$src" > "root/modules/$base";;
+              *.ko.gz) gzip -dc "$src" > "root/modules/$base";;
+              *.ko) cp "$src" "root/modules/$base";;
+              *) exit 1;;
+            esac
+            echo "/modules/$base" >> root/modules/load
+          done < module-paths.txt
+          find root/modules -type f -exec sha256sum {} \; > receipts/modules.sha256
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          while IFS= read -r m; do $B insmod "$m"; done < /modules/load
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DEVICE $d"
+            $B readlink "$d/driver" || true
+            if [ -r "$d/features" ]; then echo "FEATURES $($B cat "$d/features")"; fi
+          done
+          $B mount -t ext4 /dev/vda /mnt
+          /usr/bin/sqlite3 -batch -bail /mnt/app.db <<'SQL'
+          PRAGMA journal_mode=WAL;
+          PRAGMA synchronous=FULL;
+          CREATE TABLE items(id INTEGER PRIMARY KEY, v TEXT NOT NULL);
+          BEGIN;
+          WITH RECURSIVE seq(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM seq WHERE i<1000)
+          INSERT INTO items SELECT i,printf('item-%06d',i) FROM seq;
+          COMMIT;
+          BEGIN;
+          UPDATE items SET v='modified' WHERE id=500;
+          ROLLBACK;
+          PRAGMA wal_checkpoint(TRUNCATE);
+          PRAGMA integrity_check;
+          SELECT count(*),sum(id),sum(v=printf('item-%06d',id)) FROM items;
+          SQL
+          /usr/bin/fio --name=verified --filename=/mnt/fio.bin --rw=randwrite --size=64m --bs=4k --ioengine=libaio --iodepth=8 --direct=1 --verify=crc32c --do_verify=1 --verify_fatal=1 --randrepeat=1 --numjobs=1 --output-format=json --output=/mnt/fio.json
+          $B sync
+          $B umount /mnt
+          echo RDTE_REAL_WORKLOAD_PASS
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz /usr/bin/fio /usr/bin/sqlite3 "$(command -v qemu-system-x86_64)" > receipts/binaries.sha256
+          truncate -s 256M base.raw
+          mkfs.ext4 -q -F -U 00000000-0000-4000-8000-000000000001 base.raw
+          sha256sum base.raw > receipts/base.sha256
+      - name: Run real application parity arms
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import hashlib,json,pathlib,re,shutil,subprocess,time
+          P=pathlib.Path; R=P("receipts")
+          def sha(p):
+              with p.open("rb") as f: return hashlib.file_digest(f,"sha256").hexdigest()
+          baseline=sha(P("base.raw"))
+          def phase(name,packed,trace_on,candidate):
+              Q=str(P("binaries/"+("candidate" if candidate else "stock")+"-qemu-system-x86_64").resolve())
+              events=["virtqueue_pop","virtqueue_fill","virtqueue_flush"]
+              if candidate: events.append("virtqueue_host_advance")
+              helptext=(R/(("candidate" if candidate else "stock")+"-trace-help.txt")).read_text()
+              present=[n for n in events if re.search(r"(?m)^\s*"+n+r"(?:\s|$)",helptext)]
+              assert set(events)==set(present),present
+              disk=P(name+".raw");shutil.copyfile("base.raw",disk)
+              ev=R/(name+".events");ev.write_text("\n".join(present)+"\n" if trace_on else "")
+              trace=R/(name+".trace");log=R/(name+".serial")
+              argv=[Q,"-L",str(P("binaries/pc-bios").resolve()),"-accel","tcg","-machine","pc","-m","768","-smp","2","-nodefaults","-nic","none","-display","none","-monitor","none","-serial","stdio","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 quiet","-drive",f"file={disk},format=raw,if=none,id=d,cache=none,werror=report,rerror=report","-device","virtio-blk-pci,drive=d,disable-legacy=on,packed="+("on" if packed else "off"),"-trace","events="+str(ev),"-D",str(trace)]
+              (R/(name+"-argv.json")).write_text(json.dumps(argv))
+              import os,resource,threading
+              t=time.perf_counter_ns()
+              with log.open("wb") as f:
+                  p=subprocess.Popen(argv,stdout=f,stderr=f)
+                  exceeded=[]
+                  stop=threading.Event()
+                  def budget():
+                      while not stop.wait(.1):
+                          if log.stat().st_size>2*1024*1024 or (trace.exists() and trace.stat().st_size>96*1024*1024):
+                              exceeded.append("output budget")
+                              try: os.kill(p.pid,9)
+                              except ProcessLookupError: pass
+                              return
+                  watcher=threading.Thread(target=budget,daemon=True);watcher.start()
+                  # wait4 returns exact child CPU and peak RSS; separate watchdog bounds runtime.
+                  timed_out=[]
+                  def kill_timeout():
+                      timed_out.append(True)
+                      try: os.kill(p.pid,9)
+                      except ProcessLookupError: pass
+                  timer=threading.Timer(240,kill_timeout);timer.start()
+                  try:
+                      pid,status,usage=os.wait4(p.pid,0)
+                      p.returncode=os.waitstatus_to_exitcode(status)
+                      guest_wall=(time.perf_counter_ns()-t)/1e9
+                  finally:
+                      timer.cancel();stop.set();watcher.join();timer.join()
+                  assert not exceeded and not timed_out,(exceeded,timed_out)
+                  cpu_seconds=usage.ru_utime+usage.ru_stime
+                  peak_rss_kib=usage.ru_maxrss
+              s=log.read_text(errors="replace");assert p.returncode==0 and "RDTE_REAL_WORKLOAD_PASS" in s,s[-5000:]
+              assert "virtio_blk" in s
+              features=re.findall(r"FEATURES ([01]+)",s)
+              assert len(features)==1 and len(features[0])>34 and (features[0][34]=="1")==packed,features
+              assert "1000|500500|1000" in s
+              assert "ok" in s.splitlines()
+              with (R/(name+"-fsck.log")).open("w") as f:
+                  subprocess.run(["e2fsck","-f","-n",str(disk)],stdout=f,stderr=f,check=True,timeout=30)
+              for file in ("app.db","fio.json"):
+                  dest=R/(name+"-"+file)
+                  subprocess.run(["debugfs","-R",f"dump /{file} {dest}",str(disk)],capture_output=True,check=True,timeout=30)
+                  assert dest.is_file() and dest.stat().st_size>0
+              db=R/(name+"-app.db")
+              # Read-only host SQL oracle after clean guest unmount.
+              sql=subprocess.check_output(["sqlite3","-readonly",str(db),"PRAGMA integrity_check; SELECT count(*),sum(id),sum(v=printf('item-%06d',id)) FROM items;"],text=True,timeout=20)
+              (R/(name+"-sql.txt")).write_text(sql)
+              assert sql.splitlines()==["ok","1000|500500|1000"],sql
+              j=json.loads((R/(name+"-fio.json")).read_text())["jobs"][0]
+              assert j["error"]==0 and j["write"]["io_bytes"]>=64*1024*1024 and j["read"]["io_bytes"]>=16*1024*1024,j
+              counts={n:0 for n in present}
+              if trace.exists():
+                  with trace.open(errors="replace") as f:
+                      for line in f:
+                          for n in present:
+                              if re.search(r"\b"+n+r"\b",line):counts[n]+=1
+              assert (counts.get("virtqueue_pop",0)>0)==trace_on,counts
+              if candidate:
+                  assert (counts.get("virtqueue_host_advance",0)>0)==trace_on,counts
+                  if trace_on:
+                      pattern=r"virtqueue_host_advance\s+queue\s+\d+\s+packed\s+([01])\s+ordered\s+([01])\s+used\s+(\d+)->(\d+)\s+wrap\s+([01])->([01])\s+inuse\s+(\d+)->(\d+)"
+                      matches=[]
+                      with trace.open(errors="replace") as f:
+                          for line in f:
+                              m=re.search(pattern,line)
+                              if m: matches.append(m.groups())
+                      assert len(matches)==counts["virtqueue_host_advance"],(len(matches),counts)
+                      assert all(int(m[0])==int(packed) for m in matches),matches[:4]
+                      assert all(m[2]!=m[3] or m[4]!=m[5] or m[6]!=m[7] for m in matches),matches[:4]
+                      (R/(name+"-advance-summary.json")).write_text(json.dumps({"events":len(matches),"packed":packed,"ordered_modes":sorted(set(m[1] for m in matches)),"wrap_transitions":sum(m[4]!=m[5] for m in matches)},indent=2))
+              result={"name":name,"candidate":candidate,"packed":packed,"trace_on":trace_on,"negotiated_features":features[0],"sql":sql.splitlines(),"fio_error":j["error"],"fio_write_bytes":j["write"]["io_bytes"],"fio_read_bytes":j["read"]["io_bytes"],"trace_counts":counts,"trace_bytes":trace.stat().st_size if trace.exists() else 0,"wall_seconds":guest_wall,"cpu_seconds":cpu_seconds,"peak_rss_kib":peak_rss_kib,"fio_read_bw_bytes":j["read"]["bw_bytes"],"fio_write_bw_bytes":j["write"]["bw_bytes"],"fio_read_clat_ns":j["read"]["clat_ns"],"fio_write_clat_ns":j["write"]["clat_ns"],"disk_sha256":sha(disk)}
+              (R/(name+".json")).write_text(json.dumps(result,indent=2))
+              disk.unlink()
+              assert sha(P("base.raw"))==baseline
+              return result
+          results=[]
+          import random,statistics
+          rng=random.Random(2101)
+          for rep in range(5):
+              arms=[(c,p,t) for c,t in [(False,False),(True,False),(True,True)] for p in (False,True)]
+              rng.shuffle(arms)
+              for candidate,packed,trace_on in arms:
+                  name=f"r{rep}-"+("candidate" if candidate else "stock")+"-"+("packed" if packed else "split")+"-"+("on" if trace_on else "off")
+                  results.append(phase(name,packed,trace_on,candidate))
+                  (R/"summary.json").write_text(json.dumps(results,indent=2))
+          stats={}
+          for c,t in [(False,False),(True,False),(True,True)]:
+              for p in (False,True):
+                  group=[x for x in results if (x["candidate"],x["packed"],x["trace_on"])==(c,p,t)]
+                  assert len(group)==5
+                  stats[str((c,p,t))]={}
+                  for metric in ("wall_seconds","cpu_seconds","peak_rss_kib","fio_read_bw_bytes","fio_write_bw_bytes","trace_bytes"):
+                      vals=[x[metric] for x in group]
+                      stats[str((c,p,t))][metric]={"samples":vals,"median":statistics.median(vals),"min":min(vals),"max":max(vals)}
+          (R/"performance.json").write_text(json.dumps(stats,indent=2))
+          PY
+          python3 receipts/run.py
+      - name: Bound retained trace evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,hashlib,json
+          for p in pathlib.Path("receipts").glob("*.trace"):
+              if p.stat().st_size>4*1024*1024:
+                  with p.open("rb") as f:
+                      h=hashlib.file_digest(f,"sha256").hexdigest()
+                      f.seek(0); head=f.read(1024*1024)
+                  p.with_suffix(".trace-truncation.json").write_text(json.dumps({"sha256":h,"original_bytes":p.stat().st_size,"retained_prefix":len(head)}))
+                  p.write_bytes(head)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-perf-v21b
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-perf-v21b -f description='Public real storage workload wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
