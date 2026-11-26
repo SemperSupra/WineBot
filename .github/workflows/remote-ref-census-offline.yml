@@ -1,0 +1,30 @@
+name: WineBot Remote Ref Census Offline Consistency
+
+on:
+  pull_request:
+    paths:
+      - 'docs/reconciliation/**'
+      - 'scripts/ci/check-remote-ref-census.py'
+      - 'tests/test_remote_ref_census.py'
+      - '.github/workflows/remote-ref-census-offline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-manifest-sanity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable public PR commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Validate snapshot structure and synthetic tampering refusal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-remote-ref-census.py
+          python3 -m unittest discover -s tests -p 'test_remote_ref_census.py' -v
+          echo 'WINEBOT_REF_CENSUS_RDTE=PASS'
