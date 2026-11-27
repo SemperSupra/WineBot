@@ -1,0 +1,450 @@
+name: TEO sensor-specific temporal gap R2k3
+on:
+  push:
+    branches: [rdte/synthetic-analysis-b05-20261125]
+    paths: [.github/workflows/teo-sensor-specific-r2k3.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Recover pinned public executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipts simple kernel root/{bin,dev,proc,sys}
+          gh api repos/SemperSupra/WineBot/actions/artifacts/15069398884/zip > simple.zip
+
+          echo '446ef34df108998c1a2dd016b7ab03107c1826752f7d144cef45079853d1d375  simple.zip' | sha256sum -c -
+
+          unzip -q simple.zip -d simple
+
+          (cd simple && sha256sum -c SHA256SUMS)
+
+
+          test "$(cat simple/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod +x simple/qemu-system-x86_64
+
+      - name: Recover prior public guest kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-guest-boot-v18c4
+          run-id: 45641159935
+          github-token: ${{ github.token }}
+          path: kernel
+      - name: Prepare bounded sequential block workload
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils seabios busybox-static cpio gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          echo 'c3b467db358cb512cb9dc4640acae5758499a771f826caaaae100a16f449a7d0  kernel/bzImage' | sha256sum -c -
+
+          simple/qemu-system-x86_64 --version > receipts/qemu-version.txt
+          ldd simple/qemu-system-x86_64 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          cp "$(command -v busybox)" root/bin/busybox
+          cat > receipts/workload.c <<'C'
+          #define _GNU_SOURCE
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          int main(int argc,char**argv){
+            if((argc!=2 && argc!=4) || (strcmp(argv[1],"0") && strcmp(argv[1],"1") && strcmp(argv[1],"2")))return 10;
+            int phase=atoi(argv[1]);
+            int base=128+1024*(phase!=0);
+            int delta=phase==2?17:0;
+            int first=0,count=1024;
+            if(argc==4){
+              if(phase!=1)return 11;
+              first=atoi(argv[2]);count=atoi(argv[3]);
+              if(!((first==0 && count==256)||(first==256 && count==512)||(first==768 && count==256)))return 12;
+            }
+            unsigned char *buf=NULL;
+            if(posix_memalign((void **)&buf,4096,4096))return 2;
+            int fd=open("/dev/vda",O_RDWR|O_DIRECT);if(fd<0)return 3;
+            for(int i=first;i<first+count;i++){
+              memset(buf,((i+delta)%251)+1,512);
+              if(pwrite(fd,buf,512,(off_t)(i+base)*512)!=512)return 4;
+            }
+            if(fsync(fd))return 5;
+            for(int i=first;i<first+count;i+=127){
+              if(pread(fd,buf,512,(off_t)(i+base)*512)!=512)return 6;
+              for(int j=0;j<512;j++)if(buf[j]!=((i+delta)%251)+1)return 7;
+            }
+            free(buf);if(close(fd))return 8;
+            if(argc==2)printf("GUEST_PASS phase=%s writes=1024\n",argv[1]);
+            else printf("GUEST_PASS phase=%s first=%d writes=%d\n",argv[1],first,count);
+            return 0;
+          }
+          C
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -static receipts/workload.c -o root/workload
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ ! -b /dev/vda ] || break
+            $B sleep 1
+          done
+          test -b /dev/vda
+          for d in /sys/bus/virtio/devices/*; do
+            echo "DRIVER $($B readlink "$d/driver")"
+            echo "FEATURES $($B cat "$d/features")"
+          done
+          echo 2 > /sys/block/vda/queue/nomerges
+          $B stty -F /dev/ttyS0 raw -echo
+          exec 3</dev/ttyS0
+          /workload 0
+          echo PHASE_ONE_READY
+          IFS= read -r phase <&3
+          [ "$phase" = 1 ] || exit 2
+          for first in 0 256 768; do
+            case "$first" in 0|768) count=256;; 256) count=512;; esac
+            /workload "$phase" "$first" "$count"
+            echo "SEGMENT_READY $first"
+            if [ "$first" != 768 ]; then
+              IFS= read -r gate <&3
+              [ "$gate" = go ] || exit 3
+            fi
+          done
+          echo PHASE_TWO_READY
+          while :; do $B sleep 1; done
+          SH
+          chmod 755 root/init
+          cp root/init receipts/init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel/bzImage initramfs.gz root/workload simple/qemu-system-x86_64 > receipts/pins.txt
+
+      - name: Checkpoint at a drained boundary and restore in fresh processes
+        run: |
+          set -euo pipefail
+          cat > receipts/drive.py <<'PY'
+          import hashlib,struct,zipfile,re,pathlib,json
+          P=pathlib.Path
+          N={'virtqueue_host_advance':9,'virtqueue_buffer_pop':6,'virtqueue_buffer_fill_attempt':6}
+          DROP=2**64-2
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def decode(raw, expected_lifetimes=None):
+              pos=0;ids={};seen=set();events=[];drops=0;active={};adv=[];offsets=[]
+              def take(n):
+                  nonlocal pos
+                  assert 0<=n<=len(raw)-pos
+                  x=raw[pos:pos+n];pos+=n;return x
+              def read(f):return struct.unpack('<'+f,take(struct.calcsize('<'+f)))
+              assert read('QQQ')==(2**64-1,0xf2b177cb0aa429b4,4)
+              while pos<len(raw):
+                  typ,=read('Q')
+                  if typ==0:
+                      k,n=read('QI');assert 0<n<=512 and k<DROP
+                      name=take(n).decode('ascii')
+                      assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) and k not in ids and name not in seen
+                      ids[k]=name;seen.add(name)
+                  elif typ==1:
+                      k,t,n,pid=read('QQII');assert t>0 and pid>0 and 24<=n<=4096
+                      start=pos;payload=take(n-24)
+                      if k==DROP:
+                          assert len(payload)==8
+                          d,=struct.unpack('<Q',payload);assert d>0;drops+=d;continue
+                      name=ids[k];assert name in N and len(payload)==8*N[name]
+                      a=struct.unpack('<'+'Q'*N[name],payload);events.append((name,a))
+                      if name=='virtqueue_host_advance':
+                          q,p,o,old,new,x,y,oi,ni=a
+                          assert q<=65535 and p in (0,1) and o==0 and old<=65535 and new<=65535 and x in (0,1) and y in (0,1) and (p or x==y) and oi<2**32 and ni<2**32 and ni<oi
+                          adv.append(a);offsets.append(start)
+                      else:
+                          dev,q,elem,bid,nd,p=a;assert dev and elem and q<=65535 and bid<=65535 and 0<nd<2**32 and p in (0,1)
+                          key=(dev,q,bid)
+                          if name.endswith('_pop'):assert key not in active;active[key]=(elem,nd,p)
+                          else:assert active.pop(key)==(elem,nd,p)
+                  else:raise AssertionError('record type')
+              assert N.keys()<=seen and not active and drops==0
+              lifetimes=sum(n=='virtqueue_buffer_pop' for n,a in events)
+              assert lifetimes==sum(n=='virtqueue_buffer_fill_attempt' for n,a in events)
+              assert lifetimes==(len(adv) if expected_lifetimes is None else expected_lifetimes)
+              assert all(a[5]==0 for n,a in events if n!='virtqueue_host_advance')
+              return adv,offsets
+          
+          
+          import subprocess,socket,time,os,shutil
+          R=P("receipts").resolve()
+          initial=bytes(4*1024*1024)
+          def expected(phase):
+              data=bytearray(initial)
+              for i in range(1024):
+                  off=(128+i)*512;data[off:off+512]=bytes([(i%251)+1])*512
+              if phase:
+                  delta=17 if phase==2 else 0
+                  for i in range(1024):
+                      off=(1152+i)*512;data[off:off+512]=bytes([((i+delta)%251)+1])*512
+              return bytes(data)
+          events=R/"events";events.write_text("\n".join(N)+"\n")
+          def hashfile(f):
+              with P(f).open("rb") as fd:return hashlib.file_digest(fd,"sha256").hexdigest()
+          class VM:
+              def __init__(self,name,disk,restore=False):
+                  self.name=name;self.disk=disk;self.trace=R/(name+".trace");self.serial=R/(name+".serial");self.sock=P(name+".qmp").resolve()
+                  self.out=self.serial.open("wb");self.err=(R/(name+".stderr")).open("wb")
+                  self.transcript=[];self.seq=0;self.proc=None
+                  traceopt=f"file={self.trace}" if restore else f"events={events},file={self.trace}"
+                  self.argv=[str(P("simple/qemu-system-x86_64").resolve()),"-L",str(P("simple/pc-bios").resolve()),"-accel","tcg,thread=single","-machine","pc","-m","512","-smp","1","-nodefaults","-nic","none","-display","none","-monitor","none","-serial","stdio","-no-reboot","-kernel","kernel/bzImage","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 quiet","-blockdev",f"driver=file,node-name=file0,filename={disk}","-blockdev","driver=qcow2,node-name=snap,file=file0","-device","virtio-blk-pci,drive=snap,disable-legacy=on,packed=off","-trace",traceopt,"-qmp",f"unix:{self.sock},server=on,wait=off"]
+                  if restore:self.argv+=["-S"]
+                  (R/(name+".argv.json")).write_text(json.dumps(self.argv))
+              def __enter__(self):
+                  self.proc=subprocess.Popen(self.argv,stdin=subprocess.PIPE,stdout=self.out,stderr=self.err)
+                  try:
+                      end=time.monotonic()+20
+                      while not self.sock.exists():
+                          assert self.proc.poll() is None and time.monotonic()<end
+                          time.sleep(.02)
+                      self.s=socket.socket(socket.AF_UNIX);self.s.settimeout(15);self.s.connect(str(self.sock));self.f=self.s.makefile("rwb")
+                      self.record({"greeting":json.loads(self.f.readline())})
+                      self.q("qmp_capabilities")
+                      return self
+                  except BaseException:
+                      self.cleanup();raise
+              def record(self,row):
+                  self.transcript.append(row)
+                  (R/(self.name+".qmp.json")).write_text(json.dumps(self.transcript,indent=2))
+              def q(self,cmd,args=None):
+                  self.seq+=1;req={"execute":cmd,"id":self.seq}
+                  if args is not None:req["arguments"]=args
+                  self.record({"send":req});self.f.write((json.dumps(req)+"\n").encode());self.f.flush()
+                  while True:
+                      line=self.f.readline();assert line,(cmd,"EOF")
+                      r=json.loads(line);self.record({"recv":r})
+                      if r.get("id")==self.seq:
+                          assert "return" in r,r
+                          return r["return"]
+              def hmp(self,cmd):
+                  r=self.q("human-monitor-command",{"command-line":cmd})
+                  assert isinstance(r,str) and not re.search(r"unknown command|error|invalid",r,re.I),r
+                  return r
+              def state(self,enabled,advance_only_gap=False):
+                  for event in N:
+                      value=enabled or (advance_only_gap and event!="virtqueue_host_advance")
+                      want="enabled" if value else "disabled"
+                      self.q("trace-event-set-state",{"name":event,"enable":value})
+                      assert self.q("trace-event-get-state",{"name":event})==[{"name":event,"state":want}]
+              def stop(self):
+                  self.q("stop");assert not self.q("query-status")["running"]
+              def wait(self,marker):
+                  end=time.monotonic()+45
+                  while marker not in self.serial.read_bytes():
+                      assert self.proc.poll() is None and time.monotonic()<end,(self.name,marker)
+                      time.sleep(.02)
+              def seal(self):
+                  assert not self.q("query-status")["running"]
+                  self.state(False);self.hmp("trace-file flush");self.hmp("trace-file off")
+                  status=self.hmp("trace-file");assert re.search(r"\boff\b",status,re.I),status
+                  data=self.trace.read_bytes()
+                  self.record({"closed_bytes":len(data),"closed_sha":sha(data),"hmp_status":status})
+                  return data
+              def snapshot(self,op,job):
+                  self.q(op,{"job-id":job,"tag":"base","vmstate":"snap","devices":["snap"]})
+                  end=time.monotonic()+40
+                  while time.monotonic()<end:
+                      rows=[r for r in self.q("query-jobs") if r["id"]==job]
+                      if rows and rows[0]["status"]=="concluded":
+                          assert len(rows)==1 and "error" not in rows[0] and rows[0]["current-progress"]==rows[0]["total-progress"]==1,rows
+                          self.q("job-dismiss",{"id":job});assert not any(r["id"]==job for r in self.q("query-jobs"))
+                          return
+                      time.sleep(.02)
+                  raise TimeoutError(job)
+              def quit(self):
+                  self.q("quit");assert self.proc.wait(timeout=15)==0
+              def cleanup(self):
+                  if self.proc and self.proc.poll() is None:self.proc.kill();self.proc.wait(timeout=10)
+                  for name in ("f","s","out","err"):
+                      if hasattr(self,name):getattr(self,name).close()
+              def __exit__(self,*args):self.cleanup()
+          def disk_oracle(name,disk,phase):
+              subprocess.run(["qemu-img","convert","-O","raw",str(disk),str(R/(name+".raw"))],check=True)
+              raw=(R/(name+".raw")).read_bytes();assert raw==expected(phase),(name,sha(raw),sha(expected(phase)))
+              return sha(raw)
+          P("empty.raw").write_bytes(initial)
+          subprocess.run(["qemu-img","convert","-f","raw","-O","qcow2","empty.raw","base.qcow2"],check=True)
+          parent=P("base.qcow2");rows=[]
+          with VM("parent",parent) as vm:
+              for event in N:assert vm.q("trace-event-get-state",{"name":event})==[{"name":event,"state":"enabled"}]
+              vm.wait(b"PHASE_ONE_READY");vm.stop()
+              assert b"PHASE_TWO_READY" not in vm.serial.read_bytes()
+              first=vm.seal()
+              vm.snapshot("snapshot-save","save-parent")
+              assert not vm.q("query-status")["running"];vm.quit()
+          assert (R/"parent.trace").read_bytes()==first
+          adv,_=decode(first);assert len(adv)==1035,len(adv)
+          parent_sha=hashfile(parent)
+          parent_trace=first
+          rows.append(dict(scope="parent",generation=0,trace_sha=sha(first),advance=len(adv),disk_sha=disk_oracle("parent",parent,0),checkpoint_sha=parent_sha))
+          assert parent.stat().st_size<=128*1024*1024
+          subprocess.run(["zstd","-q","-3","-T1",str(parent),"-o",str(R/"checkpoint.qcow2.zst")],check=True)
+          with (R/"checkpoint.verify.qcow2").open("wb") as out:subprocess.run(["zstd","-q","-d","-c",str(R/"checkpoint.qcow2.zst")],stdout=out,check=True)
+          assert hashfile(R/"checkpoint.verify.qcow2")==parent_sha;(R/"checkpoint.verify.qcow2").unlink()
+          import resource
+          observed={}
+          def send(vm,token):
+              for byte in token:
+                  assert os.write(vm.proc.stdin.fileno(),bytes([byte]))==1
+                  vm.record({"host_byte":byte});time.sleep(.02)
+          for name,partial in (("branch-full",False),("branch-partial",True)):
+              disk=P(name+".qcow2");shutil.copyfile(parent,disk);assert hashfile(disk)==parent_sha
+              starts=time.monotonic();before=resource.getrusage(resource.RUSAGE_CHILDREN)
+              boundaries=[];pause_s=[]
+              with VM(name,disk,True) as vm:
+                  assert not vm.q("query-status")["running"]
+                  vm.state(False)
+                  vm.snapshot("snapshot-load","load-"+name)
+                  assert not vm.q("query-status")["running"]
+                  if re.search(r"\boff\b",vm.hmp("trace-file"),re.I):vm.hmp("trace-file on")
+                  assert re.search(r"\bon\b",vm.hmp("trace-file"),re.I)
+                  vm.state(True)
+                  assert not vm.q("query-status")["running"]
+                  vm.q("cont");send(vm,b"1\n")
+                  for first,enable in ((0,not partial),(256,True)):
+                      vm.wait(("SEGMENT_READY "+str(first)).encode())
+                      t=time.monotonic();vm.stop();vm.hmp("trace-file flush")
+                      prefix=vm.trace.read_bytes();adv,_=decode(prefix,260 if first==0 else 778)
+                      boundaries.append({"first":first,"advance":len(adv),"sha":sha(prefix),"bytes":len(prefix)})
+                      vm.record({"boundary":boundaries[-1]})
+                      vm.state(enable,advance_only_gap=not enable);assert not vm.q("query-status")["running"]
+                      vm.q("cont");pause_s.append(time.monotonic()-t);send(vm,b"go\n")
+                  vm.wait(b"PHASE_TWO_READY");vm.stop();closed=vm.seal();vm.quit()
+              elapsed=time.monotonic()-starts;after=resource.getrusage(resource.RUSAGE_CHILDREN)
+              cpu=(after.ru_utime-before.ru_utime)+(after.ru_stime-before.ru_stime)
+              assert vm.trace.read_bytes()==closed and (R/"parent.trace").read_bytes()==parent_trace and hashfile(parent)==parent_sha
+              ser=vm.serial.read_bytes()
+              assert b"PHASE_ONE_READY" not in ser and ser.count(b"PHASE_TWO_READY")==1
+              for start,count in ((0,256),(256,512),(768,256)):
+                  assert ser.count(f"GUEST_PASS phase=1 first={start} writes={count}".encode())==1
+                  assert ser.count(f"SEGMENT_READY {start}".encode())==1
+              adv,_=decode(closed,1038)
+              assert all(sha(closed[:b["bytes"]])==b["sha"] for b in boundaries)
+              assert [b["advance"] for b in boundaries]==([260,260] if partial else [260,778]),boundaries
+              assert len(adv)==(520 if partial else 1038),(name,len(adv))
+              indexes=[a[3] for a in adv]
+              expected_indexes=list(range(1035,1295))+list(range(1813,2073)) if partial else list(range(1035,2073))
+              assert indexes==expected_indexes and all(a[0:3]==(0,0,0) and a[4]==a[3]+1 for a in adv)
+              observed[name]=adv
+              rows.append(dict(scope=name,generation=len(rows),parent_checkpoint_sha=parent_sha,trace_sha=sha(closed),advance=len(adv),disk_sha=disk_oracle(name,disk,1),phase=1,coverage="REFUSE_INCOMPLETE" if partial else "FIXTURE_COMPLETE",boundaries=boundaries,missing_index_spans=[[1295,1813]] if partial else [],wall_s=elapsed,cpu_s=cpu,pause_s=pause_s,trace_bytes=len(closed)))
+              disk.unlink()
+          assert rows[1]["disk_sha"]==rows[2]["disk_sha"] and rows[1]["trace_sha"]!=rows[2]["trace_sha"]
+          full=observed["branch-full"];assert observed["branch-partial"]==full[:260]+full[778:]
+          (R/"summary.json").write_text(json.dumps(rows,indent=2));print(json.dumps(rows))
+          PY
+          python3 receipts/drive.py
+      - name: Independently check raw disk, temporal gap and ordered QMP evidence
+        run: |
+          set -euo pipefail
+          cat > receipts/check.py <<'PY'
+          import hashlib,json,pathlib,struct
+          p=pathlib.Path("receipts")
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          names=("parent","branch-full","branch-partial")
+          rows=json.loads((p/"summary.json").read_text())
+          assert [r["scope"] for r in rows]==list(names)
+          assert [r["generation"] for r in rows]==[0,1,2]
+          assert [r["advance"] for r in rows]==[1035,1038,520]
+          assert [r["coverage"] for r in rows[1:]]==["FIXTURE_COMPLETE","REFUSE_INCOMPLETE"]
+          traces=[];disks=[]
+          for i,r in enumerate(rows):
+              name=r["scope"];raw=(p/(name+".raw")).read_bytes()
+              assert len(raw)==4194304 and sha(raw)==r["disk_sha"]
+              for sector in range(8192):
+                  v=0
+                  if 128<=sector<1152 or (i and 1152<=sector<2176):v=((sector-(128 if sector<1152 else 1152))%251)+1
+                  assert raw[sector*512:(sector+1)*512]==bytes([v])*512
+              disks.append(raw)
+              b=(p/(name+".trace")).read_bytes();assert sha(b)==r["trace_sha"]
+              assert struct.unpack_from("<QQQ",b)==(2**64-1,0xf2b177cb0aa429b4,4)
+              j=24;maps={};event=[];last=0;pidset=set()
+              while j<len(b):
+                  kind,=struct.unpack_from("<Q",b,j);j+=8
+                  if kind==0:
+                      k,n=struct.unpack_from("<QI",b,j);j+=12
+                      assert 0<n<=512 and j+n<=len(b) and k not in maps and not event
+                      maps[k]=b[j:j+n].decode("ascii");j+=n
+                  else:
+                      assert kind==1
+                      k,t,n,pid=struct.unpack_from("<QQII",b,j);j+=24
+                      assert k in maps and 24<=n<=4096 and t>=last and pid>0
+                      last=t;pidset.add(pid);z=n-24;label=maps[k]
+                      assert label in ("virtqueue_buffer_pop","virtqueue_buffer_fill_attempt","virtqueue_host_advance")
+                      assert z==(72 if label.endswith("advance") else 48) and j+z<=len(b)
+                      event.append((label,struct.unpack_from("<"+"Q"*(z//8),b,j)));j+=z
+              assert j==len(b) and len(pidset)==1
+              count=1035 if i==0 else 1038
+              assert len(event)==2*count+r["advance"]
+              advance=[];offset=0
+              for ordinal in range(count):
+                  a,f=event[offset:offset+2];offset+=2
+                  assert (a[0],f[0])==("virtqueue_buffer_pop","virtqueue_buffer_fill_attempt")
+                  assert a[1]==f[1] and a[1][1]==0 and a[1][5]==0
+                  if i==2 and 260<=ordinal<778:
+                      continue
+                  v=event[offset];offset+=1
+                  assert v[0]=="virtqueue_host_advance" and v[1][:3]==(0,0,0) and v[1][4]==v[1][3]+1
+                  advance.append(v[1])
+              assert offset==len(event) and len(advance)==r["advance"]
+              traces.append(advance)
+              q=json.loads((p/(name+".qmp.json")).read_text());sent={};recv={};pending=None;host=[];bound=[];seals=[]
+              assert "greeting" in q[0]
+              for x in q[1:]:
+                  if "send" in x:
+                      req=x["send"];assert pending is None and type(req["id"]) is int and req["id"]==len(sent)+1
+                      pending=req["id"];sent[pending]=req
+                  elif "recv" in x:
+                      rep=x["recv"]
+                      if "event" in rep:assert "id" not in rep;continue
+                      assert pending is not None and rep.get("id")==pending and "return" in rep and "error" not in rep
+                      recv[pending]=rep["return"];pending=None
+                  elif "host_byte" in x:assert pending is None;host.append(x["host_byte"])
+                  elif "boundary" in x:assert pending is None;bound.append(x["boundary"])
+                  else:assert pending is None and "closed_sha" in x;seals.append(x)
+              assert pending is None and sent.keys()==recv.keys()
+              ops=lambda op:[n for n,x in sent.items() if x["execute"]==op]
+              assert sent[len(sent)]["execute"]=="quit"
+              assert len(seals)==1 and seals[0]["closed_sha"]==sha(b) and seals[0]["closed_bytes"]==len(b)
+              assert len(ops("snapshot-save"))==int(i==0) and len(ops("snapshot-load"))==int(i!=0)
+              assert len(ops("stop"))==(3 if i else 1) and len(ops("cont"))==(3 if i else 0)
+              changes=ops("trace-event-set-state")
+              flags=[sent[n]["arguments"]["enable"] for n in changes]
+              assert flags==([False]*3 if i==0 else [False]*3+[True]*3+[i==1,True,True]+[True]*3+[False]*3)
+              for n in changes:
+                  a=sent[n]["arguments"];assert sent[n+1]["execute"]=="trace-event-get-state" and sent[n+1]["arguments"]=={"name":a["name"]}
+                  assert recv[n+1]==[{"name":a["name"],"state":"enabled" if a["enable"] else "disabled"}]
+              if i:
+                  assert bytes(host)==b"1\ngo\ngo\n" and bound==r["boundaries"] and len(bound)==2
+                  assert r["parent_checkpoint_sha"]==rows[0]["checkpoint_sha"]
+                  stops=ops("stop");conts=ops("cont");statuses=ops("query-status")
+                  assert conts[0]<stops[0]<changes[6]<changes[8]<conts[1]<stops[1]<changes[9]<changes[11]<conts[2]<stops[2]<changes[12]
+                  assert all(recv[n]["running"] is False for n in statuses)
+                  assert all(any(s<n<c for n in statuses) for s,c in zip(stops[:2],conts[1:]))
+                  assert [x["advance"] for x in bound]==([260,778] if i==1 else [260,260])
+                  for x in bound:assert sha(b[:x["bytes"]])==x["sha"]
+          assert disks[1]==disks[2] and disks[0]!=disks[1]
+          assert [x[3] for x in traces[0]]==list(range(1035))
+          assert [x[3] for x in traces[1]]==list(range(1035,2073))
+          assert traces[2]==traces[1][:260]+traces[1][778:]
+          assert rows[2]["missing_index_spans"]==[[1295,1813]]
+          print("R2k3 native sensor-specific gap: 1038 matched pop/fill attempts, only 520 advances, same disk, REFUSE_INCOMPLETE")
+          PY
+          python3 receipts/check.py
+      - name: Bound retained evidence
+        if: always()
+        run: |
+          test "$(du -sb receipts | cut -f1)" -lt 150000000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teo-sensor-specific-r2k3
+          path: receipts/
+          retention-days: 1
