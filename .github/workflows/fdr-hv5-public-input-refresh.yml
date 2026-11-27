@@ -1,0 +1,161 @@
+name: FDR HV5 public input refresh
+on:
+  push:
+    branches:
+      - rdte/fdr-lua-cli-20261125
+    paths:
+      - .github/workflows/fdr-hv5-public-input-refresh.yml
+permissions:
+  contents: read
+  actions: read
+env:
+  QEMU_SOURCE_SHA: 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+jobs:
+  host-sensor-source:
+    name: Pinned upstream QEMU i386 TCG and trace-sensor source build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Admit public-only execution and obtain build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "SemperSupra/WineBot"
+          test "$GITHUB_REF" = "refs/heads/rdte/fdr-lua-cli-20261125"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential git ninja-build python3-venv python3-pip pkg-config libglib2.0-dev libpixman-1-dev libfdt-dev libzstd-dev meson
+          mkdir -p receipts
+          cc --version | head -n1 > receipts/cc-version.txt
+          cmake --version | head -n1 > receipts/cmake-version.txt
+          ninja --version > receipts/ninja-version.txt
+          meson --version > receipts/system-meson-version.txt
+      - name: Clone exact QEMU public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --single-branch https://github.com/qemu/qemu.git qemu
+          git -C qemu checkout --detach "$QEMU_SOURCE_SHA"
+          test "$(git -C qemu rev-parse HEAD)" = "$QEMU_SOURCE_SHA"
+          git -C qemu status --porcelain=v1 > receipts/source-status.txt
+          printf 'qemu_source_sha=%s\n' "$QEMU_SOURCE_SHA" > receipts/source.txt
+      - name: Configure host sensor baseline with log and simple trace backends
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cd build
+          ../qemu/configure --target-list=i386-softmmu --enable-trace-backends=log,simple --disable-docs --disable-werror --disable-tools
+      - name: Compile source QEMU and record build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C build -j 4
+          test -x build/qemu-system-i386
+          build/qemu-system-i386 --version > receipts/qemu-version.txt
+          sha256sum build/qemu-system-i386 > receipts/qemu-binary-sha256.txt
+          if printf '%s  %s\n' 11564d4433b411c0a31e3398953c6d174129d18c53e22c040ba39e1befe4d1ed build/qemu-system-i386 | sha256sum -c -; then
+            echo ORIGINAL_BINARY_EXACT > receipts/rebuild-comparison.txt
+          else
+            echo NEW_BUILD_SAME_PINNED_SOURCE_NOT_BINARY_IDENTICAL > receipts/rebuild-comparison.txt
+          fi
+          ldd build/qemu-system-i386 > receipts/ldd.txt
+          ! grep -q 'not found' receipts/ldd.txt
+          dpkg-query -W > receipts/package-versions.txt
+          test -s build/trace/trace-events-all || test -s build/trace-events-all || echo TRACE_EVENTS_ALL_LOCATION_UNKNOWN >> receipts/source.txt
+      - name: Run original synthetic PIO boot sector and require observed host trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          data = bytes([0xb0,0x41,0xe6,0xe9,0xb0,0x42,0xe6,0xe9,0xf4,0xeb,0xfe])
+          Path("boot.bin").write_bytes(data + bytes(510-len(data)) + bytes([0x55,0xaa]))
+          assert Path("boot.bin").stat().st_size == 512
+          PY
+          printf '%s\n' cpu_in cpu_out memory_region_ops_read memory_region_ops_write > receipts/trace-events.txt
+          set +e
+          timeout 20s build/qemu-system-i386 -machine pc -cpu pentium3 -smp 1 -m 128 -drive if=floppy,format=raw,file=boot.bin -boot order=a -nic none -display none -vga none -serial none -monitor none -no-reboot -debugcon file:receipts/debugcon.txt -global isa-debugcon.iobase=0xe9 -trace events=receipts/trace-events.txt,file=receipts/qemu-trace.log > receipts/qemu-stderr.log 2>&1
+          rc="$?"
+          set -e
+          echo "$rc" > receipts/qemu-exit.txt
+          if test ! -f receipts/debugcon.txt; then echo DEBUGCON_ABSENT > receipts/classification.txt; exit 1; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          data=Path("receipts/debugcon.txt").read_bytes()
+          if data != b'AB':
+              raise SystemExit(f"unexpected debugcon output {data[:64]!r}")
+          print("SYNTHETIC_PIO_DEBUGCON_AB_PASS")
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          log = Path("receipts/qemu-stderr.log").read_text(errors="replace")
+          matches = re.findall(
+              r"^memory_region_ops_write cpu 0 .* addr 0xe9 value 0x([0-9a-fA-F]+) size 1 name 'isa-debugcon'$",
+              log,
+              re.MULTILINE,
+          )
+          sequence = [int(value, 16) for value in matches]
+          Path("receipts/device-e9-observed.txt").write_text(
+              "observed_e9_values=" + ",".join(f"0x{x:02x}" for x in sequence) + "\n"
+          )
+          if len(sequence) != 2 or sequence != [0x41, 0x42]:
+              Path("receipts/classification.txt").write_text("QEMU_DEVICE_IO_EVENTS_MISSING_OR_WRONG\n")
+              raise SystemExit(f"expected exactly [0x41,0x42] host e9 writes, got {sequence}")
+          print("QEMU_HOST_MEMORY_REGION_WRITE_E9_AB_PASS")
+          PY
+          echo QEMU_SOURCE_BUILT_AND_SYNTHETIC_HOST_PIO_TRACE_PASS > receipts/classification.txt
+      - name: Preserve QEMU trace proof and candidate binary (not product)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdr-hv5-qemu-source-refresh
+          path: |
+            receipts/
+            build/qemu-system-i386
+          retention-days: 7
+          if-no-files-found: warn
+  guest-baseline:
+    name: Verify and refresh original public guest baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Public repository and branch gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/fdr-lua-cli-20261125
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils
+      - name: Retrieve original public R23 guest baseline
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 45550202697
+          github-token: ${{ github.token }}
+          name: obsros-r23-stock-installed-baseline
+          path: baseline
+      - name: Verify immutable guest bytes and disk integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 baseline/guest.qcow2 | sha256sum -c -
+          chmod a-w baseline/guest.qcow2
+          qemu-img info --output=json baseline/guest.qcow2 > baseline/image-info.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          info = json.loads(Path('baseline/image-info.json').read_text())
+          assert info['format'] == 'qcow2' and 'backing-filename' not in info
+          PY
+          qemu-img check baseline/guest.qcow2 > baseline/image-check.txt
+          printf '%s  %s\n' 97ba8cf9294b43d908b5f83f5f658a6a460078eac7a680c66bf2ecef1c3a7932 baseline/guest.qcow2 | sha256sum -c -
+      - name: Preserve exact original public guest bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdr-hv5-reactos-baseline-refresh
+          path: baseline/
+          retention-days: 7
+          if-no-files-found: error
