@@ -166,6 +166,21 @@ jobs:
           quiet
           "$capture" snapshot -root "$WINEPREFIX" -out "$work/before.json"
           cp "$WINEPREFIX/system.reg" "$work/before.reg"
+          # Save a quiesced baseline on the same disposable volume. Preserve
+          # symlinks as links; never follow them into the host or user volume.
+          baseline="${WINEPREFIX}.rdte-baseline"
+          retired="${WINEPREFIX}.rdte-retired"
+          test "$WINEPREFIX" = /wineprefix/rdte-installer67
+          test ! -e "$baseline" && test ! -L "$baseline"
+          test ! -e "$retired" && test ! -L "$retired"
+          timeout 120 cp -a -- "$WINEPREFIX" "$baseline"
+          "$capture" verify -root "$baseline" -manifest "$work/before.json"
+          # Negative oracle: an extra file must not pass exact inventory.
+          test ! -e "$baseline/.rdte-inventory-negative"
+          printf 'fixture-negative\n' >"$baseline/.rdte-inventory-negative"
+          if "$capture" verify -root "$baseline" -manifest "$work/before.json"; then exit 1; fi
+          rm -- "$baseline/.rdte-inventory-negative"
+          "$capture" verify -root "$baseline" -manifest "$work/before.json"
           msi="$(winepath -w /apps/installer-rdte/npp.msi)"
           timeout 180 wine msiexec /i "$msi" /qn /norestart
           quiet
@@ -203,12 +218,29 @@ jobs:
           "$capture" snapshot -root "$WINEPREFIX" -out "$work/removed.json"
           "$capture" diff -before "$work/after.json" -after "$work/removed.json" -out "$work/remove-delta.json"
           "$capture" regdiff -before "$work/after.reg" -after "$WINEPREFIX/system.reg" -out "$work/remove-regdelta.json"
-          # This is a bounded app-level uninstall postcondition, not full rollback parity.
+          # Uninstall is not assumed to restore the baseline. Restore the
+          # independent quiesced checkpoint by same-volume rename, retaining
+          # the retired fixture prefix until the isolated volume is removed.
+          test -d "$baseline" && test ! -L "$baseline"
+          test -d "$WINEPREFIX" && test ! -L "$WINEPREFIX"
+          test ! -e "$retired" && test ! -L "$retired"
+          mv -T -- "$WINEPREFIX" "$retired"
+          mv -T -- "$baseline" "$WINEPREFIX"
+          "$capture" verify -root "$WINEPREFIX" -manifest "$work/before.json"
+          "$capture" regverify -actual "$WINEPREFIX/system.reg" -expected "$work/before.reg"
+          test ! -e "$exe"
+          # Keep only a local private manifest for verification after recreate.
+          test ! -e "${WINEPREFIX}.rdte-before.json"
+          cp -- "$work/before.json" "${WINEPREFIX}.rdte-before.json"
+          echo 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored'
+          # Persistent user data is outside the restored prefix.
           test "$(cat /userdata/rdte-installer-sentinel)" = persistent-user-file-v1
           grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
           echo 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass'
           CELL
           grep -Fxq 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass' "$RUNNER_TEMP/installer67-local.log" || fail receipt_missing
+          grep -Fxq 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored' "$RUNNER_TEMP/installer67-local.log" || fail rollback_receipt_missing
+          echo 'INSTALLER_R68 stage=checkpoint_inventory_and_registry_restored'
           echo 'INSTALLER_R67 stage=original_install_capture_gui_save_uninstall_pass'
           docker compose -f compose/layered.yml up -d --force-recreate --no-build winebot-interactive >/dev/null 2>&1 || fail recreate
           wait_health || fail recreate_health
@@ -216,5 +248,7 @@ jobs:
             test "$(cat /userdata/rdte-installer-sentinel)" = persistent-user-file-v1
             grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
             test ! -e "/wineprefix/rdte-installer67/drive_c/Program Files/Notepad++/notepad++.exe"
+            /apps/installer-rdte/capture verify -root /wineprefix/rdte-installer67 -manifest /wineprefix/rdte-installer67.rdte-before.json
           ' >/dev/null 2>&1 || fail persistent_postcondition
           echo 'INSTALLER_R67 stage=bounded_real_installer_and_state_replay_pass'
+          echo 'INSTALLER_R68 stage=checkpoint_inventory_and_user_state_recreate_pass'
