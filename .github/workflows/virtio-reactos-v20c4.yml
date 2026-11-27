@@ -1,0 +1,222 @@
+name: ReactOS counter diagnostic transport differential
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-reactos-v20c4.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Bind public run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-reactos-v20c4 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+      - name: Public source and build dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory receipts
+          git init src
+          git -C src fetch --depth=1 https://github.com/reactos/reactos.git 4fbbefd614b218afd3f0cbf09aa32998ea3ad7a6
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git -C src checkout --detach FETCH_HEAD
+          git -C src rev-parse HEAD | Out-File receipts/source.txt
+          curl.exe -fL https://svn.reactos.org/storage/vperevertkin/flexbison.7z -o flexbison.7z
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-FileHash flexbison.7z | Out-File receipts/toolchain.txt
+          7z x flexbison.7z -obin
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $bison = Get-ChildItem bin -Recurse -Filter bison.exe | Select-Object -First 1
+          $flex = Get-ChildItem bin -Recurse -Filter flex.exe | Select-Object -First 1
+          $m4 = Get-ChildItem bin -Recurse -Filter m4.exe | Select-Object -First 1
+          if (!$bison -or !$flex -or !$m4) { throw "Missing extracted build tools" }
+          $bison.DirectoryName,$flex.DirectoryName,$m4.DirectoryName | Sort-Object -Unique | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          $data = Get-ChildItem bin -Recurse -Directory -Filter bison | Where-Object { $_.Parent.Name -eq 'share' } | Select-Object -First 1
+          if (!$data) { throw "Missing bison data" }
+          "BISON_PKGDATADIR=$($data.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "M4=$($m4.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          & $bison.FullName --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $flex.FullName --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Stock library
+        shell: pwsh
+        run: |
+          $bison = (Get-ChildItem bin -Recurse -Filter bison.exe | Select-Object -First 1).FullName.Replace('\','/')
+          $flex = (Get-ChildItem bin -Recurse -Filter flex.exe | Select-Object -First 1).FullName.Replace('\','/')
+          $p = 'src/sdk/cmake/host-tools.cmake'
+          $s = [IO.File]::ReadAllText((Resolve-Path $p))
+          $anchor = '            -UCMAKE_TOOLCHAIN_FILE'
+          if (($s.Split($anchor).Count -lt 2) -or !$s.Contains($anchor)) { throw 'Missing host tools anchor' }
+          $s = $s.Replace($anchor, "$anchor`n            -DBISON_EXECUTABLE:FILEPATH=$bison`n            -DFLEX_EXECUTABLE:FILEPATH=$flex")
+          [IO.File]::WriteAllText((Resolve-Path $p),$s)
+          git -C src diff -- sdk/cmake/host-tools.cmake | Out-File receipts/build-adapter.patch
+          cmake -S src -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE:FILEPATH=toolchain-msvc.cmake -DARCH:STRING=i386 -DCMAKE_BUILD_TYPE=Debug -DDLL_EXPORT_VERSION=0x502 "-DBISON_EXECUTABLE:FILEPATH=$bison" "-DFLEX_EXECUTABLE:FILEPATH=$flex"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build --target virtio netkvm 2>&1 | Tee-Object receipts/stock.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem build -Recurse -Filter virtio.lib | Copy-Item -Destination receipts/stock.lib
+          Get-ChildItem build -Recurse -Filter netkvm.sys | Copy-Item -Destination receipts/stock-netkvm.sys
+          if (!(Test-Path receipts/stock-netkvm.sys)) { throw "Missing stock linked driver" }
+      - name: Apply isolated default-off counter candidate
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root=Path("src")
+          def edit(path,pairs):
+              p=root/path
+              s=p.read_text()
+              for a,b in pairs:
+                  assert s.count(a)==1,(path,a,s.count(a))
+                  s=s.replace(a,b)
+              p.write_text(s)
+          v="sdk/lib/drivers/virtio/"
+          edit(v+"VirtIO.h",[
+              ("    proc_virtqueue_shutdown shutdown;", """    proc_virtqueue_shutdown shutdown;
+
+              /* Guest-private software state; not part of the VirtIO wire layout.
+               * Configuration and snapshots are legal only while the queue is quiescent.
+               * Counts are modulo 2^32, reset on ring initialization; no global epoch claim. */
+              BOOLEAN observe_enabled;
+              volatile LONG observe_submitted;
+              volatile LONG observe_consumed;"""),
+              ("static inline int virtqueue_add_buf(", """C_ASSERT((FIELD_OFFSET(struct virtqueue, observe_submitted) % sizeof(LONG)) == 0);
+          C_ASSERT((FIELD_OFFSET(struct virtqueue, observe_consumed) % sizeof(LONG)) == 0);
+
+          static inline void virtqueue_observe_configure(struct virtqueue *vq, BOOLEAN enabled)
+          {
+              vq->observe_enabled = enabled;
+          }
+
+          static inline void virtqueue_observe_snapshot(const struct virtqueue *vq,
+                                                         ULONG *submitted, ULONG *consumed)
+          {
+              *submitted = (ULONG)vq->observe_submitted;
+              *consumed = (ULONG)vq->observe_consumed;
+          }
+
+          static inline int virtqueue_add_buf(""")])
+          edit(v+"VirtIORing.c",[
+              ("    vq->num_added_since_kick++;","    vq->num_added_since_kick++;\n    if (_vq->observe_enabled) InterlockedIncrement(&_vq->observe_submitted);"),
+              ("    ASSERT(opaque != NULL);","    ASSERT(opaque != NULL);\n    if (opaque && _vq->observe_enabled) InterlockedIncrement(&_vq->observe_consumed);"),
+              ("    vq->vq.index = index;","    vq->vq.index = index;\n    vq->vq.observe_enabled = FALSE;\n    vq->vq.observe_submitted = 0;\n    vq->vq.observe_consumed = 0;")])
+          edit(v+"VirtIORing-Packed.c",[
+              ("    return 0;\n}\n\nstatic void detach_buf_packed","    if (_vq->observe_enabled) InterlockedIncrement(&_vq->observe_submitted);\n    return 0;\n}\n\nstatic void detach_buf_packed"),
+              ("    return ret;\n}","    if (ret && _vq->observe_enabled) InterlockedIncrement(&_vq->observe_consumed);\n    return ret;\n}"),
+              ("    vq->vq.index = index;","    vq->vq.index = index;\n    vq->vq.observe_enabled = FALSE;\n    vq->vq.observe_submitted = 0;\n    vq->vq.observe_consumed = 0;")])
+          n="drivers/network/dd/netkvm/Common/"
+          edit(n+"ndis56common.h",[
+              ("    BOOLEAN                 bDoInterruptRecovery;","    BOOLEAN                 bDoInterruptRecovery;\n    BOOLEAN                 ObserveCounters;")])
+          edit(n+"ParaNdis-Common.c",[
+              ("    tConfigurationEntry Indirect;","    tConfigurationEntry Indirect;\n    tConfigurationEntry ObserveCounters;"),
+              ('    { "Indirect", 0, 0, 2},','    { "Indirect", 0, 0, 2},\n    { "ObserveCounters", 0, 0, 1},'),
+              ("    if (pConfiguration)\n    {\n        *pConfiguration = defaultConfiguration;","    pContext->ObserveCounters = FALSE;\n    if (pConfiguration)\n    {\n        *pConfiguration = defaultConfiguration;"),
+              ("            GetConfigurationEntry(cfg, &pConfiguration->Indirect);","            GetConfigurationEntry(cfg, &pConfiguration->Indirect);\n            GetConfigurationEntry(cfg, &pConfiguration->ObserveCounters);\n            pContext->ObserveCounters = pConfiguration->ObserveCounters.ulValue != 0;"),
+              ("    pContext->NetReceiveQueue = queues[0];","    /* Queues have been allocated but buffers have not yet been submitted.\n     * Reapply the adapter's boot-time opt-in on each new queue lifetime. */\n    for (unsigned i = 0; i < nvqs; ++i)\n        virtqueue_observe_configure(queues[i], pContext->ObserveCounters);\n    pContext->NetReceiveQueue = queues[0];")])
+          PY
+          git -C src diff --check
+          git -C src diff -- sdk/lib/drivers/virtio drivers/network/dd/netkvm > receipts/counter-candidate.patch
+          test -s receipts/counter-candidate.patch
+      - name: Add initialization-only diagnostic snapshot
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("src/drivers/network/dd/netkvm/Common/ParaNdis-Common.c")
+          s=p.read_text()
+          a='        JustForCheckClearInterrupt(pContext, "start 3");\n        pContext->bEnableInterruptHandlingDPC = TRUE;'
+          assert s.count(a)==1
+          b=r'''        /* RDTE DISPOSABLE x86 QEMU FIXTURE ONLY.
+                   * The VM must supply isa-debugcon at port E9; never distribute this
+                   * diagnostic binary or use it on physical hardware. Fixed metadata
+                   * record, no pointer, packet payload, allocation or hot-path I/O. */
+                  if (KeGetCurrentIrql() == PASSIVE_LEVEL)
+                  {
+                      const UCHAR magic[8] = {'R','D','T','E','V','C','0','1'};
+                      ULONG words[5], i, j, submitted = 0, consumed = 0;
+                      BOOLEAN safe = !pContext->bEnableInterruptHandlingDPC &&
+                          !(virtio_get_status(&pContext->IODevice) & VIRTIO_CONFIG_S_DRIVER_OK);
+                      if (safe)
+                          virtqueue_observe_snapshot(pContext->NetReceiveQueue, &submitted, &consumed);
+                      words[0] = safe ? 1 : 0;
+                      words[1] = (ULONG)pContext->ObserveCounters;
+                      words[2] = submitted;
+                      words[3] = consumed;
+                      words[4] = (ULONG)pContext->NetNofReceiveBuffers;
+                      for (i = 0; i < sizeof(magic); ++i)
+                          WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)0xe9, magic[i]);
+                      for (i = 0; i < 5; ++i)
+                          for (j = 0; j < 4; ++j)
+                              WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)0xe9,
+                                  (UCHAR)(words[i] >> (j * 8)));
+                      /* Retain previous debugger transport as an A/B witness. */
+                      if (safe)
+                          DbgPrint("RDTE_COUNTER_INIT enabled=%u submitted=%lu consumed=%lu expected=%lu\n",
+                              (unsigned)pContext->ObserveCounters, submitted, consumed, words[4]);
+                  }
+                  JustForCheckClearInterrupt(pContext, "start 3");
+                  pContext->bEnableInterruptHandlingDPC = TRUE;'''
+          p.write_text(s.replace(a,b))
+          PY
+          git -C src diff --check
+          git -C src diff -- sdk/lib/drivers/virtio drivers/network/dd/netkvm > receipts/counter-runtime.patch
+      - name: Candidate library and linked driver
+        shell: pwsh
+        run: |
+          cmake --build build --target virtio netkvm 2>&1 | Tee-Object receipts/candidate.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem build -Recurse -Filter virtio.lib | Copy-Item -Destination receipts/candidate.lib
+          Get-ChildItem build -Recurse -Filter netkvm.sys | Copy-Item -Destination receipts/candidate-netkvm.sys
+          if (!(Test-Path receipts/candidate-netkvm.sys)) { throw "Missing candidate linked driver" }
+          Get-FileHash receipts/*.lib,receipts/*.sys | Out-File receipts/hashes.txt
+          if ((Get-FileHash receipts/stock-netkvm.sys).Hash -eq (Get-FileHash receipts/candidate-netkvm.sys).Hash) { throw "Linked driver unchanged" }
+      - name: Build source-generated boot images with identical linked driver
+        shell: pwsh
+        run: |
+          $inf = (Resolve-Path 'src/drivers/network/dd/netkvm/netkvm.inf').Path
+          $original = [IO.File]::ReadAllText($inf)
+          $anchor = '[kvmnet5.Reg]'
+          if ([regex]::Matches($original, [regex]::Escape($anchor)).Count -ne 1) { throw 'Missing unique INF registry anchor' }
+          $driverHash = (Get-FileHash receipts/candidate-netkvm.sys).Hash
+          foreach ($mode in @(0,1)) {
+              $value = $original.Replace($anchor, ($anchor + [Environment]::NewLine + "HKR, , ObserveCounters, 0x00010001, $mode"))
+              [IO.File]::WriteAllText($inf,$value)
+              Copy-Item $inf "receipts/netkvm-$mode.inf"
+              cmake --build build --target bootcd 2>&1 | Tee-Object "receipts/bootcd-$mode.log"
+              if ($LASTEXITCODE) { exit $LASTEXITCODE }
+              if (!(Test-Path build/bootcd.iso)) { throw 'Missing boot image' }
+              $driver = Get-ChildItem build -Recurse -Filter netkvm.sys | Select-Object -First 1
+              if (!$driver -or (Get-FileHash $driver.FullName).Hash -ne $driverHash) { throw 'Driver changed across configuration arms' }
+              Copy-Item build/bootcd.iso "receipts/counter-$mode.iso"
+          }
+          [IO.File]::WriteAllText($inf,$original)
+          $h0 = (Get-FileHash receipts/counter-0.iso).Hash
+          $h1 = (Get-FileHash receipts/counter-1.iso).Hash
+          if ($h0 -eq $h1) { throw 'Configuration variants did not propagate into distinct images' }
+          Get-FileHash receipts/counter-*.iso,receipts/netkvm-*.inf,receipts/candidate-netkvm.sys | Out-File receipts/image-hashes.txt
+          "DISPOSABLE_QEMU_X86_ONLY; ISA debugcon port E9 required; not installable/release qualified" | Out-File receipts/CLASSIFICATION.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-reactos-v20c4
+          path: receipts/
+          retention-days: 7
+      - name: Terminal receipt
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-reactos-v20c4 -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
