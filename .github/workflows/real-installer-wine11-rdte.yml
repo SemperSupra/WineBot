@@ -1,0 +1,220 @@
+name: Real Notepad++ MSI installer on layered Wine11 RDTE
+# Original upstream GPL application; isolated disposable public fixture only.
+# No artifact uploads, no release, no native or arbitrary recipe parity claim.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/real-installer-wine11-rdte.yml'
+      - 'cmd/installer-capture/**'
+permissions:
+  contents: read
+concurrency:
+  group: real-installer-r67-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+jobs:
+  real-installer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: layered
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: SemperSupra/WineBot
+          persist-credentials: false
+          ref: 8c5ed8019a3518cf534b158662755172bfce7c59
+          path: wine11-candidate
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: layered/cmd/installer-capture/go.mod
+          cache: false
+      - name: Reclaim standard-runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+      - name: Pin original GPL MSI and build source-exact capture CLI
+        working-directory: layered
+        timeout-minutes: 6
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p apps/installer-rdte
+          curl -fsSL --retry 1 --connect-timeout 10 --max-time 120 \
+            'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.9.1/npp.8.9.9.1.Installer.x64.msi' \
+            -o apps/installer-rdte/npp.msi
+          printf 'e3b0607a092ce2604fbdac027db2c94915995e8e568ebd226f8c5493c2f61a80  apps/installer-rdte/npp.msi\n' \
+            | sha256sum --status -c -
+          (cd cmd/installer-capture && go test ./... && go build -trimpath -o ../../apps/installer-rdte/capture .)
+          echo 'INSTALLER_R67 stage=original_msi_and_capture_pinned'
+      - name: Qualify isolated original installation and persistent-state uninstall
+        working-directory: layered
+        timeout-minutes: 65
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { printf 'INSTALLER_R67 stage=%s\n' "$1" >&2; exit 1; }
+          [ "${GITHUB_ACTIONS:-}" = true ] &&
+            [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || fail unqualified_venue
+          [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] &&
+            [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || fail invalid_runner
+          test -f ../wine11-candidate/docker/base.Dockerfile || fail wine11_missing
+          test -f apps/installer-rdte/npp.msi || fail installer_missing
+          test -x apps/installer-rdte/capture || fail capture_missing
+          test -z "$(find apps/installer-rdte -type l -print -quit)" || fail unexpected_symlink
+          
+          prefix="winebot-installer67-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export COMPOSE_PROJECT_NAME="$prefix"
+          export WINEBOT_APP_VOLUME="$prefix-apps"
+          export WINEBOT_PREFIX_VOLUME="$prefix-prefix"
+          export WINEBOT_HOME_VOLUME="$prefix-home"
+          export WINEBOT_CONFIG_VOLUME="$prefix-config"
+          export WINEBOT_USERDATA_VOLUME="$prefix-userdata"
+          export WINEBOT_ARTIFACT_VOLUME="$prefix-artifacts"
+          export WINEBOT_SHARED_VOLUME="$prefix-shared"
+          export WINEBOT_API_TOKEN=installer67-public-runner-synthetic-token-only
+          export WINEBOT_VNC_PASSWORD=installer67-public-runner-synthetic-password
+          volumes=("$WINEBOT_APP_VOLUME" "$WINEBOT_PREFIX_VOLUME" "$WINEBOT_HOME_VOLUME"
+            "$WINEBOT_CONFIG_VOLUME" "$WINEBOT_USERDATA_VOLUME" "$WINEBOT_ARTIFACT_VOLUME"
+            "$WINEBOT_SHARED_VOLUME")
+          created_volumes=()
+          compose_started=0
+          cleanup() {
+            if [ "$compose_started" = 1 ]; then
+              docker compose -f compose/layered.yml down --remove-orphans >/dev/null 2>&1 || true
+            fi
+            for volume in "${created_volumes[@]}"; do
+              docker volume rm "$volume" >/dev/null 2>&1 || true
+            done
+            docker image rm winebot:installer67 winebot-base:installer67 winebot-apps:installer67 >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for volume in "${volumes[@]}"; do
+            if docker volume inspect "$volume" >/dev/null 2>&1; then fail volume_name_in_use; fi
+            docker volume create "$volume" >/dev/null 2>&1 || fail volume_create
+            created_volumes+=("$volume")
+          done
+          docker build -f ../wine11-candidate/docker/base.Dockerfile --target final \
+            -t winebot-base:installer67 ../wine11-candidate >"$RUNNER_TEMP/installer67-base-build.log" 2>&1 ||
+            fail base_build
+          # The initializer now belongs to the candidate tree. Never replace it at test time.
+          git diff --exit-code -- scripts/init/20-setup-wine.sh >/dev/null || fail candidate_source_modified
+          docker build -f docker/Dockerfile --target intent-rel \
+            --build-arg BASE_IMAGE=winebot-base:installer67 --build-arg BUILD_INTENT=rel \
+            -t winebot:installer67 . >"$RUNNER_TEMP/installer67-runtime-build.log" 2>&1 ||
+            fail runtime_build
+          docker build -f docker/app-bundle.Dockerfile -t winebot-apps:installer67 . \
+            >"$RUNNER_TEMP/installer67-app-build.log" 2>&1 || fail app_build
+          export WINEBOT_RUNTIME_IMAGE="$(docker image inspect -f '{{.Id}}' winebot:installer67)"
+          export WINEBOT_APP_BUNDLE_IMAGE="$(docker image inspect -f '{{.Id}}' winebot-apps:installer67)"
+          [[ "$WINEBOT_RUNTIME_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] &&
+            [[ "$WINEBOT_APP_BUNDLE_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+            fail image_identity
+          # Verify the selected local image before starting any dependent state service.
+          docker run --rm --network none --read-only --user 1000:1000 \
+            --entrypoint /bin/bash "$WINEBOT_RUNTIME_IMAGE" /scripts/internal/require-wine11.sh \
+            || fail wine11_runtime_admission
+          bash scripts/layers/preflight.sh --check-volumes || fail volume_identity_admission
+          docker compose -f compose/layered.yml config --quiet >/dev/null 2>&1 ||
+            fail compose_invalid
+          compose_started=1
+          docker compose -f compose/layered.yml up -d --no-build winebot-interactive \
+            >"$RUNNER_TEMP/installer67-compose-start.log" 2>&1 || fail startup
+          wait_health() {
+            local cid state
+            for _ in $(seq 1 100); do
+              cid="$(docker compose -f compose/layered.yml ps -q winebot-interactive 2>/dev/null || true)"
+              if [ -n "$cid" ]; then
+                state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid" 2>/dev/null || true)"
+                [ "$state" = healthy ] && return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+          
+          wait_health || fail health_initial
+          cid="$(docker compose -f compose/layered.yml ps -q winebot-interactive)"
+          test -n "$cid" || fail container_missing
+          # No external connectivity while executing the third-party installer.
+          docker network disconnect "${prefix}_default" "$cid" >/dev/null 2>&1 || fail disconnect_failed
+          test "$(docker inspect -f '{{len .NetworkSettings.Networks}}' "$cid")" = 0 || fail isolation_failed
+          echo 'INSTALLER_R67 stage=isolated_layered_runtime'
+          # Separate experiment prefix on the disposable prefix volume; never modify the
+          # default prefix or a real user profile. No raw output leaves the runner.
+          docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -s \
+            >"$RUNNER_TEMP/installer67-local.log" 2>&1 <<'CELL' || fail original_installer_or_postcondition
+          set -euo pipefail
+          test "$(id -u)" = 1000
+          export WINEPREFIX=/wineprefix/rdte-installer67 HOME=/userdata/rdte-installer-home
+          export WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml='
+          test ! -e "$WINEPREFIX" && test ! -e "$HOME"
+          mkdir -p "$WINEPREFIX" "$HOME"
+          work="$(mktemp -d /tmp/installer67.XXXXXX)"
+          trap 'rm -rf "$work"' EXIT
+          capture=/apps/installer-rdte/capture
+          printf 'persistent-user-file-v1\n' >/userdata/rdte-installer-sentinel
+          quiet() { timeout 30 wineserver -k; timeout 30 wineserver -w; }
+          timeout 180 wineboot -u
+          quiet
+          "$capture" snapshot -root "$WINEPREFIX" -out "$work/before.json"
+          cp "$WINEPREFIX/system.reg" "$work/before.reg"
+          msi="$(winepath -w /apps/installer-rdte/npp.msi)"
+          timeout 180 wine msiexec /i "$msi" /qn /norestart
+          quiet
+          "$capture" snapshot -root "$WINEPREFIX" -out "$work/after.json"
+          cp "$WINEPREFIX/system.reg" "$work/after.reg"
+          "$capture" diff -before "$work/before.json" -after "$work/after.json" -out "$work/delta.json"
+          "$capture" regdiff -before "$work/before.reg" -after "$work/after.reg" -out "$work/regdelta.json"
+          exe="$WINEPREFIX/drive_c/Program Files/Notepad++/notepad++.exe"
+          test -s "$exe"
+          printf 'installer-before\n' >/userdata/rdte-installer-document.txt
+          doc="$(winepath -w /userdata/rdte-installer-document.txt)"
+          nohup wine "$exe" "$doc" >/tmp/installer67-app.log 2>&1 </dev/null &
+          found=""
+          for _ in $(seq 1 90); do
+            found="$(xdotool search --onlyvisible --name 'rdte-installer-document.*Notepad' 2>/dev/null | head -1 || true)"
+            [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
+            sleep 1
+          done
+          [[ "$found" =~ ^[0-9]{1,16}$ ]]
+          xdotool windowactivate --sync "$found"
+          xdotool key --clearmodifiers ctrl+End
+          xdotool type --clearmodifiers 'R67-INSTALLED-APP-SAVE'
+          xdotool key --clearmodifiers ctrl+s
+          for _ in $(seq 1 25); do
+            grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt && break
+            sleep 1
+          done
+          grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
+          xdotool key --clearmodifiers alt+F4
+          sleep 2
+          quiet
+          timeout 180 wine msiexec /x "$msi" /qn /norestart
+          quiet
+          test ! -e "$exe"
+          "$capture" snapshot -root "$WINEPREFIX" -out "$work/removed.json"
+          "$capture" diff -before "$work/after.json" -after "$work/removed.json" -out "$work/remove-delta.json"
+          "$capture" regdiff -before "$work/after.reg" -after "$WINEPREFIX/system.reg" -out "$work/remove-regdelta.json"
+          # This is a bounded app-level uninstall postcondition, not full rollback parity.
+          test "$(cat /userdata/rdte-installer-sentinel)" = persistent-user-file-v1
+          grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
+          echo 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass'
+          CELL
+          grep -Fxq 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass' "$RUNNER_TEMP/installer67-local.log" || fail receipt_missing
+          echo 'INSTALLER_R67 stage=original_install_capture_gui_save_uninstall_pass'
+          docker compose -f compose/layered.yml up -d --force-recreate --no-build winebot-interactive >/dev/null 2>&1 || fail recreate
+          wait_health || fail recreate_health
+          docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
+            test "$(cat /userdata/rdte-installer-sentinel)" = persistent-user-file-v1
+            grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
+            test ! -e "/wineprefix/rdte-installer67/drive_c/Program Files/Notepad++/notepad++.exe"
+          ' >/dev/null 2>&1 || fail persistent_postcondition
+          echo 'INSTALLER_R67 stage=bounded_real_installer_and_state_replay_pass'
