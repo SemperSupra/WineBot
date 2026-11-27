@@ -1,0 +1,355 @@
+name: VirtIO recovery-first 2D GPU and input native workloads
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-causal-share-v29.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  interaction:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [gpu]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      LANE: ${{ matrix.lane }}
+    steps:
+      - name: Bind admitted public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context="rdte/virtio-causal-share-v29-$LANE" -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/download-artifact@v4
+        with:
+          name: virtio-source-binaries-v18f3
+          run-id: 45715597435
+          github-token: ${{ github.token }}
+          path: binaries
+      - name: Verify pinned emulator and firmware
+        run: |
+          set -euo pipefail
+          cat > receipts/expected.sha256 <<'EOF'
+          4d567f217c247a9d39f3d5e364992dbf16e2eb624fc1eee09c70828aae40dda5  binaries/stock-qemu-system-x86_64
+          7eca8293689317017ee7b48f55459809dab56c01209bd807ba73a7eb05d9d573  binaries/candidate-qemu-system-x86_64
+          ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650  binaries/pc-bios/bios-256k.bin
+          cdf057a71b07e3b52b19cbe210bdefa59250d01a9810b960f7fe1f98eed95a27  binaries/pc-bios/kvmvapic.bin
+          9c49e255340c78fc12e54ed043462bca02fb7fca29b7cfab62ff88a5344b6950  binaries/pc-bios/linuxboot_dma.bin
+          cb0f6b199da98503aba440daa75c5882d6238af1707c059957597aa8cdc592b2  binaries/candidate.patch
+          EOF
+          sha256sum -c receipts/expected.sha256
+          test "$(cat binaries/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod u+x binaries/*qemu-system-x86_64
+          cp binaries/candidate.patch binaries/upstream-sha.txt receipts/
+      - name: Build real Linux guest fixture
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils busybox-static linux-image-virtual cpio kmod zstd gcc libc6-dev libgnutls30t64 libpixman-1-0 zlib1g libnuma1 libglib2.0-0t64 libzstd1 libslirp0 libfdt1 libncursesw6 libaio1t64 liburing2
+          k=$(find /boot -maxdepth 1 -name 'vmlinuz-*-generic' -printf '%f\n' | sort -V | tail -1)
+          test -n "$k"
+          ver=$(echo "$k" | sed 's/^vmlinuz-//')
+          sudo apt-get install -y -qq --no-install-recommends "linux-modules-extra-$ver"
+          sudo cp "/boot/$k" kernel.bin
+          sudo chmod 644 kernel.bin
+          echo "$ver" > receipts/kernel-release.txt
+          mkdir -p root/{bin,dev,proc,sys,modules,mnt}
+          cp "$(command -v busybox)" root/bin/busybox
+          mods="virtio_pci"
+          mods="$mods virtio_gpu evdev virtio_input 9p 9pnet_virtio"
+          for m in $mods; do modprobe -S "$ver" --show-depends "$m"; done > receipts/module-deps.txt
+          : > root/modules/load
+          awk '$1=="insmod"&&!seen[$2]++{print $2}' receipts/module-deps.txt | while read -r src; do
+            name=$(basename "$src" | sed -E 's/\.(zst|xz|gz)$//')
+            case "$src" in *.zst) zstd -dc "$src" > "root/modules/$name";; *.xz) xz -dc "$src" > "root/modules/$name";; *.gz) gzip -dc "$src" > "root/modules/$name";; *) cp "$src" "root/modules/$name";; esac
+            echo "/modules/$name" >> root/modules/load
+          done
+          cat > receipts/gpu.c <<'C'
+          #include <linux/fb.h>
+          #include <sys/ioctl.h>
+          #include <sys/mman.h>
+          #include <stdint.h>
+          #include <fcntl.h>
+          #include <unistd.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <assert.h>
+          #include <linux/input.h>
+          #include <poll.h>
+          static int keyboard(void){
+              for(int t=0;t<30;t++){
+                  for(int i=0;i<32;i++){
+                      char path[64],name[128]={0};
+                      snprintf(path,sizeof(path),"/dev/input/event%d",i);
+                      int fd=open(path,O_RDONLY|O_NONBLOCK);
+                      if(fd<0)continue;
+                      if(ioctl(fd,EVIOCGNAME(sizeof(name)),name)>=0&&strcmp(name,"QEMU Virtio Keyboard")==0)return fd;
+                      close(fd);
+                  }
+                  sleep(1);
+              }
+              return -1;
+          }
+          static void wait_key(int fd,int code){
+              struct input_event e;struct pollfd p={fd,POLLIN,0};
+              for(int i=0;i<100;i++){
+                  if(poll(&p,1,500)<=0)continue;
+                  while(read(fd,&e,sizeof(e))==sizeof(e)){
+                      if(e.type==EV_KEY&&e.value==1){assert(e.code==code);return;}
+                  }
+              }
+              assert(0);
+          }
+          static uint32_t color(struct fb_var_screeninfo *v,unsigned r,unsigned g,unsigned b){
+              return ((r?((1u<<v->red.length)-1):0)<<v->red.offset)
+                   | ((g?((1u<<v->green.length)-1):0)<<v->green.offset)
+                   | ((b?((1u<<v->blue.length)-1):0)<<v->blue.offset);
+          }
+          int main(void){
+              int fd=-1;
+              for(int i=0;i<30&&fd<0;i++){fd=open("/dev/fb0",O_RDWR);if(fd<0)sleep(1);}
+              assert(fd>=0);
+              struct fb_var_screeninfo v;struct fb_fix_screeninfo f;
+              assert(ioctl(fd,FBIOGET_VSCREENINFO,&v)==0 && ioctl(fd,FBIOGET_FSCREENINFO,&f)==0);
+              assert(v.bits_per_pixel==32 && v.xres>=64 && v.yres>=64);
+              assert(v.red.length==8&&v.green.length==8&&v.blue.length==8);
+              assert((uint64_t)(v.yoffset+v.yres)*f.line_length<=f.smem_len);
+              assert((uint64_t)(v.xoffset+v.xres)*4<=f.line_length);
+              unsigned char *p=mmap(0,f.smem_len,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);assert(p!=MAP_FAILED);
+              printf("FB_MODE %u %u %u\n",v.xres,v.yres,f.line_length);fflush(stdout);
+              uint32_t colors[]={color(&v,1,0,0),color(&v,0,1,0),color(&v,0,0,1),color(&v,1,1,1)};
+              int keyfd=keyboard();assert(keyfd>=0);
+              puts("CAUSAL_READY");fflush(stdout);
+              for(int phase=0;phase<2;phase++){
+                  wait_key(keyfd,phase==0?KEY_A:KEY_B);
+                  int out=open("/mnt/state.bin",O_WRONLY|O_CREAT|O_TRUNC,0600);assert(out>=0);
+                  unsigned char value[4096];memset(value,phase==0?0x41:0x42,sizeof(value));
+                  assert(write(out,value,sizeof(value))==sizeof(value));assert(fsync(out)==0);assert(close(out)==0);
+                  for(unsigned y=0;y<v.yres;y++){
+                      uint32_t *row=(uint32_t *)(p+(y+v.yoffset)*f.line_length)+v.xoffset;
+                      for(unsigned x=0;x<v.xres;x++){
+                          unsigned quadrant=(y>=v.yres/2)*2+(x>=v.xres/2);
+                          row[x]=colors[(quadrant+phase)%4];
+                      }
+                  }
+                  (void)msync(p,f.smem_len,MS_SYNC);
+                  printf("GPU_PHASE_%d\n",phase);fflush(stdout);
+                  sleep(20);
+              }
+              close(keyfd);munmap(p,f.smem_len);close(fd);puts("GPU_PASS");return 0;
+          }
+          C
+          cat > receipts/input.c <<'C'
+          #include <linux/input.h>
+          #include <sys/ioctl.h>
+          #include <fcntl.h>
+          #include <unistd.h>
+          #include <poll.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <assert.h>
+          #include <errno.h>
+          #include <time.h>
+          int main(void){
+              int fd=-1;
+              for(int t=0;t<30&&fd<0;t++){
+                  for(int i=0;i<32;i++){
+                      char path[64],name[128]={0};
+                      snprintf(path,sizeof(path),"/dev/input/event%d",i);
+                      int x=open(path,O_RDONLY|O_NONBLOCK);
+                      if(x<0)continue;
+                      if(ioctl(x,EVIOCGNAME(sizeof(name)),name)>=0&&strcmp(name,"QEMU Virtio Keyboard")==0){fd=x;break;}
+                      close(x);
+                  }
+                  if(fd<0)sleep(1);
+              }
+              assert(fd>=0);
+              struct input_event ev;
+              while(read(fd,&ev,sizeof(ev))==sizeof(ev)){}
+              struct pollfd p={.fd=fd,.events=POLLIN};
+              assert(poll(&p,1,1000)==0);
+              puts("INPUT_QUIET_PASS");puts("INPUT_READY");fflush(stdout);
+              int codes[]={KEY_A,KEY_A,KEY_B,KEY_B}, values[]={1,0,1,0}, n=0;
+              time_t end=time(NULL)+30;
+              while(n<4&&time(NULL)<end){
+                  if(poll(&p,1,500)<=0)continue;
+                  while(read(fd,&ev,sizeof(ev))==sizeof(ev)){
+                      if(ev.type!=EV_KEY)continue;
+                      printf("KEY %u %d\n",ev.code,ev.value);fflush(stdout);
+                      assert(n<4&&ev.code==codes[n]&&ev.value==values[n]);n++;
+                  }
+              }
+              assert(n==4);close(fd);puts("INPUT_PASS");return 0;
+          }
+          C
+          gcc -O2 -static -Wall -Wextra -Werror "receipts/$LANE.c" -o root/bin/fixture
+          cat > root/init <<'SH'
+          #!/bin/busybox sh
+          set -eu
+          B=/bin/busybox
+          $B mount -t proc proc /proc
+          $B mount -t sysfs sysfs /sys
+          $B mount -t devtmpfs devtmpfs /dev
+          while read -r m; do $B insmod "$m"; done < /modules/load
+          $B mount -t 9p -o trans=virtio,version=9p2000.L,cache=none rdte /mnt
+          /bin/fixture
+          $B sync
+          $B umount /mnt
+          echo FIXTURE_PASS
+          $B sleep 2
+          $B poweroff -f
+          SH
+          chmod 755 root/init
+          cp root/init receipts/guest-init.sh
+          (cd root && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -n) > initramfs.gz
+          sha256sum kernel.bin initramfs.gz root/bin/fixture > receipts/guest.sha256
+          find root/modules -type f -exec sha256sum {} \; > receipts/modules.sha256
+      - name: Compare stock native candidate OFF and ON
+        run: |
+          set -euo pipefail
+          cat > receipts/run.py <<'PY'
+          import pathlib,subprocess,socket,time,json,re,os,hashlib
+          P=pathlib.Path; r=P("receipts");lane=os.environ["LANE"]
+          semantic={"gpu":["virtio_gpu_cmd_res_create_2d","virtio_gpu_cmd_res_back_attach","virtio_gpu_cmd_set_scanout","virtio_gpu_cmd_res_xfer_toh_2d","virtio_gpu_cmd_res_flush","input_event_key_qcode","input_event_sync","v9fs_write","v9fs_write_return","v9fs_fsync","v9fs_lcreate"],"input":["input_event_key_qcode","input_event_sync","virtio_input_queue_full"]}[lane]
+          core=["virtqueue_buffer_pop","virtqueue_buffer_fill_attempt","virtqueue_host_advance"]
+          colors=[(255,0,0),(0,255,0),(0,0,255),(255,255,255)]
+          def pixels(path,phase):
+              data=path.read_bytes()
+              m=re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\n",data)
+              if not m:return None
+              w,h=map(int,m.groups());p=data[m.end():]
+              if w<64 or h<64 or len(p)!=w*h*3:return None
+              actual=[]
+              for y in (h//4,3*h//4):
+                  for x in (w//4,3*w//4):
+                      samples={tuple(p[(yy*w+xx)*3:(yy*w+xx)*3+3]) for yy in range(y-4,y+4) for xx in range(x-4,x+4)}
+                      if len(samples)!=1:return None
+                      actual.append(next(iter(samples)))
+              return {"width":w,"height":h,"samples":actual,"sha256":hashlib.sha256(data).hexdigest()} if actual==[colors[(i+phase)%4] for i in range(4)] else None
+          def arm(mode):
+              q=str(P("binaries/"+("stock" if mode=="stock-native" else "candidate")+"-qemu-system-x86_64").resolve())
+              ev=semantic+(core if mode=="candidate-on" else [])
+              helptext=subprocess.check_output([q,"-trace","help"],stderr=subprocess.STDOUT,text=True)
+              (r/(mode+"-trace-help.txt")).write_text(helptext)
+              assert all(re.search(r"(?m)^"+e+r"(?:\s|$)",helptext) for e in ev),ev
+              trace=r/(mode+".trace");log=r/(mode+".serial");sock=mode+".sock"
+              target="virtio-gpu-pci,id=target,romfile=,disable-legacy=on,packed=off" if lane=="gpu" else "virtio-keyboard-pci,id=target,romfile=,disable-legacy=on,packed=off"
+              argv=[q,"-L",str(P("binaries/pc-bios").resolve()),"-accel","tcg","-machine","pc","-m","768","-smp","1","-nodefaults","-display","none","-monitor","none","-serial","stdio","-nic","none","-no-reboot","-kernel","kernel.bin","-initrd","initramfs.gz","-append","console=ttyS0 rdinit=/init panic=-1 quiet vt.global_cursor_default=0","-qmp","unix:"+sock+",server=on,wait=off","-device",target]
+              import shutil
+              share=P(mode+"-share").resolve();share.mkdir()
+              assert not list(share.iterdir())
+              argv+=["-device","virtio-keyboard-pci,id=keyboard0,romfile=,disable-legacy=on,packed=off","-fsdev",f"local,id=fs,path={share},security_model=mapped-xattr","-device","virtio-9p-pci,fsdev=fs,mount_tag=rdte,disable-legacy=on,packed=off"]
+              if mode!="candidate-off":
+                  f=r/(mode+".events");f.write_text("\n".join(ev)+"\n")
+                  argv+=["-trace","events="+str(f),"-D",str(trace)]
+              (r/(mode+"-argv.json")).write_text(json.dumps(argv,indent=2))
+              history=[];frames=[];state=None;err=None
+              with log.open("wb") as out:
+                  p=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=out,stderr=out)
+                  try:
+                      for _ in range(100):
+                          if P(sock).exists():break
+                          assert p.poll() is None
+                          time.sleep(.1)
+                      with socket.socket(socket.AF_UNIX) as s:
+                          s.settimeout(10);s.connect(sock);f=s.makefile("rwb");assert "QMP" in json.loads(f.readline())
+                          def qmp(cmd,args=None):
+                              req={"execute":cmd,"id":len(history)}
+                              if args is not None:req["arguments"]=args
+                              f.write(json.dumps(req).encode()+b"\n");f.flush()
+                              while True:
+                                  line=f.readline();assert line
+                                  obj=json.loads(line)
+                                  if obj.get("id")==req["id"]:
+                                      history.append({"request":req,"response":obj});assert "return" in obj,obj;return obj["return"]
+                          def wait(marker,seconds=60):
+                              end=time.monotonic()+seconds
+                              while time.monotonic()<end:
+                                  if marker in log.read_text(errors="replace"):return
+                                  assert p.poll() is None,marker
+                                  assert log.stat().st_size<2*1024*1024
+                                  time.sleep(.1)
+                              raise TimeoutError(marker)
+                          qmp("qmp_capabilities")
+                          if lane=="gpu":
+                              wait("CAUSAL_READY")
+                              for phase in (0,1):
+                                  assert "GPU_PHASE_"+str(phase) not in log.read_text(errors="replace")
+                                  key=("a","b")[phase]
+                                  for down in (True,False):
+                                      qmp("input-send-event",{"events":[{"type":"key","data":{"down":down,"key":{"type":"qcode","data":key}}}]})
+                                  wait("GPU_PHASE_"+str(phase))
+                                  state=qmp("x-query-virtio-status",{"path":"/machine/peripheral/target/virtio-backend"})
+                                  assert "DRIVER_OK" in json.dumps(state["status"])
+                                  dest=(r/f"{mode}-{phase}.ppm").resolve()
+                                  result=None
+                                  for _ in range(30):
+                                      qmp("screendump",{"filename":str(dest)})
+                                      result=pixels(dest,phase)
+                                      if result:break
+                                      time.sleep(.25)
+                                  assert result,("display mismatch",phase)
+                                  frames.append(result)
+                                  phase_file=share/"state.bin"
+                                  assert phase_file.is_file() and phase_file.read_bytes()==bytes([65+phase])*4096
+                                  (r/f"{mode}-phase-{phase}.bin").write_bytes(phase_file.read_bytes())
+                          else:
+                              wait("INPUT_READY")
+                              state=qmp("x-query-virtio-status",{"path":"/machine/peripheral/target/virtio-backend"})
+                              assert "DRIVER_OK" in json.dumps(state["status"])
+                              for key,down in (("a",True),("a",False),("b",True),("b",False)):
+                                  qmp("input-send-event",{"events":[{"type":"key","data":{"down":down,"key":{"type":"qcode","data":key}}}]})
+                                  time.sleep(.15)
+                          wait("FIXTURE_PASS")
+                          p.wait(timeout=10)
+                  except Exception as e:err=repr(e)
+                  finally:
+                      if p.poll() is None:p.kill();p.wait()
+                      (r/(mode+"-qmp.json")).write_text(json.dumps(history,indent=2))
+              raw=trace.read_text(errors="replace") if trace.exists() else "";serial=log.read_text(errors="replace")
+              counts={e:len(re.findall(r"\b"+e+r"\b",raw)) for e in semantic+core}
+              observed_keys=re.findall(r"(?m)^KEY (\d+) (\d+)\r?$",serial)
+              guest_ok=len(frames)==2 and frames[0]["sha256"]!=frames[1]["sha256"] if lane=="gpu" else observed_keys==[("30","1"),("30","0"),("48","1"),("48","0")] and "INPUT_QUIET_PASS" in serial
+              trace_ok=not trace.exists() if mode=="candidate-off" else (all(counts[e]>0 for e in semantic) if lane=="gpu" else counts["input_event_key_qcode"]>=4 and counts["input_event_sync"]>0 and counts["virtio_input_queue_full"]==0)
+              if mode=="candidate-on":trace_ok=trace_ok and all(counts[e]>0 for e in core)
+              ready=state is not None and "DRIVER_OK" in json.dumps(state["status"])
+              dest=r/(mode+"-state.bin")
+              if (share/"state.bin").is_file(): shutil.copyfile(share/"state.bin",dest)
+              state_ok=dest.is_file() and dest.read_bytes()==b"B"*4096
+              guest_ok=guest_ok and state_ok
+              row={"state_ok":state_ok,"mode":mode,"lane":lane,"error":err,"exit":p.returncode,"guest_ok":guest_ok,"driver_ready":ready,"frames":frames,"keys":observed_keys,"counts":counts,"trace_ok":trace_ok,"pass":err is None and p.returncode==0 and guest_ok and trace_ok and ready and "FIXTURE_PASS" in serial}
+              return row
+          results=[]
+          for mode in ("stock-native","candidate-off","candidate-on"):
+              try:results.append(arm(mode))
+              except Exception as e:results.append({"mode":mode,"pass":False,"error":repr(e)})
+              (r/"summary.json").write_text(json.dumps(results,indent=2))
+          assert len(results)==3 and all(x["pass"] for x in results),results
+          if lane=="gpu":
+              assert all([f["samples"] for f in x["frames"]]==[f["samples"] for f in results[0]["frames"]] for x in results)
+          PY
+          python3 receipts/run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-causal-share-v29-${{ matrix.lane }}
+          path: receipts/
+          retention-days: 7
+      - name: Bind terminal receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$RESULT" in success|failure) state="$RESULT";; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context="rdte/virtio-causal-share-v29-$LANE" -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
