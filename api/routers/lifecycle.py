@@ -58,6 +58,11 @@ shutdown_transition_lock = asyncio.Lock()
 _shutdown_in_progress = False
 _shutdown_mode = ""
 _shutdown_started_at = 0.0
+_shutdown_due_at = 0.0
+_shutdown_requested_delay = 0.0
+_shutdown_generation = 0
+_pending_shutdown_task: asyncio.Task[None] | None = None
+_pending_shutdown_operation: str | None = None
 _TRANSITION_MARKER_FILE = "session.transition.json"
 _process_state_lock = threading.Lock()
 _process_pid_snapshot: dict[str, set[int]] = {}
@@ -293,7 +298,7 @@ async def lifecycle_status():
         # Contract-required fields (override health status with lifecycle status)
         "status": "pending" if _shutdown_in_progress else "idle",
         "pending_action": "shutdown" if _shutdown_in_progress else None,
-        "remaining_seconds": max(0, int(_shutdown_started_at + float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS) - time.time())) if _shutdown_in_progress else None,
+        "remaining_seconds": max(0, int(_shutdown_due_at - time.time())) if _shutdown_in_progress else None,
     }
     emit_operation_timing(
         session_dir,
@@ -472,9 +477,57 @@ async def operations_list(limit: int = 50):
     return {"operations": items}
 
 
+async def _commit_graceful_shutdown(
+    operation_id: str,
+    session_dir: str | None,
+    delay: float,
+    wine_shutdown: bool,
+    generation: int,
+) -> None:
+    """Wait for the cancellable grace period before touching running components."""
+    global _shutdown_in_progress, _shutdown_mode, _pending_shutdown_task
+    try:
+        await asyncio.sleep(delay)
+        # The cancellation decision and transition to non-cancellable teardown
+        # share a lock. A cancelled generation can never later kill PID 1.
+        async with shutdown_transition_lock:
+            if not _shutdown_in_progress or _shutdown_mode != "graceful" or generation != _shutdown_generation:
+                return
+            _shutdown_mode = "committing"
+        write_instance_state("shutting_down", reason="api_lifecycle_shutdown")
+        await heartbeat_operation(
+            operation_id,
+            phase="atomic_shutdown",
+            message="grace period expired; stopping components",
+            progress=40,
+        )
+        results = await atomic_shutdown(session_dir, wine_shutdown=wine_shutdown)
+        if not bool(results.get("ok", True)):
+            await fail_operation(operation_id, error="atomic shutdown failed", result=results)
+            async with shutdown_transition_lock:
+                if generation == _shutdown_generation:
+                    _shutdown_in_progress = False
+                    _shutdown_mode = ""
+            return
+        await complete_operation(operation_id, result={"status": "shutting_down", "results": results})
+        schedule_shutdown(session_dir, 0.0, signal.SIGTERM)
+    except asyncio.CancelledError:
+        # Cancel was accepted before the teardown commit. No signal is sent.
+        return
+    except Exception:
+        await fail_operation(operation_id, error="deferred shutdown failed")
+        async with shutdown_transition_lock:
+            if generation == _shutdown_generation:
+                _shutdown_in_progress = False
+                _shutdown_mode = ""
+    finally:
+        if generation == _shutdown_generation:
+            _pending_shutdown_task = None
+
+
 @router.post("/lifecycle/shutdown")
 async def lifecycle_shutdown(
-    delay: float = 0.5,
+    delay: float = 10.0,
     wine_shutdown: bool = True,
     power_off: bool = False,
 ):
@@ -484,6 +537,8 @@ async def lifecycle_shutdown(
     if delay > 300:
         raise HTTPException(status_code=422, detail="delay must not exceed 300 seconds")
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
+    global _shutdown_due_at, _shutdown_requested_delay, _shutdown_generation
+    global _pending_shutdown_task, _pending_shutdown_operation
     op_started = time.perf_counter()
     session_dir = read_session_dir()
     operation_id = await create_operation(
@@ -493,9 +548,30 @@ async def lifecycle_shutdown(
     )
     async with shutdown_transition_lock:
         now = time.time()
-        if _shutdown_in_progress and (
-            now - _shutdown_started_at
-        ) <= float(config.WINEBOT_SHUTDOWN_GUARD_TTL_SECONDS):
+        if _shutdown_in_progress:
+            if _shutdown_mode == "graceful":
+                # Frozen v1 clients expect the original pending shutdown
+                # envelope on repeated requests, not a new shutdown. Return
+                # the actual pending deadline and action identity unchanged.
+                # Never restart the grace timer, schedule another task, or
+                # claim teardown already happened.
+                payload = {
+                    "status": "shutting_down",
+                    "delay_seconds": _shutdown_requested_delay,
+                    "cancel_before": int(_shutdown_due_at),
+                    "cancel_command": "POST /lifecycle/cancel",
+                    "human_present": False,
+                    "operation_id": _pending_shutdown_operation,
+                    "reused_pending": True,
+                }
+                await complete_operation(
+                    operation_id,
+                    result={
+                        "status": "already_shutting_down",
+                        "pending_operation_id": _pending_shutdown_operation,
+                    },
+                )
+                return payload
             payload = {
                 "status": "already_shutting_down",
                 "mode": _shutdown_mode or "unknown",
@@ -506,6 +582,11 @@ async def lifecycle_shutdown(
         _shutdown_in_progress = True
         _shutdown_mode = "power_off" if power_off else "graceful"
         _shutdown_started_at = now
+        _shutdown_due_at = now + delay
+        _shutdown_requested_delay = delay
+        _shutdown_generation += 1
+        generation = _shutdown_generation
+        _pending_shutdown_operation = operation_id
     append_lifecycle_event(
         session_dir, "shutdown_requested", "Shutdown requested via API", source="api"
     )
@@ -546,39 +627,26 @@ async def lifecycle_shutdown(
         )
         return {"status": "powering_off", "delay_seconds": delay, "operation_id": operation_id}
 
-    write_instance_state("shutting_down", reason="api_lifecycle_shutdown")
+    # Return before teardown: /lifecycle/cancel must be able to keep all
+    # running components alive throughout the advertised grace window.
+    _pending_shutdown_task = asyncio.create_task(
+        _commit_graceful_shutdown(
+            operation_id, session_dir, delay, wine_shutdown, generation
+        )
+    )
     await heartbeat_operation(
         operation_id,
-        phase="atomic_shutdown",
-        message="stopping recorder and core components",
-        progress=40,
+        phase="grace_period",
+        message="cancellable shutdown pending",
+        progress=10,
     )
-    results = await atomic_shutdown(session_dir, wine_shutdown=wine_shutdown)
-    if not bool(results.get("ok", True)):
-        await fail_operation(
-            operation_id,
-            error="atomic shutdown failed",
-            result=results,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Shutdown aborted due to component stop failures",
-        )
-    await heartbeat_operation(
-        operation_id,
-        phase="signal_schedule",
-        message="scheduling termination signal",
-        progress=90,
-    )
-    schedule_shutdown(session_dir, delay, signal.SIGTERM)
 
     shutdown_payload: dict[str, Any] = {
         "status": "shutting_down",
         "delay_seconds": delay,
-        "cancel_before": int(time.time() + delay),
+        "cancel_before": int(_shutdown_due_at),
         "cancel_command": "POST /lifecycle/cancel",
         "human_present": False,
-        "results": results
     }
     emit_operation_timing(
         session_dir,
@@ -591,20 +659,33 @@ async def lifecycle_shutdown(
         source="api",
         metric_name="lifecycle.shutdown.latency",
     )
-    await complete_operation(operation_id, result=shutdown_payload)
     shutdown_payload["operation_id"] = operation_id
     return shutdown_payload
 
 
 @router.post("/lifecycle/cancel")
 async def lifecycle_cancel():
-    """Cancel a pending shutdown. Returns cancelled or no_pending."""
+    """Cancel only a pending graceful transition, never committed teardown."""
     global _shutdown_in_progress, _shutdown_mode, _shutdown_started_at
-    if not _shutdown_in_progress:
-        return {"status": "no_pending"}
-    _shutdown_in_progress = False
-    _shutdown_mode = ""
-    _shutdown_started_at = 0.0
+    global _shutdown_due_at, _shutdown_requested_delay, _shutdown_generation
+    global _pending_shutdown_task, _pending_shutdown_operation
+    async with shutdown_transition_lock:
+        if not _shutdown_in_progress or _shutdown_mode != "graceful":
+            return {"status": "no_pending"}
+        _shutdown_generation += 1
+        task = _pending_shutdown_task
+        operation_id = _pending_shutdown_operation
+        _shutdown_in_progress = False
+        _shutdown_mode = ""
+        _shutdown_started_at = 0.0
+        _shutdown_due_at = 0.0
+        _shutdown_requested_delay = 0.0
+        _pending_shutdown_task = None
+        _pending_shutdown_operation = None
+        if task is not None:
+            task.cancel()
+    if operation_id is not None:
+        await complete_operation(operation_id, result={"status": "cancelled"})
     return {"status": "cancelled"}
 
 
