@@ -1,0 +1,189 @@
+name: VirtIO filesystem and serial native semantic coverage
+on:
+  push:
+    branches: [rdte/reactos-source-boot-20261123]
+    paths: [.github/workflows/virtio-semantic-v24.yml]
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+jobs:
+  semantic:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [filesystem, serial]
+    env:
+      LANE: ${{ matrix.lane }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Bind public execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          mkdir -p receipts
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=rdte/virtio-semantic-v24-$LANE -f description='Public upstream harness qualification' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+      - name: Retrieve exact public source-built executables
+        uses: actions/download-artifact@v4
+        with:
+          name: virtio-source-binaries-v18f3
+          run-id: 45715597435
+          github-token: ${{ github.token }}
+          path: binaries
+      - name: Verify independent executable and firmware pins
+        run: |
+          set -euo pipefail
+          cat > receipts/expected.sha256 <<'EOF'
+          4d567f217c247a9d39f3d5e364992dbf16e2eb624fc1eee09c70828aae40dda5  binaries/stock-qemu-system-x86_64
+          7eca8293689317017ee7b48f55459809dab56c01209bd807ba73a7eb05d9d573  binaries/candidate-qemu-system-x86_64
+          ae6f6aa973aaccc143f57aa960fb035fd9de4daee4ad0cd713322f8c259e7650  binaries/pc-bios/bios-256k.bin
+          cdf057a71b07e3b52b19cbe210bdefa59250d01a9810b960f7fe1f98eed95a27  binaries/pc-bios/kvmvapic.bin
+          9c49e255340c78fc12e54ed043462bca02fb7fca29b7cfab62ff88a5344b6950  binaries/pc-bios/linuxboot_dma.bin
+          cb0f6b199da98503aba440daa75c5882d6238af1707c059957597aa8cdc592b2  binaries/candidate.patch
+          EOF
+          sha256sum -c receipts/expected.sha256
+          test "$(cat binaries/upstream-sha.txt)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          chmod u+x binaries/*qemu-system-x86_64
+          cp binaries/candidate.patch binaries/upstream-sha.txt receipts/
+      - name: Build exact upstream QOS harness only
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends build-essential ninja-build pkg-config python3-venv python3-pip python3-setuptools libglib2.0-dev libpixman-1-dev libfdt-dev libslirp-dev zlib1g-dev libcap-ng-dev libattr1-dev liburing-dev libaio-dev libzstd-dev libgnutls28-dev libgcrypt20-dev libtasn1-6-dev libnuma-dev flex bison git meson
+          git init qemu
+          git -C qemu remote add origin https://github.com/qemu/qemu.git
+          git -C qemu fetch --depth=1 origin 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu checkout --detach FETCH_HEAD
+          test "$(git -C qemu rev-parse HEAD)" = 8f66cb79044c370e3813c56ceb7a75a5ca2d0a0e
+          git -C qemu rev-parse HEAD > receipts/upstream-sha.txt
+          mkdir build
+          cd build
+          ../qemu/configure --target-list=x86_64-softmmu --enable-tcg --disable-kvm --disable-docs --disable-werror --enable-trace-backends=log --disable-gtk --disable-sdl > ../receipts/configure.log 2>&1 || { tail -80 ../receipts/configure.log; exit 1; }
+          ninja -j"$(nproc)" tests/qtest/qos-test qemu-img > ../receipts/build.log 2>&1 || { tail -100 ../receipts/build.log; exit 1; }
+          sha256sum tests/qtest/qos-test qemu-img > ../receipts/harness-binaries.sha256
+          test ! -f qemu-system-x86_64
+          ../binaries/stock-qemu-system-x86_64 --version > ../receipts/stock-version.txt
+          ../binaries/candidate-qemu-system-x86_64 --version > ../receipts/candidate-version.txt
+          cp config-host.mak ../receipts/
+          git -C ../qemu status --porcelain > ../receipts/source-status.txt
+          git -C ../qemu submodule status > ../receipts/submodules.txt
+          ./run meson test --list > ../receipts/test-list.txt
+          make check-help > ../receipts/check-help.txt
+      - name: Execute selected source-backed native tests against retained binaries
+        run: |
+          set -euo pipefail
+          cat > receipts/qualify.py <<'PY'
+          import os,re,json,pathlib,signal,subprocess,sys,shlex
+          P=pathlib.Path; root=P.cwd(); r=root/"receipts"; b=root/"build"
+          q=b/"tests/qtest/qos-test"
+          lane=os.environ["LANE"]
+          names=("stock-native","candidate-off","candidate-on")
+          required={"filesystem":["synth/version/basic","synth/attach/basic","synth/walk/non_existent","synth/write/basic","synth/flush/success","local/create_file","local/unlinkat_file"],"serial":["console-nop","serialport-nop","hotplug"]}[lane]
+          driver={"filesystem":"virtio-9p-pci","serial":"virtio-serial-pci"}[lane]
+          semantic={"filesystem":["v9fs_version","v9fs_version_return","v9fs_attach","v9fs_attach_return","v9fs_walk","v9fs_rerror","v9fs_write","v9fs_write_return","v9fs_flush","v9fs_lcreate"],"serial":["virtio_serial_send_control_event","virtio_serial_handle_control_message","virtio_serial_handle_control_message_port","virtio_console_chr_event"]}[lane]
+          env0={k:os.environ[k] for k in ("PATH","HOME","LANG","LC_ALL","TMPDIR") if k in os.environ}
+          env0.update(QTEST_QEMU_IMG=str(b/"qemu-img"),G_TEST_DBUS_DAEMON=str(root/"qemu/tests/dbus-daemon.sh"),PYTHON=str(b/"pyvenv/bin/python3"),MALLOC_PERTURB_="173")
+          for key,path in (("QTEST_QEMU_STORAGE_DAEMON_BINARY","storage-daemon/qemu-storage-daemon"),("QTEST_QEMU_VNC_BINARY","tools/qemu-vnc/qemu-vnc")):
+              if (b/path).is_file(): env0[key]=str(b/path)
+          def execute(args,env,log,timeout):
+              with log.open("wb") as f:
+                  p=subprocess.Popen(args,env=env,cwd=b,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
+                  try: rc=p.wait(timeout=timeout)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(p.pid,signal.SIGKILL);p.wait();rc=124
+              return rc,log.read_text(errors="replace")
+          def environment(mode,trace=None):
+              env=env0.copy()
+              name="stock" if mode=="stock-native" else "candidate"
+              env["QTEST_QEMU_BINARY"]=str(root/"binaries"/(name+"-qemu-system-x86_64"))
+              args=["-L",str(root/"qemu/pc-bios")]
+              if trace is not None:
+                  args+=["-trace","events="+str(r/(mode+".events")),"-D",str(trace)]
+              env["QTEST_QEMU_ARGS"]=shlex.join(args)
+              return env
+          for mode in ("stock-native","candidate-on"):
+              exe=root/"binaries"/(("stock" if mode=="stock-native" else "candidate")+"-qemu-system-x86_64")
+              h=subprocess.check_output([str(exe),"-trace","help"],stderr=subprocess.STDOUT,text=True)
+              (r/(mode+"-trace-help.txt")).write_text(h)
+              events=semantic+(["virtqueue_buffer_pop","virtqueue_buffer_fill_attempt","virtqueue_host_advance"] if mode=="candidate-on" else [])
+              assert all(re.search(r"(?m)^"+re.escape(e)+r"(?:\s|$)",h) for e in events),events
+              (r/(mode+".events")).write_text("\n".join(events)+"\n")
+          inventory=[]
+          for mode in ("stock-native","candidate-off"):
+              rc,txt=execute([str(q),"-l"],environment(mode),r/(mode+"-inventory.log"),60)
+              assert rc==0,(mode,rc,txt[-2000:])
+              paths=sorted(set(m.group(1) for l in txt.splitlines() if (m:=re.fullmatch(r"(?:#\s+)?(/\S+)",l.strip())) and "/"+driver+"/" in m.group(1) and any(m.group(1).endswith("/"+suffix) for suffix in required)))
+              for suffix in required:
+                  assert any(p.endswith("/"+suffix) for p in paths),(lane,suffix,paths)
+              assert paths,(mode,paths)
+              inventory.append(paths)
+          assert inventory[0]==inventory[1],inventory
+          selected=inventory[0]
+          (r/"qos-selected.json").write_text(json.dumps(selected,indent=2))
+          results={}
+          for mode in names:
+              rows=[]
+              for i,path in enumerate(selected):
+                  trace=r/f"{mode}-{i}.trace"
+                  env=environment(mode,trace if mode!="candidate-off" else None)
+                  rc,txt=execute([str(q),"--tap","-p",path],env,r/f"{mode}-{i}.tap",45)
+                  tap=[l for l in txt.splitlines() if re.match(r"^(?:not )?ok \d+(?:\s|$)",l)]
+                  ok=len(tap)==1 and tap[0].startswith("ok 1")
+                  skip=any(re.search(r"#\s*SKIP",l,re.I) for l in tap)
+                  raw=trace.read_text(errors="replace") if trace.exists() else ""
+                  counts={e:len(re.findall(r"\b"+e+r"\b",raw)) for e in semantic+["virtqueue_buffer_pop","virtqueue_buffer_fill_attempt","virtqueue_host_advance"]}
+                  rows.append({"path":path,"exit":rc,"tap_ok":ok,"skip":skip,"trace_events":counts["virtqueue_host_advance"],"semantic_counts":counts,"tap":tap})
+                  (r/(mode+"-results.json")).write_text(json.dumps(rows,indent=2))
+              results[mode]=rows
+              (r/f"{mode}-results.json").write_text(json.dumps(rows,indent=2))
+          allpass=all(len(rows)==len(selected) and all(x["exit"]==0 and x["tap_ok"] and not x["skip"] for x in rows) for rows in results.values())
+          positive=sum(x["trace_events"] for x in results["candidate-on"])
+          report={"selected":selected,"all_selected_pass":allpass,"positive_host_advance_events":positive,"results":results}
+          (r/"qualification.json").write_text(json.dumps(report,indent=2))
+          report["lane"]=lane
+          report["classification"]="UPSTREAM_PROTOCOL_TESTS_NOT_GENERAL_APPLICATION_RECOVERY" if lane=="filesystem" else "UPSTREAM_SERIAL_SMOKE_HOTPLUG_NOT_DATA_TRANSFER"
+          (r/"qualification.json").write_text(json.dumps(report,indent=2))
+          assert allpass,report
+          if lane=="filesystem":
+              for mode in ("stock-native","candidate-on"):
+                  for e in ("v9fs_version","v9fs_attach","v9fs_write","v9fs_flush"):
+                      assert sum(x["semantic_counts"][e] for x in results[mode])>0,(mode,e)
+              assert positive>0,report
+          PY
+          python3 receipts/qualify.py
+      - name: Retain bounded public results
+        if: always()
+        run: |
+          mkdir -p receipts
+          du -ah receipts | sort -h | tail -20
+          python3 - <<'PY'
+          import pathlib
+          for p in pathlib.Path("receipts").rglob("*"):
+              if p.is_file() and p.stat().st_size>8*1024*1024:
+                  n=p.stat().st_size
+                  with p.open("rb") as f:
+                      head=f.read(1024*1024)
+                      f.seek(-6*1024*1024,2); tail=f.read()
+                  p.write_bytes(head+b"\nTRUNCATED ORIGINAL_BYTES="+str(n).encode()+b"\n"+tail)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: virtio-semantic-v24-${{ matrix.lane }}
+          path: receipts/
+          retention-days: 7
+      - name: Record terminal status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SemperSupra/WineBot
+          test "$GITHUB_REF" = refs/heads/rdte/reactos-source-boot-20261123
+          case "$JOB_RESULT" in success) state=success;; failure) state=failure;; *) state=error;; esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rdte/virtio-semantic-v24-$LANE -f description='Public upstream harness wrapper result' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
