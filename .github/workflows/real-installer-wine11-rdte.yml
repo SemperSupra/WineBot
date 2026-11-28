@@ -39,7 +39,9 @@ jobs:
         timeout-minutes: 5
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends msitools
+          # Version observed in qualified public run 46115913228; fail closed on drift.
+          sudo apt-get install -y --no-install-recommends msitools=0.103+repack-1build3
+          test "$(dpkg-query -W -f='${Version}' msitools)" = 0.103+repack-1build3
       - name: Pin original GPL MSI and build source-exact capture CLI
         working-directory: layered
         timeout-minutes: 6
@@ -167,7 +169,11 @@ jobs:
           # Separate experiment prefix on the disposable prefix volume; never modify the
           # default prefix or a real user profile. No raw output leaves the runner.
           docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -s \
-            >"$RUNNER_TEMP/installer67-local.log" 2>&1 <<'CELL' || fail original_installer_or_postcondition
+            >"$RUNNER_TEMP/installer67-local.log" 2>&1 <<'CELL' || {
+            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_missing_or_not_regular' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_missing_or_not_regular; fi
+            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_byte_mismatch' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_byte_mismatch; fi
+            fail original_installer_or_postcondition
+          }
           set -euo pipefail
           test "$(id -u)" = 1000
           export WINEPREFIX=/wineprefix/rdte-installer67 HOME=/userdata/rdte-installer-home
@@ -208,6 +214,27 @@ jobs:
           exe="$WINEPREFIX/drive_c/Program Files/Notepad++/notepad++.exe"
           test -s "$exe"
           sha256sum "$exe" | cut -d ' ' -f1 >"$work/original-exe.sha256"
+          # Independent static MSI payload must match the original installation
+          # file-for-file before first application launch. This is a subset
+          # oracle, not a claim about extra installed files or registry actions.
+          static=/apps/installer-rdte/replay-payload
+          installed="$(dirname "$exe")"
+          matched=0
+          while IFS= read -r -d '' item; do
+            rel="${item#"$static"/}"
+            test "$rel" != "$item" && test -n "$rel"
+            if ! test -f "$installed/$rel" || test -L "$installed/$rel"; then
+              echo 'INSTALLER_R73_LOCAL=static_file_missing_or_not_regular'
+              exit 1
+            fi
+            if ! cmp -s -- "$item" "$installed/$rel"; then
+              echo 'INSTALLER_R73_LOCAL=static_file_byte_mismatch'
+              exit 1
+            fi
+            matched=$((matched + 1))
+          done < <(find "$static" -type f -print0)
+          test "$matched" -gt 1
+          echo 'INSTALLER_R73_LOCAL=original_static_file_subset_parity'
           printf 'installer-before\n' >/userdata/rdte-installer-document.txt
           doc="$(winepath -w /userdata/rdte-installer-document.txt)"
           nohup wine "$exe" "$doc" >/tmp/installer67-app.log 2>&1 </dev/null &
@@ -321,6 +348,8 @@ jobs:
           grep -Fxq 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored' "$RUNNER_TEMP/installer67-local.log" || fail rollback_receipt_missing
           grep -Fxq 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save' "$RUNNER_TEMP/installer67-local.log" || fail recipe_receipt_missing
           grep -Fxq 'INSTALLER_R70_LOCAL=exact_bytes_and_inventory_negative_pass' "$RUNNER_TEMP/installer67-local.log" || fail retained_byte_receipt_missing
+          grep -Fxq 'INSTALLER_R73_LOCAL=original_static_file_subset_parity' "$RUNNER_TEMP/installer67-local.log" || fail static_subset_receipt_missing
+          echo 'INSTALLER_R73 stage=original_static_file_subset_parity'
           echo 'INSTALLER_R70 stage=exact_bytes_and_inventory_negative_pass'
           echo 'INSTALLER_R69 stage=static_payload_exe_parity_gui_save'
           echo 'INSTALLER_R68 stage=checkpoint_inventory_and_registry_restored'
