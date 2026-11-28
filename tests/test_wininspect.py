@@ -50,7 +50,7 @@ class FakeSocket:
 def test_wininspect_request_uses_length_prefixed_json():
     fake = FakeSocket(
         [
-            {"type": "hello", "version": "0.3.0"},
+            {"type": "hello", "version": "0.4.0"},
             {
                 "id": "winebot-abc123456789",
                 "ok": True,
@@ -70,12 +70,39 @@ def test_wininspect_request_uses_length_prefixed_json():
     sent_payload = json.loads(fake.sent[4 : 4 + sent_length].decode("utf-8"))
     assert sent_payload["id"] == "winebot-abc123456789"
     assert sent_payload["method"] == "daemon.capabilities"
-    assert sent_payload["params"]["protocol_version"] == "0.3.0"
+    assert sent_payload["params"]["protocol_version"] == "0.4.0"
 
 
-def test_wininspect_blocks_mutating_methods():
-    with pytest.raises(wininspect.WinInspectError):
-        wininspect.request("input.text", {"text": "blocked"})
+def test_wininspect_rejects_unlisted_methods_without_daemon_or_socket():
+    with (
+        patch.object(wininspect, "ensure_daemon") as daemon,
+        patch.object(wininspect.socket, "create_connection") as connect,
+    ):
+        with pytest.raises(wininspect.WinInspectError, match="method is not allowed"):
+            wininspect.request("input.unsupported", {"text": "blocked"})
+        daemon.assert_not_called()
+        connect.assert_not_called()
+
+
+@pytest.mark.parametrize(("path", "payload", "rpc"), [
+    ("/wininspect/key", {"keys": "test"}, "send_text"),
+    ("/wininspect/hotkey", {"keys": "ctrl+s"}, "send_hotkey"),
+    ("/wininspect/click", {"x": 10, "y": 10}, "mouse_click"),
+])
+def test_broker_denial_precedes_wininspect_mutation(path, payload, rpc):
+    with (
+        patch.dict("os.environ", {"API_TOKEN": "test-token"}),
+        patch.object(automation.broker, "check_access", new_callable=AsyncMock,
+                     return_value=False),
+        patch.object(automation.broker, "report_agent_activity", new_callable=AsyncMock) as activity,
+        patch.object(wininspect, "ensure_daemon") as daemon,
+        patch.object(wininspect, rpc) as mutate,
+    ):
+        response = client.post(path, json=payload, headers=_auth())
+        assert response.status_code == 423
+        activity.assert_not_called()
+        daemon.assert_not_called()
+        mutate.assert_not_called()
 
 
 def test_health_wininspect_endpoint_reports_capabilities():
