@@ -82,6 +82,47 @@ wait_health() {
   done
   return 1
 }
+# Reuse CPA-0's host-side cgroup-v2 witness on the actual product workload.
+# Only inspect the unique disposable Compose service; never accept an arbitrary PID.
+verify_runtime_envelope() {
+  local cid pid relative scope quota period
+  [ "$(docker info --format '{{.CgroupVersion}}' 2>/dev/null)" = 2 ] || return 1
+  cid="$(docker compose -f compose/layered.yml ps -q winebot-interactive)"
+  [[ "$cid" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [ "$(docker inspect --format '{{.State.Running}}' "$cid")" = true ] || return 1
+  [ "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true ] || return 1
+  pid="$(docker inspect --format '{{.State.Pid}}' "$cid")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  relative="$(sudo -n cat "/proc/$pid/cgroup" 2>/dev/null | sed -n 's/^0:://p')"
+  [[ "$relative" = /* && "$relative" != *..* ]] || return 1
+  case "$relative" in
+    */docker-"$cid".scope|*/"$cid") ;;
+    *) return 1 ;;
+  esac
+  scope="/sys/fs/cgroup$relative"
+  read -r quota period < <(sudo -n cat "$scope/cpu.max" 2>/dev/null) || return 1
+  [[ "$quota" =~ ^[0-9]{1,9}$ && "$period" =~ ^[1-9][0-9]{0,8}$ ]] || return 1
+  (( 10#$quota == 2 * 10#$period )) || return 1
+  [ "$(sudo -n cat "$scope/memory.max" 2>/dev/null)" = 3221225472 ] || return 1
+  [ "$(sudo -n cat "$scope/memory.swap.max" 2>/dev/null)" = 0 ] || return 1
+  [ "$(sudo -n cat "$scope/pids.max" 2>/dev/null)" = 512 ] || return 1
+  docker exec "$cid" sh -eu -c '
+    test "$(id -u)" = 1000
+    test "$(id -g)" = 1000
+    grep -Eq "^CapEff:[[:space:]]+0000000000000000$" /proc/self/status
+    grep -Eq "^CapBnd:[[:space:]]+0000000000000000$" /proc/self/status
+    grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
+    test ! -e /var/run/docker.sock
+    test ! -e /winebot-control
+    test ! -w /sys/fs/cgroup/pids.max
+    awk "\$5 == \"/\" || \$5 == \"/apps\" { if (\$6 !~ /(^|,)ro(,|$)/) exit 1; count++ } END { if (count != 2) exit 1 }" /proc/self/mountinfo
+  ' >/dev/null 2>&1 || return 1
+  # Refuse an observation spanning a container replacement.
+  [ "$(docker compose -f compose/layered.yml ps -q winebot-interactive)" = "$cid" ] || return 1
+  [ "$(docker inspect --format '{{.State.Pid}}' "$cid")" = "$pid" ] || return 1
+  echo 'MVP_WORKLOAD stage=effective_resource_envelope_pass'
+}
+
 # Live HTTP delivery across the actual runtime boundary, without TestClient.
 # Fixed local destination, bounded reads, no redirects, no raw output.
 verify_live_interfaces() {
@@ -137,6 +178,7 @@ PY
 }
 
 wait_health || fail health_initial
+verify_runtime_envelope || fail resource_envelope_initial
 verify_live_interfaces || fail live_interface_initial
 docker compose -f compose/layered.yml exec -T winebot-interactive wine --version \
   2>/dev/null | grep -Eq '^wine-11([.]|$)' || fail wrong_wine_version
@@ -296,6 +338,7 @@ echo 'MVP_WORKLOAD stage=quiesced_before_recreate'
 docker compose -f compose/layered.yml up -d --force-recreate --no-build \
   winebot-interactive >/dev/null 2>&1 || fail recreate
 wait_health || fail recreate_health
+verify_runtime_envelope || fail resource_envelope_recreated
 verify_live_interfaces || fail live_interface_after_recreate
 docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -euo pipefail -c '
   grep -q IC1-APP-INPUT-PROOF /userdata/ic1-editor.txt ||

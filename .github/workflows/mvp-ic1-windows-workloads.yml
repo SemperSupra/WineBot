@@ -11,6 +11,7 @@ on:
       - 'scripts/init/20-setup-wine.sh'
       - 'scripts/internal/require-wine11.sh'
       - 'docker/entrypoint.sh'
+      - 'compose/layered.yml'
 permissions:
   contents: read
 concurrency:

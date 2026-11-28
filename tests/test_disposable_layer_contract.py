@@ -61,6 +61,23 @@ class DisposableAppBundleSourceTests(unittest.TestCase):
         self.assertNotIn("    build:", source)
         self.assertNotIn("actions/upload-artifact@", source)
 
+    def test_live_resource_envelope_is_explicit_and_rechecked(self):
+        compose = (ROOT / "compose/layered.yml").read_text(encoding="utf-8")
+        script = (ROOT / "scripts/ci/qualify-mvp-windows-workloads.sh").read_text(
+            encoding="utf-8"
+        )
+        for marker in ("mem_limit: 3g", "memswap_limit: 3g", "cpus: 2",
+                       "pids_limit: 512", "cap_drop: [ALL]",
+                       "no-new-privileges:true"):
+            self.assertIn(marker, compose)
+        for marker in ("cpu.max", "memory.max", "memory.swap.max", "pids.max",
+                       "CapEff:", "CapBnd:", "NoNewPrivs:",
+                       "effective_resource_envelope_pass"):
+            self.assertIn(marker, script)
+        self.assertEqual(script.count("verify_runtime_envelope || fail "), 2)
+        self.assertIn("fail resource_envelope_initial", script)
+        self.assertIn("fail resource_envelope_recreated", script)
+
     def test_layered_api_is_enabled_without_unauthenticated_fallback(self):
         compose = (ROOT / "compose/layered.yml").read_text(encoding="utf-8")
         start = (ROOT / "scripts/init/30-start-services.sh").read_text(
