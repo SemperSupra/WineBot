@@ -45,6 +45,8 @@ services:
     init: true
     pids_limit: 512
     mem_limit: 3g
+    # The memory envelope includes no additional swap allowance.
+    memswap_limit: 3g
     cpus: 2
     tmpfs:
       - /tmp:rw,nosuid,nodev,mode=1777,size=256m

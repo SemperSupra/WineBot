@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "winebot.synthetic.winapi.fixture",
+  "appdata_subdir": "WineBotInstallerFixture",
+  "file_name": "installed.txt",
+  "file_content": "synthetic-v1\n",
+  "registry_key": "Software\\WineBotInstallerFixture",
+  "registry_value_name": "InstallState",
+  "registry_value_type": "REG_SZ",
+  "registry_data": "synthetic-v1"
+}

@@ -1,0 +1,143 @@
+name: Declarative Windows Fixture Recipe Parity RDTE
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-fixture-recipe-rdte.yml'
+      - 'cmd/windows-recipe-replayer/**'
+      - 'cmd/windows-installer-fixture/**'
+      - 'cmd/installer-capture/**'
+permissions:
+  contents: read
+concurrency:
+  group: synthetic-recipe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  native-windows-reconstruction:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: cmd/windows-recipe-replayer/go.mod
+          cache: false
+      - name: Original installer versus independent manifest replayer
+        shell: pwsh
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          WINEBOT_FIXTURE_PERMIT: synthetic-ci
+        run: |
+          Push-Location cmd/windows-installer-fixture
+          go build -trimpath -o "$env:RUNNER_TEMP\original.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=original_build_failed" }
+          Pop-Location
+          Push-Location cmd/windows-recipe-replayer
+          go build -trimpath -o "$env:RUNNER_TEMP\replay.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=recipe_build_failed" }
+          Pop-Location
+          & "$env:RUNNER_TEMP\original.exe" install
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=original_install_failed" }
+          $key = 'HKCU:\Software\WineBotInstallerFixture'
+          $original = (Get-ItemProperty -Path $key -Name InstallState -ErrorAction Stop).InstallState
+          & "$env:RUNNER_TEMP\original.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=original_uninstall_failed" }
+          & "$env:RUNNER_TEMP\replay.exe" install
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=recipe_install_failed" }
+          & "$env:RUNNER_TEMP\replay.exe" verify
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=recipe_verify_failed" }
+          $actual = (Get-ItemProperty -Path $key -Name InstallState -ErrorAction Stop).InstallState
+          if ($actual -ne $original) { throw "RECIPE_RDTE stage=native_registry_mismatch" }
+          & "$env:RUNNER_TEMP\replay.exe" install *> $null
+          if ($LASTEXITCODE -eq 0) { throw "RECIPE_RDTE stage=duplicate_install_accepted" }
+          & "$env:RUNNER_TEMP\replay.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { throw "RECIPE_RDTE stage=recipe_uninstall_failed" }
+          $proof = Join-Path $env:APPDATA 'WineBotInstallerFixture\installed.txt'
+          if ((Test-Path $key) -or (Test-Path $proof)) { throw "RECIPE_RDTE stage=residual_state" }
+          'RECIPE_RDTE stage=native_recipe_parity_pass'
+
+  wine-registry-file-reconstruction:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: cmd/installer-capture/go.mod
+          cache: false
+      - name: Install distribution Wine for rights-cleared fixture only
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 xvfb xauth
+      - name: Execute original installer, replay separate recipe, compare Wine postconditions
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          WINEBOT_FIXTURE_PERMIT: synthetic-ci
+          WINEDEBUG: '-all'
+          WINEARCH: win64
+          WINEDLLOVERRIDES: 'mscoree,mshtml='
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          export WINEPREFIX="$work/prefix" WORK="$work"
+          mkdir -p "$WINEPREFIX"
+          (cd cmd/windows-installer-fixture && GOOS=windows GOARCH=amd64 go build -trimpath -o "$work/original.exe" .)
+          (cd cmd/windows-recipe-replayer && GOOS=windows GOARCH=amd64 go build -trimpath -o "$work/replay.exe" .)
+          (cd cmd/installer-capture && go build -trimpath -o "$work/capture" .)
+          xvfb-run -a /bin/bash -euo pipefail -c '
+            timeout 180 wineboot -u >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            cp "$WINEPREFIX/user.reg" "$WORK/base.reg"
+            timeout 120 wine "$WORK/original.exe" install >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            cp "$WINEPREFIX/user.reg" "$WORK/original-after.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/original-files.json" || exit 31
+            timeout 120 wine "$WORK/original.exe" uninstall >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            cp "$WINEPREFIX/user.reg" "$WORK/after-remove.reg"
+            timeout 120 wine "$WORK/replay.exe" install >/dev/null 2>&1
+            timeout 120 wine "$WORK/replay.exe" verify >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            cp "$WINEPREFIX/user.reg" "$WORK/replay-after.reg"
+            "$WORK/capture" snapshot -root "$WINEPREFIX" -out "$WORK/replay-files.json" || exit 32
+            timeout 120 wine "$WORK/replay.exe" uninstall >/dev/null 2>&1
+            wineserver -k >/dev/null 2>&1 || true
+            cp "$WINEPREFIX/user.reg" "$WORK/replay-removed.reg"
+          ' || { echo 'RECIPE_RDTE stage=wine_run_failed'; exit 1; }
+          "$work/capture" regdiff -before "$work/base.reg" -after "$work/original-after.reg" -out "$work/original-delta.json" ||
+            { echo 'RECIPE_RDTE stage=original_regdiff_failed'; exit 1; }
+          "$work/capture" regdiff -before "$work/after-remove.reg" -after "$work/replay-after.reg" -out "$work/replay-delta.json" ||
+            { echo 'RECIPE_RDTE stage=replay_regdiff_failed'; exit 1; }
+          "$work/capture" regdiff -before "$work/replay-after.reg" -after "$work/replay-removed.reg" -out "$work/removed-delta.json" ||
+            { echo 'RECIPE_RDTE stage=cleanup_regdiff_failed'; exit 1; }
+          python3 - "$work/original-files.json" "$work/replay-files.json" "$work/original-delta.json" "$work/replay-delta.json" "$work/removed-delta.json" <<'PY'
+          import hashlib, json, sys
+          def load(i):
+              with open(sys.argv[i], encoding="utf-8") as f: return json.load(f)
+          expected = hashlib.sha256(b"synthetic-v1\n").hexdigest()
+          def proof(i):
+              rows = [e for e in load(i)["entries"] if e["path"].endswith("WineBotInstallerFixture/installed.txt")]
+              assert len(rows) == 1 and rows[0]["sha256"] == expected, "RECIPE_RDTE stage=file_postcondition_invalid"
+              return (rows[0]["kind"],rows[0]["size"],rows[0]["sha256"])
+          assert proof(1) == proof(2), "RECIPE_RDTE stage=file_parity_failed"
+          def value(i,op):
+              rows = [c for c in load(i)["changes"] if "WineBotInstallerFixture" in c["key"]
+                      and c.get("name", "") == "InstallState" and c["operation"] == op]
+              assert len(rows) == 1, "RECIPE_RDTE stage=registry_delta_missing"
+              return rows[0]
+          original = value(3,"added")
+          replay = value(4,"added")
+          assert original["after"]["type"] == replay["after"]["type"]
+          assert original["after"]["sha256"] == replay["after"]["sha256"], "RECIPE_RDTE stage=registry_parity_failed"
+          value(5,"removed")
+          PY
+          echo 'RECIPE_RDTE stage=wine_recipe_parity_pass'
