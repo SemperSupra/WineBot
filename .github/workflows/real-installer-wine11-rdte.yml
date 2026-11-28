@@ -35,6 +35,11 @@ jobs:
           cache: false
       - name: Reclaim standard-runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+      - name: Install offline MSI extraction tool
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends msitools
       - name: Pin original GPL MSI and build source-exact capture CLI
         working-directory: layered
         timeout-minutes: 6
@@ -53,6 +58,18 @@ jobs:
           printf 'e3b0607a092ce2604fbdac027db2c94915995e8e568ebd226f8c5493c2f61a80  apps/installer-rdte/npp.msi\n' \
             | sha256sum --status -c -
           (cd cmd/installer-capture && go test ./... && go build -trimpath -o ../../apps/installer-rdte/capture .)
+          # Extract static payload from the pinned MSI without executing it.
+          extracted="$(mktemp -d "$RUNNER_TEMP/npp-extract.XXXXXX")"
+          timeout 90 msiextract -C "$extracted" apps/installer-rdte/npp.msi >"$RUNNER_TEMP/npp-extract.log" 2>&1
+          mapfile -d '' -t payloads < <(find "$extracted" -type f -iname notepad++.exe -print0)
+          test "${#payloads[@]}" = 1
+          payload="$(dirname "${payloads[0]}")"
+          test "$payload" != "$extracted"
+          test -z "$(find "$payload" ! -type f ! -type d -print -quit)"
+          test ! -e apps/installer-rdte/replay-payload
+          cp -a -- "$payload" apps/installer-rdte/replay-payload
+          rm -rf -- "$extracted"
+          echo 'INSTALLER_R69 stage=static_msi_payload_extracted'
           echo 'INSTALLER_R67 stage=original_msi_and_capture_pinned'
       - name: Qualify isolated original installation and persistent-state uninstall
         working-directory: layered
@@ -190,6 +207,7 @@ jobs:
           "$capture" regdiff -before "$work/before.reg" -after "$work/after.reg" -out "$work/regdelta.json"
           exe="$WINEPREFIX/drive_c/Program Files/Notepad++/notepad++.exe"
           test -s "$exe"
+          sha256sum "$exe" | cut -d ' ' -f1 >"$work/original-exe.sha256"
           printf 'installer-before\n' >/userdata/rdte-installer-document.txt
           doc="$(winepath -w /userdata/rdte-installer-document.txt)"
           nohup wine "$exe" "$doc" >/tmp/installer67-app.log 2>&1 </dev/null &
@@ -236,10 +254,52 @@ jobs:
           # Persistent user data is outside the restored prefix.
           test "$(cat /userdata/rdte-installer-sentinel)" = persistent-user-file-v1
           grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
+          # Independent fresh prefix; never execute msiexec or copy installed state.
+          (
+            export WINEPREFIX=/wineprefix/rdte-installer69-replay HOME=/userdata/rdte-installer69-home
+            test ! -e "$WINEPREFIX" && test ! -e "$HOME"
+            mkdir -p "$WINEPREFIX" "$HOME"
+            timeout 180 wineboot -u
+            quiet
+            dest="$WINEPREFIX/drive_c/Program Files/Notepad++"
+            test ! -e "$dest"
+            test -d /apps/installer-rdte/replay-payload
+            test -z "$(find /apps/installer-rdte/replay-payload ! -type f ! -type d -print -quit)"
+            cp -a -- /apps/installer-rdte/replay-payload "$dest"
+            replay_exe="$dest/notepad++.exe"
+            test -s "$replay_exe"
+            test "$(sha256sum "$replay_exe" | cut -d ' ' -f1)" = "$(cat "$work/original-exe.sha256")"
+            printf 'replay-before\n' >/userdata/rdte-installer69-document.txt
+            replay_doc="$(winepath -w /userdata/rdte-installer69-document.txt)"
+            nohup wine "$replay_exe" "$replay_doc" >/tmp/installer69-app.log 2>&1 </dev/null &
+            found=""
+            for _ in $(seq 1 90); do
+              found="$(xdotool search --onlyvisible --name 'rdte-installer69-document.*Notepad' 2>/dev/null | head -1 || true)"
+              [[ "$found" =~ ^[0-9]{1,16}$ ]] && break
+              sleep 1
+            done
+            [[ "$found" =~ ^[0-9]{1,16}$ ]]
+            xdotool windowactivate --sync "$found"
+            xdotool key --clearmodifiers ctrl+End
+            xdotool type --clearmodifiers 'R69-REPLAY-APP-SAVE'
+            xdotool key --clearmodifiers ctrl+s
+            for _ in $(seq 1 25); do
+              grep -Fq R69-REPLAY-APP-SAVE /userdata/rdte-installer69-document.txt && break
+              sleep 1
+            done
+            grep -Fq R69-REPLAY-APP-SAVE /userdata/rdte-installer69-document.txt
+            xdotool key --clearmodifiers alt+F4
+            sleep 2
+            quiet
+          )
+          test ! -e "$exe"
+          echo 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save'
           echo 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass'
           CELL
           grep -Fxq 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass' "$RUNNER_TEMP/installer67-local.log" || fail receipt_missing
           grep -Fxq 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored' "$RUNNER_TEMP/installer67-local.log" || fail rollback_receipt_missing
+          grep -Fxq 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save' "$RUNNER_TEMP/installer67-local.log" || fail recipe_receipt_missing
+          echo 'INSTALLER_R69 stage=static_payload_exe_parity_gui_save'
           echo 'INSTALLER_R68 stage=checkpoint_inventory_and_registry_restored'
           echo 'INSTALLER_R67 stage=original_install_capture_gui_save_uninstall_pass'
           docker compose -f compose/layered.yml up -d --force-recreate --no-build winebot-interactive >/dev/null 2>&1 || fail recreate
@@ -249,6 +309,9 @@ jobs:
             grep -Fq R67-INSTALLED-APP-SAVE /userdata/rdte-installer-document.txt
             test ! -e "/wineprefix/rdte-installer67/drive_c/Program Files/Notepad++/notepad++.exe"
             /apps/installer-rdte/capture verify -root /wineprefix/rdte-installer67 -manifest /wineprefix/rdte-installer67.rdte-before.json
+            grep -Fq R69-REPLAY-APP-SAVE /userdata/rdte-installer69-document.txt
+            test -s "/wineprefix/rdte-installer69-replay/drive_c/Program Files/Notepad++/notepad++.exe"
           ' >/dev/null 2>&1 || fail persistent_postcondition
           echo 'INSTALLER_R67 stage=bounded_real_installer_and_state_replay_pass'
           echo 'INSTALLER_R68 stage=checkpoint_inventory_and_user_state_recreate_pass'
+          echo 'INSTALLER_R69 stage=static_payload_and_user_state_recreate_pass'
