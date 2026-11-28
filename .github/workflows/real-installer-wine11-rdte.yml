@@ -168,12 +168,8 @@ jobs:
           echo 'INSTALLER_R67 stage=isolated_layered_runtime'
           # Separate experiment prefix on the disposable prefix volume; never modify the
           # default prefix or a real user profile. No raw output leaves the runner.
-          docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -s \
-            >"$RUNNER_TEMP/installer67-local.log" 2>&1 <<'CELL' || {
-            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_missing_or_not_regular' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_missing_or_not_regular; fi
-            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_byte_mismatch' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_byte_mismatch; fi
-            fail original_installer_or_postcondition
-          }
+          if ! docker compose -f compose/layered.yml exec -T winebot-interactive /bin/bash -s \
+            >"$RUNNER_TEMP/installer67-local.log" 2>&1 <<'CELL'
           set -euo pipefail
           test "$(id -u)" = 1000
           export WINEPREFIX=/wineprefix/rdte-installer67 HOME=/userdata/rdte-installer-home
@@ -344,6 +340,11 @@ jobs:
           echo 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save'
           echo 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass'
           CELL
+          then
+            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_missing_or_not_regular' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_missing_or_not_regular; fi
+            if grep -Fxq 'INSTALLER_R73_LOCAL=static_file_byte_mismatch' "$RUNNER_TEMP/installer67-local.log"; then fail static_file_byte_mismatch; fi
+            fail original_installer_or_postcondition
+          fi
           grep -Fxq 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass' "$RUNNER_TEMP/installer67-local.log" || fail receipt_missing
           grep -Fxq 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored' "$RUNNER_TEMP/installer67-local.log" || fail rollback_receipt_missing
           grep -Fxq 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save' "$RUNNER_TEMP/installer67-local.log" || fail recipe_receipt_missing
