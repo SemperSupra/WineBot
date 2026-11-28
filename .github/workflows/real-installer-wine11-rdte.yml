@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
           ref: 8c5ed8019a3518cf534b158662755172bfce7c59
           path: wine11-candidate
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0, Node 24
         with:
           go-version-file: layered/cmd/installer-capture/go.mod
           cache: false
@@ -265,7 +265,9 @@ jobs:
             test ! -e "$dest"
             test -d /apps/installer-rdte/replay-payload
             test -z "$(find /apps/installer-rdte/replay-payload ! -type f ! -type d -print -quit)"
+            "$capture" snapshot -root /apps/installer-rdte/replay-payload -out "$work/static-payload.json"
             cp -a -- /apps/installer-rdte/replay-payload "$dest"
+            "$capture" verify -root "$dest" -manifest "$work/static-payload.json"
             replay_exe="$dest/notepad++.exe"
             test -s "$replay_exe"
             test "$(sha256sum "$replay_exe" | cut -d ' ' -f1)" = "$(cat "$work/original-exe.sha256")"
@@ -291,6 +293,25 @@ jobs:
             xdotool key --clearmodifiers alt+F4
             sleep 2
             quiet
+            # Compare to the original installer digest again after the GUI workload.
+            test "$(sha256sum "$replay_exe" | cut -d ' ' -f1)" = "$(cat "$work/original-exe.sha256")"
+            # Keep fixture-local receipts outside the replayed application tree.
+            # This is a persistence oracle, not protected production evidence.
+            app_manifest="${WINEPREFIX}.rdte-app-after.json"
+            byte_receipt="${WINEPREFIX}.rdte-bytes.sha256"
+            test ! -e "$app_manifest" && test ! -L "$app_manifest"
+            test ! -e "$byte_receipt" && test ! -L "$byte_receipt"
+            "$capture" snapshot -root "$dest" -out "$app_manifest"
+            (umask 077; sha256sum -- "$replay_exe" /userdata/rdte-installer69-document.txt /userdata/rdte-installer-document.txt /userdata/rdte-installer-sentinel >"$byte_receipt")
+            # A changed document retaining the success marker must still fail.
+            cp -- /userdata/rdte-installer69-document.txt "$work/replay-document.saved"
+            printf 'fixture-negative\n' >>/userdata/rdte-installer69-document.txt
+            grep -Fq R69-REPLAY-APP-SAVE /userdata/rdte-installer69-document.txt
+            if sha256sum --status -c "$byte_receipt"; then exit 1; fi
+            cp -- "$work/replay-document.saved" /userdata/rdte-installer69-document.txt
+            sha256sum --status -c "$byte_receipt"
+            "$capture" verify -root "$dest" -manifest "$app_manifest"
+            echo 'INSTALLER_R70_LOCAL=exact_bytes_and_inventory_negative_pass'
           )
           test ! -e "$exe"
           echo 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save'
@@ -299,6 +320,8 @@ jobs:
           grep -Fxq 'INSTALLER_R67_LOCAL=install_save_capture_uninstall_pass' "$RUNNER_TEMP/installer67-local.log" || fail receipt_missing
           grep -Fxq 'INSTALLER_R68_LOCAL=checkpoint_inventory_and_registry_restored' "$RUNNER_TEMP/installer67-local.log" || fail rollback_receipt_missing
           grep -Fxq 'INSTALLER_R69_LOCAL=static_payload_exe_parity_gui_save' "$RUNNER_TEMP/installer67-local.log" || fail recipe_receipt_missing
+          grep -Fxq 'INSTALLER_R70_LOCAL=exact_bytes_and_inventory_negative_pass' "$RUNNER_TEMP/installer67-local.log" || fail retained_byte_receipt_missing
+          echo 'INSTALLER_R70 stage=exact_bytes_and_inventory_negative_pass'
           echo 'INSTALLER_R69 stage=static_payload_exe_parity_gui_save'
           echo 'INSTALLER_R68 stage=checkpoint_inventory_and_registry_restored'
           echo 'INSTALLER_R67 stage=original_install_capture_gui_save_uninstall_pass'
@@ -311,7 +334,10 @@ jobs:
             /apps/installer-rdte/capture verify -root /wineprefix/rdte-installer67 -manifest /wineprefix/rdte-installer67.rdte-before.json
             grep -Fq R69-REPLAY-APP-SAVE /userdata/rdte-installer69-document.txt
             test -s "/wineprefix/rdte-installer69-replay/drive_c/Program Files/Notepad++/notepad++.exe"
+            sha256sum --status -c /wineprefix/rdte-installer69-replay.rdte-bytes.sha256
+            /apps/installer-rdte/capture verify -root "/wineprefix/rdte-installer69-replay/drive_c/Program Files/Notepad++" -manifest /wineprefix/rdte-installer69-replay.rdte-app-after.json
           ' >/dev/null 2>&1 || fail persistent_postcondition
           echo 'INSTALLER_R67 stage=bounded_real_installer_and_state_replay_pass'
           echo 'INSTALLER_R68 stage=checkpoint_inventory_and_user_state_recreate_pass'
           echo 'INSTALLER_R69 stage=static_payload_and_user_state_recreate_pass'
+          echo 'INSTALLER_R70 stage=exact_application_inventory_and_saved_bytes_recreate_pass'
